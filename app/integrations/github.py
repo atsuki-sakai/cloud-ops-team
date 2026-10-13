@@ -1,4 +1,4 @@
-"""Minimal GitHub REST + GraphQL client.
+"""Minimal GitHub REST + GraphQL client (the issue tracker integration).
 
 Token resolution order: ``GITHUB_TOKEN`` → ``GH_TOKEN`` → ``gh auth token``
 (local development only). When deployed, inject the token from Secret
@@ -57,7 +57,7 @@ def _headers(accept: str | None = None) -> dict[str, str]:
         "Authorization": f"Bearer {github_token()}",
         "Accept": accept or "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "gcp-ops-team-agent",
+        "User-Agent": "cloud-ops-team-agent",
     }
 
 

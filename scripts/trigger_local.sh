@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# ローカルの ADK サーバー（agents-cli playground / uv run uvicorn app.fast_api_app:app）に
-# Pub/Sub push と同じ形式でジョブを投げる。
-#   ./scripts/trigger_local.sh error_watch '"hours":2'
+# Send a scheduler-style job to a locally running ADK server
+# (`uv run uvicorn app.fast_api_app:app --port 8000` or `agents-cli playground`).
+#
+#   ./scripts/trigger_local.sh error_watch '"hours":24'
 #   ./scripts/trigger_local.sh weekly_pr_review
 #   ./scripts/trigger_local.sh monthly_security_audit '"kev_days":30'
 set -euo pipefail

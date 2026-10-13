@@ -1,0 +1,60 @@
+# Contributing
+
+Thanks for helping! Bug reports, docs fixes, new checks and — most of all — **AWS and Azure capabilities** are welcome.
+
+## Development setup
+
+```bash
+uv tool install google-agents-cli
+git clone https://github.com/atsuki-sakai/cloud-ops-team && cd cloud-ops-team
+agents-cli install            # uv sync
+cp .env.example .env          # keep OPS_DRY_RUN=true while developing
+```
+
+Unit tests and lint need no cloud credentials:
+
+```bash
+uv run pytest tests/unit      # fast, no network
+agents-cli lint               # ruff, ruff format, codespell, ty
+```
+
+With Gemini and cloud access you can also run:
+
+```bash
+uv run python scripts/run_job.py error_watch --hours 24    # one job, every tool call printed
+uv run pytest tests/integration                            # calls the model
+agents-cli eval run                                        # behaviour eval (LLM-as-judge)
+```
+
+## What goes where
+
+| Change | Where | Read first |
+|---|---|---|
+| Support a cloud capability | `app/providers/<cloud>/` | [docs/providers.md](docs/providers.md) |
+| New agent-facing tool | `app/tools/` + list in `app/tools/__init__.py` | [docs/architecture.md §15](docs/architecture.md#15-extending) |
+| Agent behaviour | `app/prompts.py` | the eval cases in `tests/eval/` |
+| Deployment | `scripts/<cloud>/` and `docs/deployment-<cloud>.md` | [docs/deployment-gcp.md](docs/deployment-gcp.md) |
+
+## Rules of the road
+
+- **Read-only towards clouds.** A tool or provider must never change cloud resources. PRs that add mutating calls will be declined.
+- **Respect dry-run.** Anything that writes to GitHub must honour `CONFIG.dry_run`.
+- **Tool conventions** (enforced by `tests/unit/test_providers.py`): type hints on every parameter, no default values,
+  a docstring written for the model, a JSON-serializable `dict` with a `status` key, and no exceptions for API errors.
+- **No secrets or personal data** in tool results: redact free text with `app.core.redact.redact`, return environment variable
+  names only.
+- **Do not change the fingerprint formula** (`app/core/fingerprint.py`) — it would re-file every open issue. The golden tests
+  will fail if you do.
+- **Unit tests stay offline.** Stub SDK responses; integration and eval tests may call the model.
+- **Prompt changes need evidence.** Run `agents-cli eval run` before and after and include the scores in the PR
+  (`agents-cli eval compare old.json new.json`).
+
+## Pull requests
+
+1. Open an issue first for larger changes (a new provider, a new specialist) so we can agree on the shape.
+2. Keep PRs focused; update docs and `CHANGELOG.md` (Unreleased) in the same PR.
+3. CI must be green (lint, types, unit tests).
+4. Describe how you tested it — for providers, which capabilities you ran against a real account in dry-run mode.
+
+By contributing you agree that your contributions are licensed under the Apache License 2.0 and that you follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).

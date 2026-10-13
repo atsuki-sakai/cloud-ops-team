@@ -1,0 +1,47 @@
+name: Provider capability (AWS / Azure / other)
+description: Implement or request a cloud capability for a provider
+labels: ["provider", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: "Read docs/providers.md first — it lists the normalized result fields and suggested SDK calls per capability."
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options: ["aws", "azure", "gcp", "other"]
+    validations:
+      required: true
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Capability
+      options:
+        - summarize_error_groups / list_error_logs / get_log_context / count_matching_errors
+        - list_services
+        - list_deployments
+        - list_scheduled_jobs
+        - list_databases
+        - get_request_error_rates
+        - get_alerting_setup
+        - audit_iam
+        - audit_credentials
+        - audit_compute
+        - audit_databases
+        - audit_network
+        - audit_security_services
+        - list_security_findings
+        - scan_deployed_images
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Data sources and permissions
+      description: APIs / SDK calls you plan to use and the read-only permissions they need.
+  - type: checkboxes
+    id: volunteer
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to implement this

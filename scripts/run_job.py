@@ -1,4 +1,4 @@
-"""Run one ops job in-process and stream every tool call (dev tool).
+"""Run one ops job in-process and print every tool call (development helper).
 
 Unlike ``agents-cli run`` this does not go through HTTP/SSE, so long jobs do
 not hit client read timeouts, and a tracing plugin shows what the specialists

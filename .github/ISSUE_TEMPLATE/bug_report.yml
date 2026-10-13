@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Please remove secrets, tokens and personal data from logs before posting. Security issues: see SECURITY.md."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Job or prompt, relevant settings (OPS_CLOUD_PROVIDER, OPS_DRY_RUN, ...), and the command you ran.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Tool calls from `scripts/run_job.py`, error messages or the agent's report (redacted).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Cloud provider
+      options: ["gcp", "aws", "azure", "other"]
+    validations:
+      required: true

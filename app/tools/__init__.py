@@ -1,7 +1,34 @@
-"""Tool registry for the GCP ops team. Import tool lists from here."""
+"""Agent-facing tool registry. Import the per-specialist tool lists from here.
 
-from app.tools.common_tools import get_run_context
-from app.tools.github_tools import (
+- ``cloud``: cloud-neutral wrappers over the selected provider's capabilities
+- ``threat_intel``: CISA KEV, endoflife.date, Google Search-grounded research
+- ``repo``: repository security posture (GitHub)
+- ``issues``: issue / PR tools (GitHub), dry-run aware
+- ``context``: run context (time, provider, flags)
+"""
+
+from app.tools.cloud import (
+    audit_compute,
+    audit_credentials,
+    audit_databases,
+    audit_iam,
+    audit_network,
+    audit_security_services,
+    count_matching_errors,
+    get_alerting_setup,
+    get_log_context,
+    get_request_error_rates,
+    list_databases,
+    list_deployments,
+    list_error_logs,
+    list_scheduled_jobs,
+    list_security_findings,
+    list_services,
+    scan_deployed_images,
+    summarize_error_groups,
+)
+from app.tools.context import get_run_context
+from app.tools.issues import (
     add_issue_labels,
     close_issue,
     comment_on_issue,
@@ -16,32 +43,8 @@ from app.tools.github_tools import (
     publish_report,
     search_issues,
 )
-from app.tools.observability_tools import (
-    count_matching_errors,
-    get_alerting_setup,
-    get_cloud_run_revisions,
-    get_cloud_run_services,
-    get_log_context,
-    get_request_error_rates,
-    get_scheduler_jobs,
-    list_error_logs,
-    summarize_error_groups,
-)
-from app.tools.security_tools import (
-    audit_cloud_run_security,
-    audit_cloud_sql,
-    audit_firewall_rules,
-    audit_iam_policy,
-    audit_security_services,
-    audit_service_account_keys,
-    check_eol_status,
-    fetch_cisa_kev,
-    get_cloud_sql_instances,
-    get_repo_security_posture,
-    list_scc_findings,
-    scan_deployed_images,
-    web_threat_research,
-)
+from app.tools.repo import get_repo_security_posture
+from app.tools.threat_intel import check_eol_status, fetch_cisa_kev, web_threat_research
 
 ERROR_WATCH_TOOLS = [
     get_run_context,
@@ -49,10 +52,10 @@ ERROR_WATCH_TOOLS = [
     list_error_logs,
     get_log_context,
     count_matching_errors,
-    get_cloud_run_services,
-    get_cloud_run_revisions,
-    get_scheduler_jobs,
-    get_cloud_sql_instances,
+    list_services,
+    list_deployments,
+    list_scheduled_jobs,
+    list_databases,
     get_request_error_rates,
     get_alerting_setup,
     find_existing_ops_issue,
@@ -63,13 +66,13 @@ ERROR_WATCH_TOOLS = [
 
 SECURITY_AUDIT_TOOLS = [
     get_run_context,
-    audit_iam_policy,
-    audit_service_account_keys,
-    audit_cloud_run_security,
-    audit_cloud_sql,
-    audit_firewall_rules,
+    audit_iam,
+    audit_credentials,
+    audit_compute,
+    audit_databases,
+    audit_network,
     audit_security_services,
-    list_scc_findings,
+    list_security_findings,
     scan_deployed_images,
     fetch_cisa_kev,
     check_eol_status,

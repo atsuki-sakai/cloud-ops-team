@@ -68,8 +68,8 @@ app: FastAPI = get_fast_api_app(
     otel_to_cloud=otel_to_cloud,
     lifespan=lifespan,
 )
-app.title = "gcp-ops-team"
-app.description = "API for interacting with the Agent gcp-ops-team"
+app.title = "cloud-ops-team"
+app.description = "API for interacting with the Agent cloud-ops-team"
 
 
 # Main execution

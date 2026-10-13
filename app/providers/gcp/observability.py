@@ -1,21 +1,18 @@
-"""Read-only observability tools: Cloud Logging, Cloud Run, Cloud Scheduler,
-Cloud Monitoring. Used by the error-watch specialist (and partly by the
-PR-review specialist to verify that a fixed error has not recurred).
-"""
+"""Google Cloud observability (read-only): Cloud Logging, Cloud Run,
+Cloud Scheduler and Cloud Monitoring. Wrapped by ``GcpProvider``."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 from collections import defaultdict
 from typing import Any
-from urllib.parse import urlsplit
 
 from app.config import CONFIG
-from app.tools._fingerprint import fingerprint, message_template, search_text
-from app.tools._gcp import gcp_list, project_path
-from app.tools._redact import redact
+from app.core.fingerprint import fingerprint, message_template, search_text_from
+from app.core.redact import redact
+from app.core.timeutil import iso_utc, parse_time, utcnow
+from app.providers.gcp.client import gcp_list, project_path
 
 LOGGING = "https://logging.googleapis.com/v2"
 RUN = "https://run.googleapis.com/v2"
@@ -47,42 +44,12 @@ _MSG_KEYS = (
     "reason",
     "status",
 )
-_FRACTION = re.compile(r"(\.\d{6})\d+")
-_ID_SEGMENT = re.compile(r"^(\d+|[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{16,})$", re.I)
 
 
 def _search_text_for(entry: dict[str, Any], raw_message: str) -> str:
-    """Prefer the stable URL path prefix for request logs, else the message."""
-    url = (entry.get("httpRequest") or {}).get("requestUrl")
-    if url:
-        segments: list[str] = []
-        for seg in urlsplit(str(url)).path.split("/"):
-            if seg and _ID_SEGMENT.match(seg):
-                break
-            segments.append(seg)
-        path = "/".join(segments)
-        if len(path) > 3:
-            return path[:60]
-    return search_text(raw_message)
-
-
-def _utcnow() -> dt.datetime:
-    return dt.datetime.now(dt.UTC)
-
-
-def _iso(value: dt.datetime) -> str:
-    return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _parse_time(value: str) -> dt.datetime | None:
-    if not value:
-        return None
-    try:
-        cleaned = _FRACTION.sub(r"\1", value.strip()).replace("Z", "+00:00")
-        parsed = dt.datetime.fromisoformat(cleaned)
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
-    except ValueError:
-        return None
+    return search_text_from(
+        (entry.get("httpRequest") or {}).get("requestUrl"), raw_message
+    )
 
 
 def _escape(value: str) -> str:
@@ -200,11 +167,9 @@ def summarize_error_groups(hours: int) -> dict:
         ``by_service`` and ``groups`` (sorted by count, max 30).
     """
     hours = max(1, min(int(hours), 168))
-    end = _utcnow()
+    end = utcnow()
     start = end - dt.timedelta(hours=hours)
-    filter_ = (
-        f'severity>=ERROR AND timestamp>="{_iso(start)}" AND timestamp<="{_iso(end)}"'
-    )
+    filter_ = f'severity>=ERROR AND timestamp>="{iso_utc(start)}" AND timestamp<="{iso_utc(end)}"'
     ok, entries = _list_entries(
         filter_, page_size=1000, order="timestamp desc", max_pages=3
     )
@@ -258,8 +223,8 @@ def summarize_error_groups(hours: int) -> dict:
         group["revisions"] = sorted(group["revisions"])[:5]
     return {
         "status": "ok",
-        "project": CONFIG.target_project,
-        "window": {"start": _iso(start), "end": _iso(end), "hours": hours},
+        "target": CONFIG.target,
+        "window": {"start": iso_utc(start), "end": iso_utc(end), "hours": hours},
         "total_entries": len(entries),
         "truncated": len(entries) >= 3000,
         "group_count": len(groups),
@@ -281,8 +246,8 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
     """
     hours = max(1, min(int(hours), 168))
     limit = max(1, min(int(limit), 200))
-    start = _utcnow() - dt.timedelta(hours=hours)
-    clauses = [f'severity>=ERROR AND timestamp>="{_iso(start)}"']
+    start = utcnow() - dt.timedelta(hours=hours)
+    clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
     if service_name:
         clauses.append(_service_clause(service_name))
     ok, entries = _list_entries(
@@ -321,13 +286,13 @@ def get_log_context(
             else f"{project_path()}/traces/{trace}"
         )
         clauses.append(f'trace="{_escape(trace_name)}"')
-        start = _utcnow() - dt.timedelta(days=7)
-        clauses.append(f'timestamp>="{_iso(start)}"')
+        start = utcnow() - dt.timedelta(days=7)
+        clauses.append(f'timestamp>="{iso_utc(start)}"')
     else:
-        centre = _parse_time(around_time) or _utcnow()
+        centre = parse_time(around_time) or utcnow()
         window = max(1, min(int(window_minutes), 120))
-        clauses.append(f'timestamp>="{_iso(centre - dt.timedelta(minutes=window))}"')
-        clauses.append(f'timestamp<="{_iso(centre + dt.timedelta(minutes=window))}"')
+        clauses.append(f'timestamp>="{iso_utc(centre - dt.timedelta(minutes=window))}"')
+        clauses.append(f'timestamp<="{iso_utc(centre + dt.timedelta(minutes=window))}"')
         if service_name:
             clauses.append(_service_clause(service_name))
     ok, entries = _list_entries(
@@ -354,8 +319,8 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         search_text: Literal text to search for across all log fields.
         since: ISO-8601 timestamp to count from.
     """
-    start = _parse_time(since) or (_utcnow() - dt.timedelta(days=7))
-    clauses = [f'severity>=ERROR AND timestamp>="{_iso(start)}"']
+    start = parse_time(since) or (utcnow() - dt.timedelta(days=7))
+    clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
     if service_name:
         clauses.append(_service_clause(service_name))
     if search_text:
@@ -370,7 +335,7 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
     timestamps = [e.get("timestamp") for e in entries if e.get("timestamp")]
     return {
         "status": "ok",
-        "since": _iso(start),
+        "since": iso_utc(start),
         "count": len(entries),
         "capped": len(entries) >= 2000,
         "first_seen": min(timestamps) if timestamps else None,
@@ -385,7 +350,7 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
 
 
 def _run_parent() -> str:
-    return f"{RUN}/projects/{CONFIG.target_project}/locations/{CONFIG.target_region}"
+    return f"{RUN}/projects/{CONFIG.target}/locations/{CONFIG.region}"
 
 
 def _run_services_raw() -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
@@ -442,8 +407,8 @@ def get_cloud_run_services() -> dict:
     assert isinstance(services, list)
     return {
         "status": "ok",
-        "project": CONFIG.target_project,
-        "region": CONFIG.target_region,
+        "target": CONFIG.target,
+        "region": CONFIG.region,
         "count": len(services),
         "services": [compact_service(s) for s in services],
     }
@@ -507,9 +472,7 @@ def get_scheduler_jobs() -> dict:
     Jobs whose last attempt failed are flagged with ``failing: true``; these
     often explain ``cloud_scheduler_job`` error log entries.
     """
-    parent = (
-        f"{SCHEDULER}/projects/{CONFIG.target_project}/locations/{CONFIG.target_region}"
-    )
+    parent = f"{SCHEDULER}/projects/{CONFIG.target}/locations/{CONFIG.region}"
     ok, jobs = gcp_list(f"{parent}/jobs", "jobs", params={"pageSize": 100})
     if not ok:
         return {"status": jobs.get("status", "error"), "error": jobs}
@@ -552,12 +515,12 @@ def get_request_error_rates(hours: int) -> dict:
         hours: Window in hours (1-168).
     """
     hours = max(1, min(int(hours), 168))
-    end = _utcnow()
+    end = utcnow()
     start = end - dt.timedelta(hours=hours)
     params = {
         "filter": 'metric.type="run.googleapis.com/request_count" AND resource.type="cloud_run_revision"',
-        "interval.startTime": _iso(start),
-        "interval.endTime": _iso(end),
+        "interval.startTime": iso_utc(start),
+        "interval.endTime": iso_utc(end),
         "aggregation.alignmentPeriod": f"{hours * 3600}s",
         "aggregation.perSeriesAligner": "ALIGN_SUM",
         "aggregation.crossSeriesReducer": "REDUCE_SUM",

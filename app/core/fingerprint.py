@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
@@ -22,6 +23,7 @@ _HEX = re.compile(r"\b[0-9a-f]{12,}\b", re.I)
 _NUM = re.compile(r"\b\d+(?:\.\d+)?\b")
 _WS = re.compile(r"\s+")
 _META = re.compile(r"<!--\s*ops-meta:\s*(\{.*?\})\s*-->", re.S)
+_ID_SEGMENT = re.compile(r"^(\d+|[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{16,})$", re.I)
 
 
 def message_template(message: str, max_len: int = 240) -> str:
@@ -52,6 +54,25 @@ def search_text(message: str, max_len: int = 60) -> str:
     runs = re.findall(r"[A-Za-z][A-Za-z' :\-]{8,}", text)
     best = max(runs, key=len).strip(" :-'") if runs else text.strip()
     return best[:max_len].strip()
+
+
+def search_text_from(url: str | None, message: str) -> str:
+    """Search text for later recurrence checks.
+
+    For request logs, the URL path up to the first id-like segment
+    (``/api/v1/worker/sns-plans/<uuid>/steps`` -> ``/api/v1/worker/sns-plans``),
+    which stays stable across occurrences; otherwise ``search_text(message)``.
+    """
+    if url:
+        segments: list[str] = []
+        for seg in urlsplit(str(url)).path.split("/"):
+            if seg and _ID_SEGMENT.match(seg):
+                break
+            segments.append(seg)
+        path = "/".join(segments)
+        if len(path) > 3:
+            return path[:60]
+    return search_text(message)
 
 
 def build_meta_comment(meta: dict[str, Any]) -> str:

@@ -1,10 +1,12 @@
 [project]
-name = "gcp-ops-team"
-version = "0.1.0"
-description = ""
+name = "cloud-ops-team"
+version = "0.2.0"
+description = "Autonomous cloud operations team (error watch, security audit, PR verification) built with Google ADK"
 authors = [
-    {name = "Your Name", email = "your@email.com"},
+    {name = "Atsuki Sakai"},
 ]
+license = "Apache-2.0"
+readme = "README.md"
 
 
 dependencies = [

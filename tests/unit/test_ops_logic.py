@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from app.config import load_config
-from app.tools._fingerprint import (
+from app.core.fingerprint import (
     build_meta_comment,
     fingerprint,
     message_template,
     parse_meta_comment,
     search_text,
+    search_text_from,
 )
-from app.tools._redact import redact, redact_obj
-from app.tools.github_tools import KIND_LABELS, SEVERITY_LABELS, _title
+from app.core.redact import redact, redact_obj
+from app.tools.issues import KIND_LABELS, SEVERITY_LABELS, _title
 
 
 def test_message_template_collapses_variable_parts() -> None:
@@ -97,6 +98,8 @@ def test_issue_labels_and_title_prefix() -> None:
 
 
 def test_config_env_parsing(monkeypatch) -> None:
+    for key in ("OPS_CLOUD_PROVIDER", "OPS_TARGET", "OPS_TARGET_REGION"):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GCP_TARGET_PROJECT", "proj-x")
     monkeypatch.setenv("GITHUB_REPO", "octo/repo")
     monkeypatch.setenv("OPS_DRY_RUN", "false")
@@ -104,7 +107,8 @@ def test_config_env_parsing(monkeypatch) -> None:
     monkeypatch.setenv("OPS_MAX_ISSUES_PER_RUN", "3")
     monkeypatch.setenv("OPS_STACK_KEYWORDS", "A, B ,C")
     cfg = load_config()
-    assert cfg.target_project == "proj-x"
+    assert cfg.provider == "gcp"
+    assert cfg.target == "proj-x"
     assert cfg.repo_owner == "octo" and cfg.repo_name == "repo"
     assert cfg.dry_run is False
     assert cfg.auto_close_issues is True
@@ -123,22 +127,16 @@ def test_config_defaults_are_safe(monkeypatch) -> None:
 
 
 def test_request_log_search_text_uses_stable_url_prefix() -> None:
-    from app.tools.observability_tools import _search_text_for
-
-    entry = {
-        "httpRequest": {
-            "requestUrl": "https://demo-worker-x.a.run.app/api/v1/worker/sns-plans/01a11afa-0620-76b3-9f3a-1c3521841a9d/steps/plan_strategy?attempt=1"
-        }
-    }
-    assert _search_text_for(entry, "HTTP 503 POST ...") == "/api/v1/worker/sns-plans"
+    url = "https://demo-worker-x.a.run.app/api/v1/worker/sns-plans/01a11afa-0620-76b3-9f3a-1c3521841a9d/steps/plan_strategy?attempt=1"
+    assert search_text_from(url, "HTTP 503 POST ...") == "/api/v1/worker/sns-plans"
     assert (
-        _search_text_for({}, "job=x status=UNAVAILABLE Request failed")
+        search_text_from(None, "job=x status=UNAVAILABLE Request failed")
         == "UNAVAILABLE Request failed"
     )
 
 
 def test_secret_env_heuristic_ignores_ttl_and_mode_names() -> None:
-    from app.tools.security_tools import _looks_secret
+    from app.providers.gcp.security import _looks_secret
 
     assert _looks_secret("STRIPE_SECRET_KEY")
     assert _looks_secret("DATABASE_PASSWORD")
@@ -149,7 +147,7 @@ def test_secret_env_heuristic_ignores_ttl_and_mode_names() -> None:
 
 
 def test_scheduler_log_message_extraction() -> None:
-    from app.tools.observability_tools import _message_of, _service_of
+    from app.providers.gcp.observability import _message_of, _service_of
 
     entry = {
         "resource": {

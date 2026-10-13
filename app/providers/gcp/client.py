@@ -1,4 +1,4 @@
-"""Thin, read-only REST helper for Google Cloud APIs.
+"""Thin, read-only REST client for Google Cloud APIs.
 
 Uses Application Default Credentials (gcloud ADC locally, the runtime
 service account when deployed). Every call returns ``(ok, payload)``:
@@ -111,7 +111,7 @@ def gcp_request(
     try:
         headers = {
             "Authorization": f"Bearer {_access_token()}",
-            "x-goog-user-project": CONFIG.target_project,
+            "x-goog-user-project": CONFIG.target,
         }
         resp = httpx.request(
             method, url, params=params, json=json, headers=headers, timeout=timeout
@@ -177,4 +177,4 @@ def gcp_list(
 
 
 def project_path() -> str:
-    return f"projects/{CONFIG.target_project}"
+    return f"projects/{CONFIG.target}"

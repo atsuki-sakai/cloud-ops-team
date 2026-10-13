@@ -1,5 +1,15 @@
 # Coding Agent Guide
 
+## This project: cloud-ops-team
+
+- Agents: `app/agent.py` (leader `cloud_ops_team` + `single_turn` specialists), instructions in `app/prompts.py`.
+- Agent-facing tools live in `app/tools/` and must stay cloud-neutral; cloud specifics belong in `app/providers/<cloud>/`
+  behind the `CloudProvider` contract (`app/providers/base.py`). Read `docs/architecture.md` and `docs/providers.md` first.
+- Never add a tool that changes cloud resources. GitHub writes must honour `CONFIG.dry_run`.
+- Do not change `app/core/fingerprint.py` formulas (golden tests protect open issues from being re-filed).
+- Fast checks: `uv run pytest tests/unit` and `agents-cli lint`. Long jobs locally: `uv run python scripts/run_job.py <job>`
+  (`agents-cli run` has a fixed 120 s read timeout).
+
 ## Prerequisites
 
 Install the CLI (one-time):

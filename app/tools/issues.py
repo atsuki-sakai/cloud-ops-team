@@ -15,9 +15,9 @@ from urllib.parse import quote
 from google.adk.tools import ToolContext
 
 from app.config import CONFIG
-from app.tools._fingerprint import build_meta_comment, parse_meta_comment
-from app.tools._github import gh_graphql, gh_rest, repo_path
-from app.tools._redact import redact
+from app.core.fingerprint import build_meta_comment, parse_meta_comment
+from app.core.redact import redact
+from app.integrations.github import gh_graphql, gh_rest, repo_path
 
 KIND_LABELS: dict[str, list[str]] = {
     "error": ["ops:error", "bug"],
@@ -32,20 +32,51 @@ SEVERITY_LABELS: dict[str, list[str]] = {
     "info": [],
 }
 LABEL_DEFS: dict[str, tuple[str, str]] = {
-    "ops-agent": ("0052CC", "gcp-ops-team エージェントが自動作成"),
-    "ops:error": ("B60205", "本番エラー監視で検出"),
-    "ops:security": ("5319E7", "月次セキュリティ診断で検出"),
-    "ops:report": ("0E8A16", "運用エージェントの定期レポート"),
-    "ops:verified": ("0E8A16", "エージェントが対応完了を確認済み"),
-    "ops:stale": ("FBCA04", "2 週間以上進捗なし"),
+    "ops-agent": ("0052CC", "Created by the cloud-ops-team agents"),
+    "ops:error": ("B60205", "Detected by the error watch"),
+    "ops:security": ("5319E7", "Detected by the monthly security audit"),
+    "ops:report": ("0E8A16", "Scheduled report from the ops team"),
+    "ops:verified": ("0E8A16", "Fix verified by the ops team"),
+    "ops:stale": ("FBCA04", "No progress for 14+ days"),
     "priority: critical": ("B60205", ""),
     "priority: high": ("D93F0B", ""),
     "major": ("EDEDED", ""),
     "minor": ("EDEDED", ""),
     "bug": ("D73A4A", "Something isn't working"),
     "security": ("EDEDED", ""),
-    "infrastructure": ("0E8A16", "インフラ・Terraform"),
+    "infrastructure": ("0E8A16", "Infrastructure"),
 }
+
+# User-visible strings written to GitHub, selected by OPS_REPORT_LANGUAGE.
+MESSAGES: dict[str, dict[str, str]] = {
+    "ja": {
+        "footer": "_この ISSUE は cloud-ops-team エージェントが自動起票しました（{when} / {provider}: {target}）。"
+        "内容を確認のうえ対応方針を決めてください。対応 PR には `closes #<番号>` を含めると週次レビューで自動確認されます。_",
+        "recurrence": "🔁 **再発を検知**（{when}）",
+        "related_closed": "> 関連: 同種の ISSUE #{number}（{closed} クローズ）の再発の可能性があります。",
+        "verified": "✅ **対応完了を確認**（{when}）",
+        "auto_close_off": "_自動クローズは無効（OPS_AUTO_CLOSE_ISSUES=false）のため、確認のうえ人間がクローズしてください。_",
+        "cooldown": "同じ fingerprint の open ISSUE が {hours}h 以内に更新済みのためコメントを省略",
+        "cap": "OPS_MAX_ISSUES_PER_RUN ({cap}) に達したため起票をスキップ",
+    },
+    "en": {
+        "footer": "_Filed automatically by the cloud-ops-team agents ({when} / {provider}: {target}). "
+        "Please triage it. Include `closes #<number>` in the fixing PR so the weekly review can verify it._",
+        "recurrence": "🔁 **Recurrence detected** ({when})",
+        "related_closed": "> Related: this may be a recurrence of #{number} (closed {closed}).",
+        "verified": "✅ **Fix verified** ({when})",
+        "auto_close_off": "_Auto-close is disabled (OPS_AUTO_CLOSE_ISSUES=false); please close it after review._",
+        "cooldown": "An open issue with the same fingerprint was updated within {hours}h; comment skipped",
+        "cap": "Skipped: OPS_MAX_ISSUES_PER_RUN ({cap}) reached",
+    },
+}
+
+
+def _msg(key: str, **kwargs: Any) -> str:
+    table = MESSAGES.get(CONFIG.report_language, MESSAGES["en"])
+    return table[key].format(**kwargs)
+
+
 _ensured_labels: set[str] = set()
 _COUNTER_KEY = "ops:issues_created"
 
@@ -83,12 +114,15 @@ def _title(kind: str, title: str) -> str:
 
 
 def _footer(meta: dict[str, Any]) -> str:
-    return (
-        "\n\n---\n"
-        f"_この ISSUE は gcp-ops-team エージェントが自動起票しました（{_now_local()} / project: {CONFIG.target_project}）。"
-        "内容を確認のうえ対応方針を決めてください。対応 PR には `closes #<番号>` を含めると週次レビューで自動確認されます。_\n"
-        f"{build_meta_comment(meta)}"
+    footer = _msg(
+        "footer", when=_now_local(), provider=CONFIG.provider, target=CONFIG.target
     )
+    return f"\n\n---\n{footer}\n{build_meta_comment(meta)}"
+
+
+def _meta_target(meta: dict[str, Any]) -> str | None:
+    """Target recorded in an issue (``project`` is the pre-multi-cloud key)."""
+    return meta.get("target") or meta.get("project")
 
 
 def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
@@ -109,6 +143,7 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "service": meta.get("service"),
         "search_text": meta.get("search_text"),
         "severity": meta.get("severity"),
+        "target": _meta_target(meta),
     }
 
 
@@ -159,8 +194,16 @@ def find_existing_ops_issue(fingerprint: str) -> dict:
             if state == "closed" and (issue.get("closed_at") or "") < cutoff:
                 continue
             compact = _compact_issue(issue)
-            if compact["fingerprint"] == fingerprint:
-                return {"status": "found", **compact}
+            if compact["fingerprint"] != fingerprint:
+                continue
+            # Several targets (e.g. staging / prod) may share one repository.
+            if (
+                compact["target"]
+                and CONFIG.target
+                and compact["target"] != CONFIG.target
+            ):
+                continue
+            return {"status": "found", **compact}
     return {"status": "not_found"}
 
 
@@ -203,7 +246,8 @@ def create_ops_issue(
         "service": service,
         "search_text": search_text,
         "severity": severity,
-        "project": CONFIG.target_project,
+        "provider": CONFIG.provider,
+        "target": CONFIG.target,
         "created_at": _now_iso(),
     }
     clean_body = redact(body)
@@ -224,9 +268,9 @@ def create_ops_issue(
                 "status": "duplicate_recent",
                 "number": existing["number"],
                 "url": existing["url"],
-                "reason": f"同じ fingerprint の open ISSUE が {CONFIG.recurrence_cooldown_hours}h 以内に更新済みのためコメントを省略",
+                "reason": _msg("cooldown", hours=CONFIG.recurrence_cooldown_hours),
             }
-        comment = f"🔁 **再発を検知**（{_now_local()}）\n\n{clean_body[:1500]}"
+        comment = f"{_msg('recurrence', when=_now_local())}\n\n{clean_body[:1500]}"
         if CONFIG.dry_run:
             return {
                 "status": "dry_run",
@@ -246,13 +290,18 @@ def create_ops_issue(
             "url": existing["url"],
         }
     if existing["status"] == "found":
-        clean_body += f"\n\n> 関連: 同種の ISSUE #{existing['number']}（{str(existing.get('closed_at'))[:10]} クローズ）の再発の可能性があります。"
+        related = _msg(
+            "related_closed",
+            number=existing["number"],
+            closed=str(existing.get("closed_at"))[:10],
+        )
+        clean_body += f"\n\n{related}"
 
     created_count = int(tool_context.state.get(_COUNTER_KEY, 0) or 0)
     if created_count >= CONFIG.max_issues_per_run:
         return {
             "status": "skipped",
-            "reason": f"OPS_MAX_ISSUES_PER_RUN ({CONFIG.max_issues_per_run}) に達したため起票をスキップ",
+            "reason": _msg("cap", cap=CONFIG.max_issues_per_run),
             "title": full_title,
         }
     full_body = clean_body + _footer(meta)
@@ -296,7 +345,7 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
 
     Args:
         kind: ``security`` | ``error`` | ``weekly`` (adds matching label).
-        title: Title without prefix, e.g. ``月次セキュリティ診断 2026-10``.
+        title: Title without prefix, e.g. ``Monthly security audit 2026-10``.
         body: Markdown report.
     """
     kind = kind.strip().lower()
@@ -306,7 +355,8 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     meta = {
         "kind": "report",
         "report_kind": kind,
-        "project": CONFIG.target_project,
+        "provider": CONFIG.provider,
+        "target": CONFIG.target,
         "created_at": _now_iso(),
     }
     full_title = _title("report", title)
@@ -407,9 +457,9 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
         issue_number: Issue number.
         reason_comment: What was verified (merged PR, no recurrence, etc.).
     """
-    comment = f"✅ **対応完了を確認**（{_now_local()}）\n\n{redact(reason_comment)}"
+    comment = f"{_msg('verified', when=_now_local())}\n\n{redact(reason_comment)}"
     if not CONFIG.auto_close_issues:
-        comment += "\n\n_自動クローズは無効（OPS_AUTO_CLOSE_ISSUES=false）のため、確認のうえ人間がクローズしてください。_"
+        comment += f"\n\n{_msg('auto_close_off')}"
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
