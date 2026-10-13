@@ -1,0 +1,18 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "job_monthly_security_audit_json",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "{\"data\": {\"job\": \"monthly_security_audit\", \"kev_days\": 30}, \"attributes\": {}}"}]
+      }
+    },
+    {
+      "eval_case_id": "natural_pr_status",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "今週マージされた PR で完了した ISSUE があるか確認して、週次レポートにまとめてください。"}]
+      }
+    }
+  ]
+}
