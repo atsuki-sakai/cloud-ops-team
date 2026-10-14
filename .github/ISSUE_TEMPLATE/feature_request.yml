@@ -1,23 +1,23 @@
-name: Feature request
-description: Suggest a new check, tool, job or improvement
+name: 機能の提案 / Feature request
+description: 新しいチェック・ツール・ジョブや改善の提案 / Suggest a new check, tool, job or improvement
 labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What operations work should the team do (better)?
+      label: 課題 / Problem
+      description: チームにどんな運用作業を（もっと上手に）してほしいですか？ / What operations work should the team do (better)?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposal
-      description: Which specialist, which data source, what should end up in the issue or report?
+      label: 提案 / Proposal
+      description: どの担当が、どのデータを使い、ISSUE やレポートに何を書くべきか / Which specialist, which data source, what should end up in the issue or report?
   - type: checkboxes
     id: constraints
     attributes:
-      label: Constraints
+      label: 制約 / Constraints
       options:
-        - label: The feature only needs read access to the cloud (the agents never change resources)
+        - label: クラウドへの読み取り権限だけで実現できる（エージェントはリソースを変更しない） / The feature only needs read access to the cloud (the agents never change resources)
           required: true

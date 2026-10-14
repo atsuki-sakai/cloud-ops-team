@@ -1,13 +1,29 @@
+# 行動規範 / Contributor Covenant Code of Conduct
 
-# Contributor Covenant Code of Conduct
+## 日本語の要約
 
-## Our Pledge
+このプロジェクトは [Contributor Covenant](https://www.contributor-covenant.org/) 2.1 を行動規範として採用しています。
+正式な本文は下の英語版です。各国語の公式翻訳は [Contributor Covenant の翻訳一覧](https://www.contributor-covenant.org/translations) にあります。
+
+- 年齢、体格、障害、民族、性別、性自認、経験、学歴、国籍、外見、人種、宗教、性的指向などにかかわらず、誰もが嫌がらせを受けずに参加できる場にします。
+- 他の人への共感と思いやりを持ち、異なる意見や経験を尊重し、建設的なフィードバックを伝え、受け入れます。
+- 性的な言動、侮辱や中傷、個人攻撃、公私を問わない嫌がらせ、本人の許可のない個人情報の公開は認めません。
+- この規範は、プロジェクトのあらゆる場と、プロジェクトを代表して行動するときに適用されます。
+- 違反を見かけたり受けたりしたときは、GitHub の[非公開のセキュリティアドバイザリー](https://github.com/atsuki-sakai/cloud-ops-team/security/advisories/new)を
+  「Code of Conduct report」という題名で作成するか、リポジトリに記載のメンテナーに連絡してください。すべての報告を速やかかつ公正に確認します。
+- メンテナーは、違反の程度に応じて注意、警告、一時的な参加禁止、恒久的な参加禁止の措置をとります。
+
+---
+
+## English (authoritative text)
+
+### Our Pledge
 
 We as members, contributors, and leaders pledge to make participation in our community a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, caste, color, religion, or sexual identity and orientation.
 
 We pledge to act and interact in ways that contribute to an open, welcoming, diverse, inclusive, and healthy community.
 
-## Our Standards
+### Our Standards
 
 Examples of behavior that contributes to a positive environment for our community include:
 
@@ -25,51 +41,51 @@ Examples of unacceptable behavior include:
 * Publishing others' private information, such as a physical or email address, without their explicit permission
 * Other conduct which could reasonably be considered inappropriate in a professional setting
 
-## Enforcement Responsibilities
+### Enforcement Responsibilities
 
 Community leaders are responsible for clarifying and enforcing our standards of acceptable behavior and will take appropriate and fair corrective action in response to any behavior that they deem inappropriate, threatening, offensive, or harmful.
 
 Community leaders have the right and responsibility to remove, edit, or reject comments, commits, code, wiki edits, issues, and other contributions that are not aligned to this Code of Conduct, and will communicate reasons for moderation decisions when appropriate.
 
-## Scope
+### Scope
 
 This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces. Examples of representing our community include using an official e-mail address, posting via an official social media account, or acting as an appointed representative at an online or offline event.
 
-## Enforcement
+### Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement privately through GitHub: open a [private security advisory](https://github.com/atsuki-sakai/cloud-ops-team/security/advisories/new) titled "Code of Conduct report", or contact the maintainer listed in the repository. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
-## Enforcement Guidelines
+### Enforcement Guidelines
 
 Community leaders will follow these Community Impact Guidelines in determining the consequences for any action they deem in violation of this Code of Conduct:
 
-### 1. Correction
+#### 1. Correction
 
 **Community Impact**: Use of inappropriate language or other behavior deemed unprofessional or unwelcome in the community.
 
 **Consequence**: A private, written warning from community leaders, providing clarity around the nature of the violation and an explanation of why the behavior was inappropriate. A public apology may be requested.
 
-### 2. Warning
+#### 2. Warning
 
 **Community Impact**: A violation through a single incident or series of actions.
 
 **Consequence**: A warning with consequences for continued behavior. No interaction with the people involved, including unsolicited interaction with those enforcing the Code of Conduct, for a specified period of time. This includes avoiding interactions in community spaces as well as external channels like social media. Violating these terms may lead to a temporary or permanent ban.
 
-### 3. Temporary Ban
+#### 3. Temporary Ban
 
 **Community Impact**: A serious violation of community standards, including sustained inappropriate behavior.
 
 **Consequence**: A temporary ban from any sort of interaction or public communication with the community for a specified period of time. No public or private interaction with the people involved, including unsolicited interaction with those enforcing the Code of Conduct, is allowed during this period. Violating these terms may lead to a permanent ban.
 
-### 4. Permanent Ban
+#### 4. Permanent Ban
 
 **Community Impact**: Demonstrating a pattern of violation of community standards, including sustained inappropriate behavior, harassment of an individual, or aggression toward or disparagement of classes of individuals.
 
 **Consequence**: A permanent ban from any sort of public interaction within the community.
 
-## Attribution
+### Attribution
 
 This Code of Conduct is adapted from the [Contributor Covenant][homepage], version 2.1, available at [https://www.contributor-covenant.org/version/2/1/code_of_conduct.html][v2.1].
 

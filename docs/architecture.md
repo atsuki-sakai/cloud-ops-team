@@ -1,69 +1,68 @@
-# Architecture
+# アーキテクチャ
 
-cloud-ops-team runs the routine operations work of a cloud environment with a small team of AI agents:
-an **error watch** that turns production errors into well-researched GitHub issues, a **monthly security audit**,
-and a **weekly review** that verifies whether merged pull requests actually fixed those issues.
-Humans (often with AI coding tools) implement the fixes; the agents never change the cloud.
+cloud-ops-team は、クラウド環境の定常的な運用保守を小さな AI エージェントチームで回します。
+本番エラーを調査済みの GitHub ISSUE に変える **エラー監視**、**月次セキュリティ診断**、マージされた PR が本当に問題を直したかを確かめる
+**週次レビュー** の 3 つです。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
 
-- Framework: [Agent Development Kit (ADK)](https://adk.dev/) 2.x for Python, scaffolded with [agents-cli](https://github.com/google/agents-cli)
-- Model: Gemini (`gemini-3.8-flash` by default, `OPS_MODEL`)
-- Clouds: **Google Cloud** (implemented), **AWS** and **Azure** (provider skeletons, see [providers.md](providers.md))
-- Issue tracker: GitHub
+- フレームワーク: [ADK](https://adk.dev/) 2.x（Python）、[agents-cli](https://github.com/google/agents-cli) でスキャフォールド
+- モデル: Gemini（既定 `gemini-3.8-flash`、`OPS_MODEL` で変更）
+- クラウド: **Google Cloud**（実装済み）、**AWS** / **Azure**（雛形。[providers.md](providers.md)）
+- ISSUE トラッカー: GitHub
 
-日本語版: [docs/ja/architecture.md](ja/architecture.md)
+English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [customization.md](customization.md)
 
-## 1. The human–agent loop
+## 1. 人間とエージェントの役割分担
 
 ```mermaid
 flowchart LR
-    subgraph Agents["cloud-ops-team (automated)"]
-        EW["error_watch<br/>daily: detect and analyse errors"]
-        SA["security_audit<br/>monthly: posture, CVEs, EOL, threats"]
-        PR["pr_review<br/>weekly: verify merged fixes"]
+    subgraph Agents["cloud-ops-team（自動）"]
+        EW["error_watch<br/>毎日: エラー検知・原因分析"]
+        SA["security_audit<br/>月次: 設定・CVE・EOL・脅威動向"]
+        PR["pr_review<br/>週次: マージ済み修正の検証"]
     end
-    subgraph Humans["Humans (+ AI coding tools)"]
-        H1["Triage the issue"]
-        H2["Implement the fix<br/>PR body: closes #N"]
-        H3["Close the verified issue"]
+    subgraph Humans["人間（＋AI コーディング）"]
+        H1["ISSUE を確認し対応方針を決める"]
+        H2["修正を実装し PR を作成<br/>本文に closes #N"]
+        H3["検証済み ISSUE をクローズ"]
     end
-    EW -- "[ops/error] issue" --> H1
-    SA -- "[ops/security] issue + monthly report" --> H1
+    EW -- "[ops/error] ISSUE" --> H1
+    SA -- "[ops/security] ISSUE + 月次レポート" --> H1
     H1 --> H2
-    H2 -- "merge" --> PR
-    PR -- "ops:verified + weekly report" --> H3
-    PR -. "recurred → comment" .-> H1
+    H2 -- "マージ" --> PR
+    PR -- "ops:verified + 週次レポート" --> H3
+    PR -. "再発あり → 再発コメント" .-> H1
 ```
 
-The agents are **read-only** towards the cloud: no tool can change a cloud resource. Towards GitHub they only create issues,
-comment and add labels; closing an issue requires `OPS_AUTO_CLOSE_ISSUES=true`.
+エージェントはクラウドに対して **読み取り専用** です。クラウドのリソースを変更できるツールは 1 つもありません。
+GitHub に対しても、行うのは ISSUE の作成・コメント・ラベル付けだけです。ISSUE のクローズは `OPS_AUTO_CLOSE_ISSUES=true` のときに限られます。
 
-## 2. Layers
+## 2. レイヤー構成
 
 ```mermaid
 flowchart TB
-    subgraph Agents["Agents (app/agent.py, app/prompts.py, app/specialists/)"]
-        ROOT["cloud_ops_team (leader)"]
+    subgraph Agents["エージェント（app/agent.py, app/prompts.py, app/specialists/）"]
+        ROOT["cloud_ops_team（リーダー）"]
         EW["error_watch"]
         SA["security_audit"]
         PR["pr_review"]
         ROOT --> EW & SA & PR
     end
-    subgraph Tools["Agent-facing tools (app/tools) — identical on every cloud"]
-        CLOUD["cloud.py<br/>18 capabilities"]
-        TI["threat_intel.py<br/>CISA KEV · EOL · web research"]
-        REPO["repo.py<br/>repository posture"]
-        ISS["issues.py<br/>issues · PRs · CI"]
-        CTX["context.py<br/>run context"]
+    subgraph Tools["エージェントが使うツール（app/tools）— どのクラウドでも同じ"]
+        CLOUD["cloud.py<br/>18 の共通機能"]
+        TI["threat_intel.py<br/>CISA KEV・EOL・Web 調査"]
+        REPO["repo.py<br/>リポジトリ診断"]
+        ISS["issues.py<br/>ISSUE・PR・CI"]
+        CTX["context.py<br/>実行コンテキスト"]
     end
-    subgraph Providers["Providers (app/providers)"]
-        BASE["CloudProvider contract<br/>base.py"]
-        GCP["gcp — implemented"]
-        AWS["aws — skeleton"]
-        AZ["azure — skeleton"]
-        EXT["third-party via entry points"]
+    subgraph Providers["プロバイダー（app/providers）"]
+        BASE["CloudProvider 契約<br/>base.py"]
+        GCP["gcp — 実装済み"]
+        AWS["aws — 雛形"]
+        AZ["azure — 雛形"]
+        EXT["外部パッケージ（entry points）"]
         BASE --- GCP & AWS & AZ & EXT
     end
-    subgraph Core["Core (app/core) — cloud-neutral"]
+    subgraph Core["コア（app/core）— クラウド非依存"]
         FP["fingerprint"]
         RD["redact"]
         FD["findings"]
@@ -77,307 +76,297 @@ flowchart TB
     ISS --> Core
 ```
 
-| Package | Responsibility |
+| パッケージ | 責務 |
 |---|---|
-| `app/agent.py`, `app/prompts.py` | Builds the leader and renders every instruction (cloud, language, project context) |
-| `app/specialists/` | One module per specialist: role, instruction, tools and jobs; the registry drives routing and schedules |
-| `app/tools/` | Functions the model calls. Names and docstrings are cloud-neutral |
-| `app/providers/` | One adapter per cloud implementing the `CloudProvider` contract |
-| `app/core/` | Fingerprints, redaction, the shared audit result shape, time helpers |
-| `app/integrations/github.py` | Minimal GitHub REST + GraphQL client |
-| `app/config.py` | Everything configurable, from environment variables |
-| `app/fast_api_app.py` | ADK server with the Pub/Sub-style trigger endpoint enabled |
+| `app/agent.py`, `app/prompts.py` | リーダーの組み立てと、全指示文の生成（クラウド名・言語・プロジェクト情報の差し込み） |
+| `app/specialists/` | 担当ごとのモジュール（役割・指示文・ツール・ジョブ）。登録一覧から振り分けとスケジュールを自動生成 |
+| `app/tools/` | モデルが呼ぶ関数。名前と docstring はクラウド非依存 |
+| `app/providers/` | クラウドごとのアダプター（`CloudProvider` 契約の実装） |
+| `app/core/` | フィンガープリント、マスキング、監査結果の共通形式、時刻ヘルパー |
+| `app/integrations/github.py` | 最小限の GitHub クライアント（REST と GraphQL） |
+| `app/config.py` | 環境変数から読み込む全設定 |
+| `app/fast_api_app.py` | Pub/Sub 形式のトリガーを有効にした ADK サーバー |
 
-## Folder structure
+## フォルダ構成
 
-★ marks the places you will typically change when adapting the team to your project
-([customization.md](customization.md)).
+★ は、自分のプロジェクト向けに調整するときに主に触る場所です（[カスタマイズガイド](customization.md)）。
 
 ```
 cloud-ops-team/
-├── app/                          the agent service (deployed to Cloud Run)
-│   ├── agent.py                  builds the leader; specialists are loaded from app/specialists
-│   ├── prompts.py                renders instructions (cloud, language, project context)
-│   ├── config.py                 settings from .env / environment variables
-│   ├── fast_api_app.py           HTTP server (scheduler endpoint /apps/app/trigger/pubsub)
-│   ├── specialists/              ★ one module per team member
-│   │   ├── base.py               Specialist and Job types
-│   │   ├── error_watch.py        error watch: instruction, tools, jobs
-│   │   ├── security_audit.py     monthly security audit
-│   │   ├── pr_review.py          weekly fix verification
-│   │   ├── _template.py          copy this to add a specialist
-│   │   └── __init__.py           registry (SPECIALISTS)
-│   ├── tools/                    ★ functions the model calls (cloud-neutral)
-│   │   ├── cloud.py              the 18 cloud capabilities (delegate to the provider)
-│   │   ├── issues.py             GitHub issues / PRs (dry-run aware)
-│   │   ├── threat_intel.py       CISA KEV, end-of-life, web threat research
-│   │   ├── repo.py               repository security posture
-│   │   ├── context.py            run context (time, target, capabilities)
-│   │   └── __init__.py           tool lists per specialist
-│   ├── providers/                ★ one adapter per cloud
-│   │   ├── base.py               CloudProvider contract (unimplemented = not_supported)
-│   │   ├── gcp/                  Google Cloud (implemented)
-│   │   ├── aws/                  AWS (skeleton)
-│   │   └── azure/                Azure (skeleton)
-│   ├── core/                     fingerprints, redaction, audit result shape, time helpers
-│   ├── integrations/github.py    GitHub REST + GraphQL client
-│   └── app_utils/                agents-cli server plumbing (A2A, sessions)
+├── app/                          エージェント本体（Cloud Run にデプロイされる）
+│   ├── agent.py                  リーダーを組み立てる（専門家は app/specialists から自動で読み込む）
+│   ├── prompts.py                指示文の組み立て（クラウド名・言語・プロジェクト情報の差し込み）
+│   ├── config.py                 .env / 環境変数から設定を読む
+│   ├── fast_api_app.py           HTTP サーバー（スケジューラが呼ぶ /apps/app/trigger/pubsub）
+│   ├── specialists/              ★ 担当（専門家）の定義。1 ファイル 1 担当
+│   │   ├── base.py               Specialist / Job の型
+│   │   ├── error_watch.py        エラー監視（指示文・ツール・ジョブ）
+│   │   ├── security_audit.py     月次セキュリティ診断
+│   │   ├── pr_review.py          週次の修正確認
+│   │   ├── _template.py          新しい担当のひな形
+│   │   └── __init__.py           登録一覧（SPECIALISTS）
+│   ├── tools/                    ★ エージェントが呼ぶ関数（クラウド非依存）
+│   │   ├── cloud.py              クラウド機能 18 種の窓口（プロバイダーに委譲）
+│   │   ├── issues.py             GitHub の ISSUE / PR（お試しモード対応）
+│   │   ├── threat_intel.py       CISA KEV・サポート期限・Web 脅威調査
+│   │   ├── repo.py               リポジトリのセキュリティ設定
+│   │   ├── context.py            実行コンテキスト（時刻・対象・使える機能）
+│   │   └── __init__.py           担当ごとのツール一覧
+│   ├── providers/                ★ クラウドごとの実装
+│   │   ├── base.py               CloudProvider 契約（未実装は not_supported）
+│   │   ├── gcp/                  Google Cloud（実装済み）
+│   │   ├── aws/                  AWS（雛形）
+│   │   └── azure/                Azure（雛形）
+│   ├── core/                     共通部品（フィンガープリント・伏せ字・診断結果の形・時刻）
+│   ├── integrations/github.py    GitHub API クライアント
+│   └── app_utils/                agents-cli が生成したサーバー部品（A2A・セッション）
 ├── config/
-│   └── ops-context.example.md    ★ project knowledge template (copy to ops-context.md)
+│   └── ops-context.example.md    ★ プロジェクト固有情報のひな形（ops-context.md にコピー）
 ├── scripts/
-│   ├── setup.py                  create .env interactively (make setup)
-│   ├── doctor.py                 check configuration and access, print fixes (make doctor)
-│   ├── run_job.py                run one job and print every tool call (make run)
-│   ├── jobs.py                   list jobs and schedules (make jobs)
-│   ├── envrun.py                 run a command with .env loaded (used by the Makefile)
-│   ├── trigger_local.sh          send a scheduler-style request to a local server
-│   └── gcp/                      bootstrap, deploy_cloud_run, setup_schedules, grant_target_roles
+│   ├── setup.py                  対話で .env を作る（make setup）
+│   ├── doctor.py                 設定と権限を点検し、直し方を表示（make doctor）
+│   ├── run_job.py                ジョブを 1 回実行し、ツール呼び出しを全部表示（make run）
+│   ├── jobs.py                   ジョブと予定の一覧（make jobs）
+│   ├── envrun.py                 .env を読み込んでコマンドを実行（Makefile が使用）
+│   ├── trigger_local.sh          ローカルサーバーにスケジューラと同じ形式で送信
+│   └── gcp/                      Google Cloud 用: 初期設定・デプロイ・スケジュール・権限付与
 ├── tests/
-│   ├── unit/                     offline: contracts, conventions, configuration
-│   ├── integration/              calls the model
-│   └── eval/                     LLM-judged behaviour cases
-├── docs/                         architecture, customization, providers, configuration, deployment (ja/: Japanese)
-├── Makefile                      entry point for every task (`make` lists them)
-├── .env.example                  configuration template
-└── Dockerfile                    image for Cloud Run (app/ and config/)
+│   ├── unit/                     オフラインのテスト（契約・規約・設定）
+│   ├── integration/              モデルを呼ぶテスト
+│   └── eval/                     LLM 採点の評価データ
+├── docs/                         設計・カスタマイズ・プロバイダー・設定・デプロイ（en/ に英語版）
+├── Makefile                      よく使う操作の入口（make で一覧表示）
+├── .env.example                  設定のひな形
+└── Dockerfile                    Cloud Run 用イメージ（app/ と config/ を含む）
 ```
 
-## 3. Agents
+## 3. エージェント
 
-| Agent | Role | Tools | Output |
+| エージェント | 役割 | ツール | 出力 |
 |---|---|---|---|
-| `cloud_ops_team` (root) | Reads the job (JSON from the scheduler or natural language), calls the right specialist, writes the consolidated report | `get_run_context` + 3 specialists | Report |
-| `error_watch` | Groups error logs by fingerprint, correlates with 5xx rates, failing jobs and recent deployments, writes a root-cause hypothesis with confidence, files issues | 15 | `[ops/error]` issues |
-| `security_audit` | IAM, credentials, compute, databases, network, security services, posture findings, image CVEs, EOL, CISA KEV, web threat research; files critical/high findings | 19 | `[ops/security]` issues + monthly report |
-| `pr_review` | For every open team issue: linked PRs, merge state, CI, and whether the error recurred after the merge | 13 | `ops:verified` / `ops:stale` + weekly report |
+| `cloud_ops_team`（リーダー） | ジョブ（スケジューラの JSON か自然言語）を解釈して担当を呼び、統合レポートを書く | `get_run_context` ＋ 担当 3 人 | レポート |
+| `error_watch` | エラーをフィンガープリント単位に集約し、5xx 率・失敗ジョブ・直近デプロイと突き合わせ、確度付きの原因仮説を立てて起票 | 15 個 | `[ops/error]` ISSUE |
+| `security_audit` | IAM・認証情報・コンピュート・DB・ネットワーク・セキュリティサービス・検出結果・イメージ CVE・EOL・CISA KEV・Web 脅威調査を確認し、critical / high を起票 | 19 個 | `[ops/security]` ISSUE ＋ 月次レポート |
+| `pr_review` | チームが起票した open ISSUE ごとに、紐づく PR・マージ状態・CI・マージ後の再発を検証 | 13 個 | `ops:verified` / `ops:stale` ＋ 週次レポート |
 
-**Specialists are data, not code paths.** Each one is a `Specialist` in `app/specialists/<name>.py` (role, instruction, tools,
-jobs) registered in `app/specialists/__init__.py`. `app/agent.py` turns every registered specialist into a sub-agent, the
-leader's team list and job routing table are rendered from the registry, and `scripts/jobs.py` derives the Cloud Scheduler jobs
-from the same definitions — adding a specialist or a job touches one module.
+- **担当はコードではなく「定義」**です。各担当は `app/specialists/<名前>.py` の `Specialist`（役割・指示文・ツール・ジョブ）で、
+  `app/specialists/__init__.py` に登録します。`app/agent.py` が登録された担当をサブエージェントに変換し、リーダーの担当一覧とジョブの振り分け表、
+  Cloud Scheduler のジョブ（`scripts/jobs.py`）も同じ定義から作られます。担当やジョブの追加は 1 ファイルの変更で済みます。
+- **プロジェクト固有の情報**: `config/ops-context.md`（任意、`OPS_CONTEXT_FILE`）の内容がすべての指示文に追加されます。
+  サービス構成・重要度の考え方・既知のノイズを、プロンプトを編集せずに伝えられます。安全ルールより優先されることはありません。
+- **担当は `mode="single_turn"` のサブエージェント**です。ADK がリーダーのツールとして公開し、リーダーと同じセッション内でインライン実行します。
+  `AgentTool` で包む方式と比べて、担当のツール呼び出しが 1 件ずつイベントとしてストリームされます。そのため HTTP/SSE のクライアントや
+  スケジューラの接続が無音にならず、`agents-cli run` / `eval generate` の 120 秒の読み取りタイムアウトにもかかりません。
+  すべての呼び出しはトレースとセッション履歴に残ります。
+- **指示文は文字列ではなく関数（InstructionProvider）**で渡します。文字列だと ADK が指示文中の JSON 例の `{...}` を変数展開しようとして壊れるためです。
+  プロバイダーのプロファイル（表示名・対象の種別・CLI・用語集）、`CONFIG`、出力言語から組み立てます。
+- **予算をプロンプトに明記**しています。1 回の実行でツール呼び出し 25〜30 回以内、ISSUE 検索 3 回、Web 調査 1 回、5〜8 分が目安です。
+  Google Cloud での実測は、エラー監視が 60〜150 秒、月次診断が約 200 秒でツール呼び出し 27 回です。
 
-**Project context.** `config/ops-context.md` (optional, `OPS_CONTEXT_FILE`) is appended to every instruction, so operators can
-describe their services, severity policy and known noise without editing prompts. It never overrides the safety rules.
+## 4. プロバイダー抽象
 
-**Specialists are `mode="single_turn"` sub-agents.** ADK exposes each as a tool of the leader and runs it inline in the leader's
-session. Compared with wrapping them in `AgentTool`, every tool call streams as an event (HTTP/SSE clients and the scheduler
-connection never go silent, and `agents-cli run` / `eval generate` stay under their 120-second read timeout) and every call is
-recorded in traces and session history.
+担当が見るのは `app/tools/cloud.py` の 18 個の共通ツールだけです。各ツールは `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
 
-**Instructions are providers (callables)**, not strings: ADK would otherwise try to template the `{...}` JSON examples they contain.
-They are rendered from the provider profile (display name, target type, CLI, glossary), `CONFIG` and the report language.
-
-**Budgets are part of the prompts**: at most 25–30 tool calls, three issue searches, one web research call and a 5–8 minute
-target per run. Measured on Google Cloud: error watch 60–150 s, monthly audit about 200 s with 27 tool calls.
-
-## 4. Provider abstraction
-
-The specialists only ever see the 18 capability tools in `app/tools/cloud.py`. Each tool calls the method of the same name on
-the provider selected by `OPS_CLOUD_PROVIDER`:
-
-| Capability | Normalized meaning | Google Cloud | AWS (planned) | Azure (planned) |
+| 共通機能 | 正規化された意味 | Google Cloud | AWS（予定） | Azure（予定） |
 |---|---|---|---|---|
-| `summarize_error_groups`, `list_error_logs`, `get_log_context`, `count_matching_errors` | Error logs, grouped and searchable | Cloud Logging | CloudWatch Logs Insights | Log Analytics (KQL) |
-| `list_services` | Compute services and health | Cloud Run services | ECS / Lambda / App Runner | App Service / Container Apps |
-| `list_deployments` | Releases of a service | Cloud Run revisions | ECS deployments / Lambda versions | Container Apps revisions |
-| `list_scheduled_jobs` | Scheduled jobs and failures | Cloud Scheduler | EventBridge Scheduler | Container Apps Jobs / Logic Apps |
-| `list_databases` | Managed DBs with `engine` / `engine_version` | Cloud SQL | RDS / Aurora | PostgreSQL / MySQL / SQL |
-| `get_request_error_rates` | 5xx / 4xx per service | Cloud Monitoring | CloudWatch metrics | Azure Monitor metrics |
-| `get_alerting_setup` | Alerts and uptime checks | Alert policies, uptime checks | CloudWatch alarms | Alert rules, availability tests |
-| `audit_iam` | Public or over-privileged access | Project IAM policy | IAM, Access Analyzer | RBAC assignments |
-| `audit_credentials` | Long-lived keys | Service-account keys | IAM access keys | Service-principal secrets |
-| `audit_compute` | Exposure, identity, plain-text secrets, image pinning | Cloud Run | ECS / Lambda | App Service / Container Apps |
-| `audit_databases` | Exposure, TLS, backups, maintenance | Cloud SQL | RDS | Azure databases |
-| `audit_network` | Internet-open sensitive ports | VPC firewall | Security groups | NSGs |
-| `audit_security_services` | Posture / scanning services enabled | SCC, container scanning, ... | GuardDuty, Security Hub, Inspector | Defender for Cloud plans |
-| `list_security_findings` | Active posture findings | Security Command Center | Security Hub | Defender for Cloud |
-| `scan_deployed_images` | CVEs in running images | Artifact Analysis | Amazon Inspector | Defender for Containers |
+| `summarize_error_groups`, `list_error_logs`, `get_log_context`, `count_matching_errors` | エラーログの集約と検索 | Cloud Logging | CloudWatch Logs Insights | Log Analytics（KQL） |
+| `list_services` | コンピュートサービスと稼働状態 | Cloud Run サービス | ECS / Lambda / App Runner | App Service / Container Apps |
+| `list_deployments` | サービスのリリース履歴 | Cloud Run リビジョン | ECS デプロイ / Lambda バージョン | Container Apps リビジョン |
+| `list_scheduled_jobs` | 定期ジョブと失敗 | Cloud Scheduler | EventBridge Scheduler | Container Apps Jobs / Logic Apps |
+| `list_databases` | マネージド DB（`engine` / `engine_version` 付き） | Cloud SQL | RDS / Aurora | PostgreSQL / MySQL / SQL |
+| `get_request_error_rates` | サービスごとの 5xx / 4xx | Cloud Monitoring | CloudWatch メトリクス | Azure Monitor メトリクス |
+| `get_alerting_setup` | アラートと死活監視 | アラートポリシー、稼働時間チェック | CloudWatch アラーム | アラートルール、可用性テスト |
+| `audit_iam` | 公開アクセスや過剰な権限 | プロジェクトの IAM ポリシー | IAM、Access Analyzer | RBAC の割り当て |
+| `audit_credentials` | 長期間有効な認証情報 | サービスアカウント鍵 | IAM アクセスキー | サービスプリンシパルのシークレット |
+| `audit_compute` | 公開状態・実行 ID・平文の秘密情報・イメージの固定 | Cloud Run | ECS / Lambda | App Service / Container Apps |
+| `audit_databases` | 公開状態・TLS・バックアップ・メンテナンス | Cloud SQL | RDS | Azure のデータベース |
+| `audit_network` | インターネットに開いた重要ポート | VPC ファイアウォール | セキュリティグループ | NSG |
+| `audit_security_services` | セキュリティ診断サービスの有効化状況 | SCC、コンテナスキャンなど | GuardDuty、Security Hub、Inspector | Defender for Cloud のプラン |
+| `list_security_findings` | 有効な検出結果 | Security Command Center | Security Hub | Defender for Cloud |
+| `scan_deployed_images` | 稼働中イメージの CVE | Artifact Analysis | Amazon Inspector | Defender for Containers |
 
-Design rules:
+設計ルール:
 
-- **Unimplemented means `not_supported`, not an error.** `CloudProvider` implements every capability as
-  `{"status": "not_supported", ...}`. A new provider is therefore usable from day one: the PR review, repository posture,
-  CISA KEV, EOL checks and web research work on any cloud, and each capability can be implemented separately.
-- **The agents know what is available.** `get_run_context` returns `capabilities` and `unsupported_capabilities`, and the
-  prompt glossary marks unsupported tools so reports list them as "not checked" instead of guessing.
-- **Results share one shape.** Audits return `app.core.findings.result(...)`; observability results use the fields documented
-  in [providers.md](providers.md#normalized-results).
-- **Providers are discovered lazily.** Built-ins are imported by key; third-party packages register through the
-  `cloud_ops_team.providers` entry point; tests use `register_provider`.
-- **Wrappers isolate failures.** A provider exception becomes `{"status": "error", ...}` and never crashes the run.
+- **未実装は `not_supported` で、エラーではありません**。基底クラス `CloudProvider` が全機能を `{"status": "not_supported", ...}` で実装しているため、
+  新しいプロバイダーは初日から使えます。PR レビュー・リポジトリ診断・CISA KEV・EOL・Web 調査はクラウドに依存せず動き、
+  クラウドの機能は 1 つずつ実装できます。
+- **エージェントは使える機能を知っています**。`get_run_context` が `capabilities` / `unsupported_capabilities` を返し、
+  プロンプトの用語集にも未対応のツールが示されます。レポートには推測ではなく「確認できなかった項目」として書かれます。
+- **結果の形を統一しています**。監査は `app.core.findings.result(...)` を返し、観測系は [providers.md](providers.md#共通形式の結果) に書かれたフィールドを使います。
+- **プロバイダーは必要になってから読み込みます**。組み込みはキーで import し、外部パッケージは `cloud_ops_team.providers` の entry point で登録し、
+  テストは `register_provider` を使います。
+- **障害を隔離します**。プロバイダーの例外は `{"status": "error", ...}` に変換され、実行全体が止まることはありません。
 
-## 5. Jobs and triggers
+## 5. ジョブとトリガー
 
-The scheduler posts a Pub/Sub-push-shaped body to ADK's trigger endpoint:
+スケジューラは Pub/Sub push と同じ形式のボディを ADK のトリガーエンドポイントに送ります。
 
 ```text
-POST /apps/app/trigger/pubsub      Authorization: Bearer <OIDC token of the invoker service account>
-{"message": {"data": "<base64 of {"job":"error_watch","hours":24}>", "attributes": {...}},
+POST /apps/app/trigger/pubsub      Authorization: Bearer <呼び出し用 SA の OIDC トークン>
+{"message": {"data": "<{"job":"error_watch","hours":24} の base64>", "attributes": {...}},
  "subscription": "projects/<project>/subscriptions/cloud-ops-error-watch"}
 ```
 
-ADK (`trigger_sources=["pubsub"]`) decodes it and runs the leader with
-`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
-`user_id`.
+ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセッションで
+`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` をリーダーに渡して実行します。`subscription` はセッションの `user_id` になります。
 
-| `job` | Parameters | Default schedule (configurable) | Specialist |
+| `job` | パラメータ | 既定の周期（変更可） | 担当 |
 |---|---|---|---|
-| `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`) | daily 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
-| `weekly_pr_review` | `days` (7) | Monday 09:00 (`WEEKLY_CRON`) | pr_review |
-| `monthly_security_audit` | `kev_days` (30) | 1st of the month 09:00 (`MONTHLY_CRON`) | security_audit |
-| `full` | — | manual | all three |
+| `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`） | 毎日 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
+| `weekly_pr_review` | `days`（7） | 月曜 09:00（`WEEKLY_CRON`） | pr_review |
+| `monthly_security_audit` | `kev_days`（30） | 毎月 1 日 09:00（`MONTHLY_CRON`） | security_audit |
+| `full` | — | 手動 | 3 人全員 |
 
-On Google Cloud, `scripts/gcp/setup_schedules.sh` creates Cloud Scheduler **HTTP** jobs rather than Pub/Sub push subscriptions:
-push deliveries are capped at 10 minutes and redelivered when not acknowledged, while HTTP jobs allow a 30-minute deadline and
-zero retries, so a long audit never runs twice. Schedules, look-back windows, time zone and job names are all environment variables;
-re-running the script updates jobs in place. On AWS the equivalent is EventBridge Scheduler calling the service URL; on Azure,
-a Container Apps job or Logic App.
+Google Cloud では `scripts/gcp/setup_schedules.sh` が、Pub/Sub の push サブスクリプションではなく Cloud Scheduler の **HTTP** ジョブを作ります。
+Pub/Sub push は配信の上限が 10 分で、応答がないと再配送されます。HTTP ジョブなら 30 分のデッドラインと再試行 0 回を設定できるので、
+時間のかかる月次診断が二重に実行されることはありません。
+周期・遡る時間・タイムゾーン・ジョブ名はすべて環境変数で変えられ、スクリプトを再実行すると既存のジョブがその場で更新されます
+（[configuration.md](configuration.md#定期実行の設定make-gcp-schedule)）。
+AWS では EventBridge Scheduler がサービスの URL を呼ぶ形、Azure では Container Apps のジョブか Logic App が同じ役割を担います。
 
-Natural language works through the same endpoint and through `/run_sse` ("check the errors of the last 24 hours").
+自然言語の依頼も同じエンドポイントと `/run_sse` で受け付けます（例:「直近 24 時間のエラーを確認して」）。
 
-## 6. Error watch, step by step
+## 6. エラー監視の流れ
 
 ```mermaid
 sequenceDiagram
-    participant S as Scheduler
+    participant S as スケジューラ
     participant R as cloud_ops_team
     participant E as error_watch
-    participant C as Provider (cloud APIs)
+    participant C as プロバイダー（クラウド API）
     participant G as GitHub
     S->>R: {"data": {"job": "error_watch", "hours": 24}}
-    R->>R: get_run_context (time, dry_run, capabilities)
-    R->>E: request (job, parameters, constraints)
+    R->>R: get_run_context（時刻・dry_run・使える機能）
+    R->>E: request（ジョブ・パラメータ・制約）
     E->>C: summarize_error_groups(hours)
     E->>C: get_request_error_rates / list_scheduled_jobs / list_services
-    loop up to 5 important groups
-        E->>C: get_log_context (trace or service + time) / list_deployments
+    loop 重要なグループ（最大 5）
+        E->>C: get_log_context（トレース、またはサービスと時刻）/ list_deployments
     end
-    E->>G: search_issues (existing human issues)
+    E->>G: search_issues（人間の既存 ISSUE）
     E->>G: create_ops_issue(kind="error", fingerprint, ...)
-    Note over G: open issue with the same fingerprint →<br/>recurrence comment (24 h cooldown)
-    E-->>R: report (filed, deferred, recommendations)
-    R-->>S: consolidated report (HTTP 200)
+    Note over G: 同じ fingerprint の open ISSUE があれば<br/>再発コメント（24h クールダウン）
+    E-->>R: 実行レポート（起票・見送り・推奨事項）
+    R-->>S: 統合レポート（HTTP 200）
 ```
 
-## 7. Issue lifecycle
+## 7. ISSUE のライフサイクル
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Detected: summarize_error_groups / audit_*
-    Detected --> Filed: new fingerprint / create_ops_issue
-    Detected --> RecurrenceComment: open issue with same fingerprint / 24h cooldown
-    Filed --> InProgress: human opens PR (closes #N)
-    InProgress --> Verifying: PR merged / weekly review
-    Verifying --> Verified: no recurrence and CI green / ops:verified
-    Verifying --> RecurrenceComment: count_matching_errors > 0
-    Filed --> Stale: no PR for 14 days / ops:stale
-    Verified --> [*]: human closes (auto with OPS_AUTO_CLOSE_ISSUES)
+    [*] --> 検知: summarize_error_groups / audit_*
+    検知 --> 起票: fingerprint が未登録 / create_ops_issue
+    検知 --> 再発コメント: 同じ fingerprint の open ISSUE / 24h クールダウン
+    起票 --> 対応中: 人間が PR 作成（closes #N）
+    対応中 --> 検証: PR マージ / 週次レビュー
+    検証 --> 検証済み: 再発 0 件 かつ CI 成功 / ops:verified
+    検証 --> 再発コメント: count_matching_errors > 0
+    起票 --> 停滞: 14 日 PR なし / ops:stale
+    検証済み --> [*]: 人間がクローズ（OPS_AUTO_CLOSE_ISSUES なら自動）
 ```
 
-- Title prefixes: `[ops/error]`, `[ops/security]`, `[ops/report]`
-- Labels: `ops-agent` on every issue, `ops:error` / `ops:security` / `ops:report`, severity (`priority: critical`,
-  `priority: high`, `major`, `minor`) and area (`bug`, `security`, `infrastructure`); missing labels are created.
-- Body: Summary / Impact / Evidence / Root cause / Recommended fix / How to verify, followed by a hidden
-  `<!-- ops-meta: {...} -->` block.
-- Language: `OPS_REPORT_LANGUAGE` (`ja` or `en`) controls issue text, comments and reports.
+- タイトルの接頭辞: `[ops/error]` `[ops/security]` `[ops/report]`
+- ラベル: すべての ISSUE に `ops-agent` と種別（`ops:error` / `ops:security` / `ops:report`）が付きます。
+  さらに重要度ラベル（既定は `severity: critical` / `severity: high` / `severity: medium` / `severity: low`）と、
+  領域ラベル（既定はエラーに `bug`、セキュリティに `security`）が付きます。重要度と領域のラベルは
+  `OPS_SEVERITY_LABELS`・`OPS_ERROR_LABELS`・`OPS_SECURITY_LABELS` で自分のリポジトリに合わせられます。リポジトリにないラベルは自動で作成されます。
+- 本文: 概要 / 影響範囲 / 証跡 / 原因分析 / 推奨対応 / 確認方法 の順に書き、末尾に非表示の `<!-- ops-meta: {...} -->` を付けます。
+- 言語: `OPS_REPORT_LANGUAGE`（`ja` / `en`）で ISSUE・コメント・レポートの言語を切り替えます。
 
-## 8. De-duplication without a database
+## 8. データベースなしの重複排除
 
-GitHub issues are the ledger.
+GitHub の ISSUE そのものを台帳として使います。
 
-1. A log message is normalized into a template: UUIDs → `<uuid>`, timestamps → `<ts>`, hex ids → `<hex>`, numbers → `<n>`,
-   whitespace collapsed, cut at 240 characters.
-2. `fingerprint = sha1(resource_type | service | template)[:16]` (`app/core/fingerprint.py`).
-   Golden values are pinned by unit tests because changing the formula would re-file every open issue.
-3. The fingerprint, service, `search_text`, provider and target are stored in the issue's `ops-meta` block.
-4. Before filing, open issues and issues closed in the last 30 days are scanned. A match must have the same fingerprint **and**
-   the same target, so staging and production can share one repository (issues filed before multi-cloud support use the
-   legacy `project` key, which is treated as the target).
-5. An open match gets a recurrence comment unless it was updated within `OPS_RECURRENCE_COOLDOWN_HOURS`; a recently closed
-   match is referenced from the new issue.
+1. ログメッセージをテンプレートに正規化します。UUID は `<uuid>`、時刻は `<ts>`、16 進 ID は `<hex>`、数値は `<n>` に置き換え、
+   空白を詰めて 240 文字で切ります。
+2. `fingerprint = sha1(resource_type | service | template)[:16]` で指紋を作ります（`app/core/fingerprint.py`）。
+   式を変えると open な ISSUE がすべて再起票されてしまうため、基準値をユニットテストで固定しています。
+3. fingerprint・service・`search_text`・provider・target を ISSUE の `ops-meta` ブロックに保存します。
+4. 起票の前に、open の ISSUE と 30 日以内にクローズされた ISSUE を走査します。**fingerprint と target の両方**が一致したものだけを同一とみなすので、
+   staging と本番で 1 つのリポジトリを共有できます。マルチクラウド対応より前に起票された ISSUE の `project` キーは target として扱います。
+5. 一致した ISSUE が open なら再発コメントを付けます。ただし `OPS_RECURRENCE_COOLDOWN_HOURS` 以内に更新済みなら省略します。
+   最近クローズされた ISSUE と一致した場合は、新しい ISSUE に関連として記載します。
 
-`search_text` is what the weekly review later counts: for request logs the URL path up to the first id-like segment
-(`/api/v1/worker/sns-plans`), otherwise the longest alphabetic run of the message. Security findings use
-`"<check_id>:<resource>"` as their fingerprint.
+`search_text` は、週次レビューがマージ後の再発件数を数えるときに使う文字列です。リクエストログでは URL パスの最初の ID らしき部分の手前まで
+（例: `/api/v1/worker/sns-plans`）、それ以外ではメッセージ中で最も長い英字の並びを使います。
+セキュリティの検出結果は `"<check_id>:<resource>"` を fingerprint にします。
 
-## 9. Safety
+## 9. 安全設計
 
-| Layer | Mechanism |
+| 層 | 仕組み |
 |---|---|
-| Permissions | Viewer / reviewer roles only on the monitored cloud (`scripts/gcp/grant_target_roles.sh`). No tool calls a mutating API |
-| Entry point | The service rejects unauthenticated requests; the scheduler authenticates with an OIDC token of a dedicated service account |
-| Writes | `OPS_DRY_RUN=true` (default) returns previews instead of writing to GitHub; closing needs `OPS_AUTO_CLOSE_ISSUES=true` |
-| Blast radius | `OPS_MAX_ISSUES_PER_RUN` (10) caps new issues per run; one recurrence comment per issue per cooldown |
-| Data | `app/core/redact.py` masks tokens (Bearer, JWT, Stripe, Google, GitHub, Slack), private keys, `password=`-style values, credentials in URLs, e-mail addresses (service accounts excepted), card numbers and the last octet of public IPs. Environment variables are returned by name only |
-| Prompts | Refuse change requests and propose an issue instead; cite evidence; never output personal data; report `error` / `not_supported` honestly |
-| Secrets | The GitHub token lives in a secret manager and is injected as `GITHUB_TOKEN`; `.env` is never uploaded |
+| 権限 | 監視対象のクラウドには閲覧系・レビュー系のロールだけを付けます（`scripts/gcp/grant_target_roles.sh`）。変更系の API を呼ぶツールは存在しません |
+| 入口 | サービスは未認証のリクエストを拒否します。スケジューラは専用サービスアカウントの OIDC トークンで呼び出します |
+| 書き込み | `OPS_DRY_RUN=true`（既定、お試しモード）では GitHub に書き込まずプレビューだけを返します。クローズは `OPS_AUTO_CLOSE_ISSUES=true` のときだけ |
+| 影響範囲 | 1 回の実行で新しく起票するのは `OPS_MAX_ISSUES_PER_RUN`（既定 10）件まで。再発コメントはクールダウン期間ごとに 1 ISSUE 1 回まで |
+| データ | `app/core/redact.py` が、トークン（Bearer、JWT、Stripe、Google、GitHub、Slack）、秘密鍵、`password=` 形式の値、URL 内の認証情報、メールアドレス（サービスアカウントを除く）、カード番号、公開 IP の末尾をマスクします。環境変数は名前だけを返します |
+| プロンプト | 変更の依頼は断って ISSUE 化を提案します。根拠を必ず添え、個人情報を出さず、`error` / `not_supported` は正直に報告します |
+| 秘密情報 | GitHub トークンはシークレットマネージャーに保存し、`GITHUB_TOKEN` として注入します。`.env` はアップロードしません |
 
-## 10. Authentication
+## 10. 認証
 
-| Target | Local development | Deployed (Google Cloud) |
+| 対象 | ローカル開発 | 本番（Google Cloud） |
 |---|---|---|
-| Gemini | ADC with Vertex AI, or `GEMINI_API_KEY` | Runtime service account (`roles/aiplatform.user`) |
-| Google Cloud APIs | ADC, or `OPS_GCP_AUTH=gcloud` to borrow `gcloud auth print-access-token` | Runtime service account (read-only roles on the target) |
-| GitHub | `GITHUB_TOKEN`, else `gh auth token` | Secret Manager → `GITHUB_TOKEN` |
+| Gemini | ADC（Vertex AI）または `GEMINI_API_KEY` | ランタイム SA（`roles/aiplatform.user`） |
+| Google Cloud API | ADC、または `OPS_GCP_AUTH=gcloud` で `gcloud auth print-access-token` のトークンを借用 | ランタイム SA（監視対象に閲覧系ロール） |
+| GitHub | `GITHUB_TOKEN`、無ければ `gh auth token` | Secret Manager → `GITHUB_TOKEN` |
 
-GCP REST calls send `x-goog-user-project: <target>`, so the caller needs `roles/serviceusage.serviceUsageConsumer` on the target.
-The project that runs the model (`GOOGLE_CLOUD_PROJECT`) and the monitored target (`OPS_TARGET`) can differ.
-AWS and Azure providers are expected to use their SDK default credential chains (`boto3`, `DefaultAzureCredential`).
+Google Cloud の REST 呼び出しには `x-goog-user-project: <監視対象>` を付けるため、呼び出す側には監視対象で
+`roles/serviceusage.serviceUsageConsumer` が必要です。
+モデルを動かすプロジェクト（`GOOGLE_CLOUD_PROJECT`）と監視対象（`OPS_TARGET`）は別のプロジェクトでもかまいません。
+AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（`boto3`、`DefaultAzureCredential`）を使う想定です。
 
-## 11. Configuration
+## 11. 設定
 
-See [configuration.md](configuration.md) for every variable. The essentials: `OPS_CLOUD_PROVIDER`, `OPS_TARGET`,
-`OPS_TARGET_REGION`, `GITHUB_REPO`, `OPS_DRY_RUN`, `OPS_REPORT_LANGUAGE`.
+すべての設定項目は [configuration.md](configuration.md) にあります。最低限必要なのは
+`OPS_CLOUD_PROVIDER`、`OPS_TARGET`、`OPS_TARGET_REGION`、`GITHUB_REPO`、`OPS_DRY_RUN`、`OPS_REPORT_LANGUAGE` です。
 
-## 12. Deployment on Google Cloud
+## 12. Google Cloud へのデプロイ
 
-| Item | Value | Why |
+| 項目 | 値 | 理由 |
 |---|---|---|
-| Cloud Run | 1 vCPU, 2 GiB, concurrency 4, 0–2 instances, 1800 s timeout, no unauthenticated access | One job is one long request; scale to zero between jobs |
-| Runtime identity | Dedicated service account | Never the default compute account (which the audit itself flags) |
-| Scheduler | HTTP target, OIDC, 1800 s deadline, 0 retries | No duplicate runs of long jobs |
-| Build | `gcloud run deploy --source .` (Dockerfile: python:3.12-slim + uv) | `scripts/gcp/deploy_cloud_run.sh` passes only the variables the service needs |
-| Sessions | In memory | One run is one session; nothing to carry over |
+| Cloud Run | 1 vCPU、2 GiB、同時実行 4、インスタンス 0〜2、タイムアウト 1800 秒、未認証アクセス不可 | 1 つのジョブは 1 つの長いリクエストです。ジョブがないときはインスタンス 0 まで縮小します |
+| 実行 ID | 専用のサービスアカウント | 既定のコンピュート SA は使いません（診断自体がそれを指摘するため） |
+| スケジューラ | HTTP ターゲット、OIDC、デッドライン 1800 秒、再試行 0 回 | 長いジョブが二重に実行されないようにするため |
+| ビルド | `gcloud run deploy --source .`（Dockerfile: python:3.12-slim ＋ uv） | `scripts/gcp/deploy_cloud_run.sh` はサービスに必要な環境変数だけを渡します |
+| セッション | メモリ内 | 1 回の実行が 1 つのセッションで完結し、引き継ぐものがないため |
 
-Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
+手順は [deployment-gcp.md](deployment-gcp.md) にまとめています。
 
-## 13. Observability
+## 13. 動作の確認（可観測性）
 
-- Runs: request logs of the trigger endpoint (latency = run time)
-- What the agents did: Cloud Trace via OpenTelemetry (`otel_to_cloud=True`, message content not captured), ADK session API while
-  the instance is alive, or `scripts/run_job.py` locally (prints every tool call with timestamps)
-- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports
+- **実行されたか**: トリガーエンドポイントのリクエストログで確認します。レイテンシがそのまま実行時間です。
+- **エージェントが何をしたか**: OpenTelemetry 経由の Cloud Trace（`otel_to_cloud=True`、メッセージ本文は記録しません）、
+  インスタンスが生きている間は ADK のセッション API、ローカルでは `scripts/run_job.py`（すべてのツール呼び出しを時刻付きで表示）で確認します。
+- **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。週次・月次のレポートもここに残ります。
 
-## 14. Tests and evaluation
+## 14. テストと評価
 
-| Kind | Location | What it covers |
+| 種類 | 場所 | 内容 |
 |---|---|---|
-| Unit | `tests/unit/` | Fingerprint golden values, redaction, metadata round trip, labels, configuration, provider registry and contract, skeleton providers, tool conventions (docstrings, type hints, no defaults), prompt rendering per provider, target-scoped de-duplication, i18n |
-| Integration | `tests/integration/` | Streaming responses and the A2A server (calls the model) |
-| Evaluation | `tests/eval/` | 5 core cases and 2 hold-out cases graded by an ops-specific LLM-as-judge rubric (right specialist, evidence, report structure, dry-run honesty, safety) |
+| ユニット | `tests/unit/` | フィンガープリントの基準値、マスキング、メタデータの往復、ラベル、設定、プロバイダーの登録と契約、雛形プロバイダー、ツールの規約（docstring・型ヒント・既定値なし）、プロバイダーごとのプロンプト生成、監視対象単位の重複排除、多言語対応 |
+| 結合 | `tests/integration/` | ストリーミング応答と A2A サーバー（モデルを呼びます） |
+| 評価 | `tests/eval/` | 基本の 5 ケースと、調整に使わない検証用（ホールドアウト）の 2 ケースを運用向けの LLM 採点基準（正しい担当を呼んだか、根拠、レポートの構成、お試しモードでの正直さ、安全性）で採点します |
 
-CI (`.github/workflows/ci.yml`) runs lint, type checks and unit tests on every pull request.
+CI（`.github/workflows/ci.yml`）は、プルリクエストごとに lint・型チェック・ユニットテストを実行します。
 
-## 15. Extending
+## 15. 拡張ポイント
 
-Step-by-step recipes with code are in [customization.md](customization.md). In short:
+コード付きの手順は [カスタマイズガイド](customization.md) にあります。要点は次のとおりです。
 
-- **Project knowledge**: `config/ops-context.md` — no code.
-- **A specialist**: copy `app/specialists/_template.py`, fill in role / instruction / tools / jobs, append it to `SPECIALISTS`.
-  The leader's routing and the scheduler follow.
-- **A job**: add a `Job` to a specialist (`schedule`, `schedule_key`, `scheduled_params`); override its cron with `<KEY>_CRON`.
-- **A tool**: add a function to `app/tools/` (type hints, no defaults, a docstring the model can act on, return a dict with
-  `status`, never raise for API errors) and add it to a specialist's `tools`. GitHub writes must honour `CONFIG.dry_run`.
-- **A capability**: add the method to `CloudProvider` (returning `not_supported`), a wrapper to `app/tools/cloud.py`, a glossary
-  entry to each profile, and implement it where possible. The contract tests enforce that all three exist.
-- **A cloud**: implement a `CloudProvider` subclass — see [providers.md](providers.md).
-- **An issue tracker**: `app/tools/issues.py` and `app/tools/repo.py` are the only GitHub-aware modules.
-- **A model**: `OPS_MODEL` selects any Gemini model; other providers are possible through ADK's `LiteLlm` wrapper in `app/agent.py`.
+- **プロジェクトの事情を教える**: `config/ops-context.md`（コード変更なし）
+- **担当を追加**: `app/specialists/_template.py` をコピーして役割・指示文・ツール・ジョブを書き、`SPECIALISTS` に登録。リーダーの振り分けとスケジュールは自動で追従
+- **ジョブを追加**: 担当に `Job` を追加（`schedule`・`schedule_key`・`scheduled_params`）。時刻は `<キー>_CRON` で上書き可能
+- **ツールを追加**: `app/tools/` に関数（型ヒント・既定値なし・モデルが判断に使える docstring・`status` 付き dict を返す・API エラーで例外を投げない）を作り、担当の `tools` に追加。GitHub への書き込みは `CONFIG.dry_run` を尊重
+- **共通機能を追加**: `CloudProvider` にメソッド（`not_supported` を返す）、`app/tools/cloud.py` にラッパー、各プロファイルに用語を追加し、実装できるクラウドから実装。契約テストが 3 点がそろっているかを検査
+- **クラウドを追加**: `CloudProvider` を継承して機能を 1 つずつ実装（[providers.md](providers.md)）
+- **ISSUE トラッカーを変更**: GitHub に依存しているのは `app/tools/issues.py` と `app/tools/repo.py` だけ
+- **モデルを変更**: `OPS_MODEL` で任意の Gemini モデルを選択。Gemini 以外は `app/agent.py` で ADK の `LiteLlm` を使う
 
-## 16. Known limitations
+## 16. 既知の制約
 
-- `agents-cli run` and `agents-cli eval generate` have a fixed 120-second read timeout; a single tool call that stays silent
-  longer than that ends the client connection. Use `scripts/run_job.py` for long jobs locally.
-- Sessions are in memory; with more than one instance the session API may not find a run's history.
-- AWS and Azure providers are skeletons; every cloud capability reports `not_supported` there until implemented.
-- Prompts are written in Japanese; output language is selectable with `OPS_REPORT_LANGUAGE`.
+- `agents-cli run` と `agents-cli eval generate` には 120 秒の固定の読み取りタイムアウトがあります。1 つのツール呼び出しがそれより長く無音だと、
+  クライアントの接続が切れます。時間のかかるジョブをローカルで動かすときは `scripts/run_job.py` を使います。
+- セッションはメモリ内にあります。インスタンスが複数あると、セッション API で実行履歴を引けないことがあります。
+- AWS / Azure のプロバイダーは雛形です。実装されるまで、クラウドの機能はすべて `not_supported` になります。
+- プロンプトは日本語で書かれています。出力言語は `OPS_REPORT_LANGUAGE` で選べます。

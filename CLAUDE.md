@@ -9,6 +9,9 @@
   behind the `CloudProvider` contract (`app/providers/base.py`). Read `docs/architecture.md` and `docs/providers.md` first.
 - Never add a tool that changes cloud resources. GitHub writes must honour `CONFIG.dry_run`.
 - Do not change `app/core/fingerprint.py` formulas (golden tests protect open issues from being re-filed).
+- Documentation is Japanese-first: `README.md`, `docs/*.md`, `CONTRIBUTING.md`, `CHANGELOG.md` are Japanese and
+  `README.en.md`, `docs/en/*.md`, `CONTRIBUTING.en.md`, `CHANGELOG.en.md` are English. Update both languages together
+  (`SECURITY.md` and `.github/` templates are bilingual in one file).
 - Fast checks: `make test` and `make lint`. Run a job locally: `make run JOB=<job>` (`agents-cli run` has a fixed 120 s
   read timeout). Check access: `make doctor`.
 

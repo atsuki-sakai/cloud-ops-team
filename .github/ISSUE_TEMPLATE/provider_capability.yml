@@ -1,21 +1,21 @@
-name: Provider capability (AWS / Azure / other)
-description: Implement or request a cloud capability for a provider
+name: プロバイダーの機能 / Provider capability (AWS / Azure / other)
+description: プロバイダーのクラウド機能を実装・要望する / Implement or request a cloud capability for a provider
 labels: ["provider", "help wanted"]
 body:
   - type: markdown
     attributes:
-      value: "Read docs/providers.md first — it lists the normalized result fields and suggested SDK calls per capability."
+      value: "まず docs/providers.md（英語は docs/en/providers.md）を読んでください。機能ごとの結果の共通形式と、使う SDK の候補が書いてあります。 / Read docs/en/providers.md first — it lists the normalized result fields and suggested SDK calls per capability."
   - type: dropdown
     id: provider
     attributes:
-      label: Provider
+      label: プロバイダー / Provider
       options: ["aws", "azure", "gcp", "other"]
     validations:
       required: true
   - type: dropdown
     id: capability
     attributes:
-      label: Capability
+      label: 機能 / Capability
       options:
         - summarize_error_groups / list_error_logs / get_log_context / count_matching_errors
         - list_services
@@ -37,11 +37,11 @@ body:
   - type: textarea
     id: plan
     attributes:
-      label: Data sources and permissions
-      description: APIs / SDK calls you plan to use and the read-only permissions they need.
+      label: データの取得元と権限 / Data sources and permissions
+      description: 使う予定の API や SDK の呼び出しと、必要な読み取り権限 / APIs / SDK calls you plan to use and the read-only permissions they need.
   - type: checkboxes
     id: volunteer
     attributes:
-      label: Contribution
+      label: 協力 / Contribution
       options:
-        - label: I would like to implement this
+        - label: 自分で実装したい / I would like to implement this

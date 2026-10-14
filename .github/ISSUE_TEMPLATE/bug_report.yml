@@ -1,38 +1,38 @@
-name: Bug report
-description: Something does not work as documented
+name: バグ報告 / Bug report
+description: ドキュメントどおりに動かない / Something does not work as documented
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
-      value: "Please remove secrets, tokens and personal data from logs before posting. Security issues: see SECURITY.md."
+      value: "ログを貼る前に、秘密情報・トークン・個人情報を取り除いてください。セキュリティの問題は SECURITY.md を参照してください。 / Please remove secrets, tokens and personal data from logs before posting. Security issues: see SECURITY.md."
   - type: textarea
     id: what
     attributes:
-      label: What happened
-      description: What did you expect, and what happened instead?
+      label: 何が起きたか / What happened
+      description: 期待したことと、実際に起きたこと / What did you expect, and what happened instead?
     validations:
       required: true
   - type: textarea
     id: reproduce
     attributes:
-      label: How to reproduce
-      description: Job or prompt, relevant settings (OPS_CLOUD_PROVIDER, OPS_DRY_RUN, ...), and the command you ran.
+      label: 再現手順 / How to reproduce
+      description: ジョブまたは依頼文、関係する設定（OPS_CLOUD_PROVIDER、OPS_DRY_RUN など）、実行したコマンド / Job or prompt, relevant settings (OPS_CLOUD_PROVIDER, OPS_DRY_RUN, ...), and the command you ran.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Relevant output
-      description: Tool calls from `scripts/run_job.py`, error messages or the agent's report (redacted).
+      label: 関係する出力 / Relevant output
+      description: "`scripts/run_job.py` のツール呼び出し、エラーメッセージ、エージェントのレポート（伏せ字化したもの） / Tool calls from `scripts/run_job.py`, error messages or the agent's report (redacted)."
       render: text
   - type: input
     id: version
     attributes:
-      label: Version / commit
+      label: バージョンまたはコミット / Version / commit
   - type: dropdown
     id: provider
     attributes:
-      label: Cloud provider
+      label: クラウドプロバイダー / Cloud provider
       options: ["gcp", "aws", "azure", "other"]
     validations:
       required: true
