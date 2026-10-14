@@ -18,32 +18,37 @@
 #   MONTHLY_CRON       ["0 9 1 * *"]   monthly security audit (1st day 09:00)
 #   MONTHLY_KEV_DAYS   [30]
 #   TZ_NAME            [Asia/Tokyo]
-#   ONLY_JOBS          [all]           comma list of error-watch,weekly-pr-review,monthly-security-audit
+#   <JOB>_CRON         [job default]   any job added in app/specialists: e.g. COST_REPORT_CRON
+#   ONLY_JOBS          [all]           comma list of schedule keys, e.g. error-watch,weekly-pr-review
 #   JOB_PREFIX         [cloud-ops]     Scheduler job names become <prefix>-error-watch, ...
 #   INVOKER_SA         [<prefix>-invoker] service account whose OIDC token calls the service
-#   REGION             [asia-northeast1]
+#   PROJECT_ID         [GOOGLE_CLOUD_PROJECT, gcloud config]
+#   REGION             [OPS_TARGET_REGION or asia-northeast1]
+#   CLOUD_RUN_SERVICE  [SERVICE or cloud-ops-team]
+#   AGENT_URL          [URL of CLOUD_RUN_SERVICE]
 #   APP_NAME           [app]
 #   ATTEMPT_DEADLINE   [1800s]
 #
 # Re-running the script is safe: existing jobs are updated in place.
 # Pause / resume a job:  gcloud scheduler jobs pause <prefix>-error-watch --location <region>
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
+PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}}"
 : "${PROJECT_ID:?PROJECT_ID is required}"
-: "${AGENT_URL:?AGENT_URL is required (e.g. https://cloud-ops-team-xxxx-an.a.run.app)}"
-REGION="${REGION:-asia-northeast1}"
+REGION="${REGION:-${OPS_TARGET_REGION:-asia-northeast1}}"
+CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-${SERVICE:-cloud-ops-team}}"
+if [[ -z "${AGENT_URL:-}" ]]; then
+  AGENT_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$PROJECT_ID" --region "$REGION" \
+    --format='value(status.url)' 2>/dev/null || true)"
+fi
+: "${AGENT_URL:?AGENT_URL not found: deploy first (make gcp-deploy) or pass AGENT_URL}"
 APP_NAME="${APP_NAME:-app}"
 TZ_NAME="${TZ_NAME:-Asia/Tokyo}"
 JOB_PREFIX="${JOB_PREFIX:-cloud-ops}"
 INVOKER_SA="${INVOKER_SA:-${JOB_PREFIX}-invoker}"
-ERROR_WATCH_CRON="${ERROR_WATCH_CRON:-0 8 * * *}"
-ERROR_WATCH_HOURS="${ERROR_WATCH_HOURS:-24}"
-WEEKLY_CRON="${WEEKLY_CRON:-0 9 * * 1}"
-WEEKLY_DAYS="${WEEKLY_DAYS:-7}"
-MONTHLY_CRON="${MONTHLY_CRON:-0 9 1 * *}"
-MONTHLY_KEV_DAYS="${MONTHLY_KEV_DAYS:-30}"
 ATTEMPT_DEADLINE="${ATTEMPT_DEADLINE:-1800s}"
-ONLY_JOBS="${ONLY_JOBS:-error-watch,weekly-pr-review,monthly-security-audit}"
+ONLY_JOBS="${ONLY_JOBS:-}"
 
 SA_EMAIL="${INVOKER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 ENDPOINT="${AGENT_URL%/}/apps/${APP_NAME}/trigger/pubsub"
@@ -55,7 +60,7 @@ echo "▶ Invoker service account: $SA_EMAIL"
 gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT_ID" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$INVOKER_SA" --display-name "ops team scheduler invoker" --project "$PROJECT_ID"
 
-if [[ -n "${CLOUD_RUN_SERVICE:-}" ]]; then
+if [[ "${SKIP_SERVICE_UPDATE:-}" != "1" ]]; then
   echo "▶ Allow $SA_EMAIL to invoke $CLOUD_RUN_SERVICE and align its request timeout"
   gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" --region "$REGION" \
     --member "serviceAccount:$SA_EMAIL" --role roles/run.invoker --project "$PROJECT_ID" >/dev/null
@@ -71,7 +76,7 @@ body_for() {
     "$data" "$name" "$PROJECT_ID" "$name"
 }
 
-wanted() { [[ ",${ONLY_JOBS}," == *",$1,"* ]]; }
+wanted() { [[ -z "$ONLY_JOBS" || ",${ONLY_JOBS}," == *",$1,"* ]]; }
 
 upsert_job() {
   local key=$1 cron=$2 payload=$3
@@ -91,8 +96,10 @@ upsert_job() {
 }
 
 echo "▶ Scheduler jobs → $ENDPOINT"
-upsert_job error-watch            "$ERROR_WATCH_CRON" "{\"job\":\"error_watch\",\"hours\":${ERROR_WATCH_HOURS}}"
-upsert_job weekly-pr-review       "$WEEKLY_CRON"      "{\"job\":\"weekly_pr_review\",\"days\":${WEEKLY_DAYS}}"
-upsert_job monthly-security-audit "$MONTHLY_CRON"     "{\"job\":\"monthly_security_audit\",\"kev_days\":${MONTHLY_KEV_DAYS}}"
+JOBS="$(cd "$ROOT" && uv run --quiet python scripts/jobs.py schedules)"
+[[ -n "$JOBS" ]] || { echo "No scheduled jobs defined in app/specialists"; exit 1; }
+while IFS=$'\t' read -r key cron payload; do
+  upsert_job "$key" "$cron" "$payload"
+done <<< "$JOBS"
 
 echo "✅ Done. Run now: gcloud scheduler jobs run ${JOB_PREFIX}-error-watch --location $REGION --project $PROJECT_ID"

@@ -6,7 +6,7 @@
 月に一度はセキュリティの健康診断をし、毎週「直したはずの問題が本当に直ったか」を確かめます。
 AI はクラウドの設定を一切変更しません。調べて、報告して、確認するだけです。修正するのはあなた（と、あなたが使う AI コーディングツール）です。
 
-[English README](README.md) ・ [仕組みの詳細（日本語）](docs/ja/architecture.md) ・ [設定一覧](docs/configuration.md) ・ [Google Cloud へのデプロイ手順](docs/deployment-gcp.md)
+[English README](README.md) ・ [仕組みの詳細](docs/ja/architecture.md) ・ [カスタマイズガイド](docs/ja/customization.md) ・ [設定一覧](docs/configuration.md) ・ [Google Cloud へのデプロイ手順](docs/deployment-gcp.md)
 
 ---
 
@@ -87,80 +87,125 @@ worker サービスで 12:30〜12:40 に 5 分おきに 3 回、HTTP 500 が発�
 - **秘密情報は書き込みません。** ログに含まれるトークン・パスワード・メールアドレス・IP アドレスなどは、ISSUE に書く前に自動で伏せ字にします。
 - クラウドには**閲覧用の権限だけ**を与えます。仮に AI が指示を誤解しても、クラウドを壊すことはできません。
 
-## 始め方
+## 自分のプロジェクトで使う
+
+このリポジトリは **クローンして自分用に使う** ためのものです。GitHub の「Use this template」から自分のリポジトリを作るか、そのままクローンしてください。
+すべての操作は `make` コマンドにまとめてあります（`make` だけで一覧が出ます）。
 
 ### 1. 用意するもの
 
-- 監視したい **Google Cloud プロジェクト**と、それを閲覧できるアカウント（`gcloud` コマンドでログイン済み）
+- 監視したい **Google Cloud プロジェクト**と、それを閲覧できるアカウント（`gcloud auth login` と `gcloud auth application-default login` 済み）
 - **Gemini** を使える環境（Google Cloud の Vertex AI、または Gemini API キー）
 - ISSUE を登録する **GitHub リポジトリ**と、そのアクセス権（`gh auth login` 済み、またはトークン）
-- **Python 3.11〜3.13**、[uv](https://docs.astral.sh/uv/)、agents-cli（`uv tool install google-agents-cli` で入ります）
+- **Python 3.11〜3.13**、[uv](https://docs.astral.sh/uv/)、agents-cli（`uv tool install google-agents-cli`）、`make`
 
-### 2. 手元で動かしてみる（お試しモード）
-
-```bash
-git clone https://github.com/atsuki-sakai/cloud-ops-team
-cd cloud-ops-team
-agents-cli install            # 必要なライブラリをインストール
-cp .env.example .env          # 設定ファイルを作成
-```
-
-`.env` を開き、最低限この 3 つを書き換えます。
+### 2. 設定する（質問に答えるだけ）
 
 ```bash
-GOOGLE_CLOUD_PROJECT=my-project     # Gemini を動かす Google Cloud プロジェクト
-OPS_TARGET=my-project               # 監視したいプロジェクト（上と同じでよい）
-GITHUB_REPO=my-org/my-app           # ISSUE を登録するリポジトリ
+git clone https://github.com/<あなた>/cloud-ops-team && cd cloud-ops-team
+make setup        # 依存関係を入れ、質問に答えて .env を作る（監視するプロジェクト・ISSUE を出すリポジトリ・言語など）
+make doctor       # 設定・Gemini・GitHub・クラウドの権限を点検し、足りないものと直し方を表示
 ```
 
-エラー監視を 1 回だけ実行してみます。AI が何を調べているかが 1 行ずつ表示され、最後にレポートが出ます。
-お試しモードなので、GitHub には何も書き込まれません。
+`make doctor` の例（足りない API があると、有効化のコマンドまで教えてくれます）:
+
+```text
+Cloud access
+  checking as: you@example.com (Application Default Credentials)
+  ✓ summarize_error_groups
+  ✓ list_services
+  ! list_security_findings — API is not enabled
+      → gcloud services enable securitycenter.googleapis.com --project my-project
+Summary: 22 ok, 2 warnings, 0 failures
+```
+
+### 3. 手元で試す（お試しモード）
 
 ```bash
-uv run python scripts/run_job.py error_watch --hours 24
+make run JOB=error_watch                              # エラー監視を 1 回。AI が何を調べたかが 1 行ずつ出る
+make run JOB=monthly_security_audit ARGS="--kev-days 30"   # セキュリティ診断（数分）
+make run JOB=weekly_pr_review                         # 修正の確認
+make chat                                             # ブラウザで話しかけて試す
 ```
 
-ほかの担当も同じように試せます。
+お試しモード（`OPS_DRY_RUN=true`）なので、GitHub には何も書き込まれず「作る予定の ISSUE」だけが表示されます。
+
+### 4. 自分のプロジェクトの事情を教える（おすすめ）
 
 ```bash
-uv run python scripts/run_job.py monthly_security_audit --kev-days 30   # セキュリティ診断（数分かかります）
-uv run python scripts/run_job.py weekly_pr_review --days 7             # 修正の確認
-agents-cli playground                                                  # ブラウザで話しかけて試す
+cp config/ops-context.example.md config/ops-context.md
 ```
 
-### 3. 本番で毎日動かす（Google Cloud）
+サービスの役割、重要度の考え方、無視してよいエラーなどを書いておくと、AI がそれを前提に判断します。
+ラベルや手順の変え方、担当やツールの追加方法は [カスタマイズガイド](docs/ja/customization.md) にまとめています。
 
-コマンド 3 つで、Cloud Run（AI チームの実行場所）と Cloud Scheduler（毎日・毎週・毎月の目覚まし）を準備します。
+### 5. 本番で毎日動かす（Google Cloud）
 
 ```bash
-# ① 初期設定: 必要な API の有効化、AI 用のアカウント作成、閲覧権限の付与、GitHub トークンの保存
-PROJECT_ID=my-project GITHUB_TOKEN=github_pat_xxx ./scripts/gcp/bootstrap.sh
-
-# ② デプロイ: まずはお試しモードで本番に置く
-PROJECT_ID=my-project GITHUB_REPO=my-org/my-app ./scripts/gcp/deploy_cloud_run.sh
-
-# ③ 定期実行の登録: ② の最後に表示された URL を AGENT_URL に入れる
-PROJECT_ID=my-project AGENT_URL=https://cloud-ops-team-xxxx.a.run.app CLOUD_RUN_SERVICE=cloud-ops-team \
-  ./scripts/gcp/setup_schedules.sh
+make gcp-bootstrap    # 初回だけ: API の有効化、AI 用アカウントと閲覧権限、GitHub トークンの保存（入力を求められます）
+make gcp-deploy       # Cloud Run にデプロイ（まずはお試しモードのまま）
+make gcp-schedule     # 毎日・毎週・毎月の定期実行を登録（デプロイ先の URL は自動で見つけます）
+make gcp-logs         # 実行履歴を確認
 ```
 
-数日分の下書きを見て問題がなければ、② を `OPS_DRY_RUN=false` 付きで再実行すると、実際に ISSUE が登録されるようになります。
-GitHub トークンの作り方、動作確認、止め方などは [デプロイ手順書](docs/deployment-gcp.md) にまとめています。
+数日分の下書きを見て問題がなければ、`OPS_DRY_RUN=false make gcp-deploy` で実際に ISSUE を登録するようにします。
+詳しい手順と運用（止め方・トークンの更新・ロールバック）は [デプロイ手順書](docs/deployment-gcp.md) にあります。
 
-### 4. 実行する時間や頻度を変える
+### 6. 実行する時間や頻度を変える
 
-③ のコマンドに設定を付けて再実行するだけです。既存の予定が上書きされます。
+`make jobs` で現在の予定を確認し、変えたい値を付けて `make gcp-schedule` を再実行します。既存の予定が上書きされます。
 
-| やりたいこと | ③ に付ける設定 |
+| やりたいこと | コマンド |
 |---|---|
-| エラー監視を毎時にする | `ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1` |
-| エラー監視を 6 時間ごとにする | `ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6` |
-| 平日の朝 9:30 だけにする（月曜は週末分も見る） | `ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72` |
-| 月次診断を 15 日に変える | `MONTHLY_CRON="0 9 15 * *"` |
+| エラー監視を毎時にする | `ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 make gcp-schedule` |
+| エラー監視を 6 時間ごとにする | `ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule` |
+| 平日の朝 9:30 だけにする（月曜は週末分も見る） | `ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72 make gcp-schedule` |
+| 月次診断を 15 日に変える | `MONTHLY_CRON="0 9 15 * *" make gcp-schedule` |
 | 1 つの予定だけを変える | 上に加えて `ONLY_JOBS=error-watch` |
 
-`ERROR_WATCH_HOURS`（何時間前までさかのぼるか）は、実行間隔と同じにしておくと見落としがありません。
+いつも同じ設定にしたい場合は、`.env` に書いておけば毎回付ける必要はありません。
+`ERROR_WATCH_HOURS`（何時間前までさかのぼるか）は実行間隔と同じにしておくと見落としがありません。
 一時的に止めたいときは `gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1` を実行します（`resume` で再開）。
+
+## 仕組み（全体像）
+
+```mermaid
+flowchart TB
+    SCH["スケジューラ / あなたの質問"] --> L["リーダー<br/>ジョブを担当に振り分け"]
+    L --> S1["エラー監視"] & S2["セキュリティ診断"] & S3["修正の確認"]
+    S1 & S2 & S3 --> T["共通ツール<br/>（どのクラウドでも同じ名前）"]
+    T --> P["プロバイダー<br/>Google Cloud / AWS / Azure"]
+    S1 & S2 & S3 --> G["GitHub ISSUE"]
+    CTX["config/ops-context.md<br/>プロジェクトの事情"] -.-> L & S1 & S2 & S3
+```
+
+- **リーダー**が依頼（定期実行の JSON か、あなたの言葉）を読み、担当に振り分けて最後にレポートをまとめます。
+- **担当（専門家）**は 1 ファイル 1 人で定義されています（`app/specialists/`）。担当を足すとリーダーの振り分け表と定期実行も自動で増えます。
+- **共通ツール**はクラウドに依存しない名前（`list_services`、`audit_network` など）で、**プロバイダー**が各クラウドの API に置き換えます。
+- **重複を防ぐ仕組み**: エラーごとの指紋（フィンガープリント）を ISSUE に埋め込み、同じエラーは同じ ISSUE にまとめます。データベースは使いません。
+
+詳しくは [仕組みの詳細](docs/ja/architecture.md) を参照してください。
+
+## フォルダ構成
+
+```
+cloud-ops-team/
+├── app/
+│   ├── specialists/        ★ 担当の定義（指示文・ツール・ジョブ）。_template.py をコピーして追加
+│   ├── tools/              ★ AI が使う調査ツール（クラウド非依存）
+│   ├── providers/          ★ クラウドごとの実装（gcp は実装済み、aws / azure は雛形）
+│   ├── agent.py            リーダーの組み立て（担当は自動で読み込み）
+│   ├── prompts.py          指示文の組み立て（クラウド名・言語・プロジェクト情報の差し込み）
+│   ├── config.py           .env の読み込み
+│   └── core/ integrations/ 共通部品（フィンガープリント・伏せ字）、GitHub クライアント
+├── config/ops-context.example.md   ★ プロジェクトの事情を書くひな形
+├── scripts/                setup・doctor・run_job・jobs と、gcp/（初期設定・デプロイ・定期実行）
+├── tests/                  unit（オフライン）・integration・eval（LLM 採点）
+├── docs/                   設計・カスタマイズ・プロバイダー・設定・デプロイ（ja/ に日本語版）
+└── Makefile                すべての操作の入口
+```
+
+★ が、自分のプロジェクト向けに調整するときに主に触る場所です。各ファイルの説明は [フォルダ構成の詳細](docs/ja/architecture.md#フォルダ構成) にあります。
 
 ## 主な設定
 
@@ -173,6 +218,8 @@ GitHub トークンの作り方、動作確認、止め方などは [デプロ�
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | `true` にすると、直ったことを確認した ISSUE を AI がクローズする |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | 1 回の実行で作る ISSUE の上限 |
 | `OPS_CLOUD_PROVIDER` | `gcp` | 対象のクラウド（`gcp` / `aws` / `azure`） |
+| `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: high` など | ISSUE に付けるラベル（自分のリポジトリに合わせて変更） |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | プロジェクトの事情を書いたファイル |
 
 すべての設定は [設定一覧](docs/configuration.md) にあります。
 
@@ -203,6 +250,10 @@ AWS・Azure でも、GitHub リポジトリの診断、脆弱性情報（CISA KE
 **同じエラーが毎日出ていたら、毎日 ISSUE が増えますか？**
 増えません。エラーごとに「指紋（フィンガープリント）」を付けて ISSUE に記録しているので、2 回目以降は既存の ISSUE へのコメントになります（1 日 1 回まで）。
 
+**自分のプロジェクト向けに機能を足せますか？**
+足せます。担当（専門家）は `app/specialists/_template.py` をコピーして登録するだけで増やせ、リーダーの振り分けと定期実行も自動で追加されます。
+調査ツールの追加、手順やラベルの変更も含めて [カスタマイズガイド](docs/ja/customization.md) に例付きでまとめています。
+
 **英語で出力できますか？**
 `OPS_REPORT_LANGUAGE=en` にすると、レポート・ISSUE・コメントが英語になります。
 
@@ -227,6 +278,7 @@ GitHub への書き込みだけを止めるなら、本番の設定を `OPS_DRY_
 ## 開発に参加する
 
 不具合の報告や改善の提案、特に AWS・Azure 対応のコードを歓迎します。[CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+開発時は `make test`（オフラインのテスト）、`make lint`、`make run`、`make eval` を使います。
 セキュリティ上の問題は公開の ISSUE ではなく、[SECURITY.md](SECURITY.md) の手順で非公開に報告してください。
 
 ## ライセンス

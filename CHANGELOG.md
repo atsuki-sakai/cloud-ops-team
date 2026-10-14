@@ -5,6 +5,29 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-14
+
+### Added
+- **Use it for your own project**: `make setup` (interactive `.env`), `make doctor` (checks configuration, Gemini, GitHub and
+  every cloud capability with the identity in use, and prints a fix for each gap), `make run`, `make jobs`, `make chat` and
+  `make gcp-bootstrap / gcp-grant / gcp-deploy / gcp-schedule / gcp-logs` that read `.env`.
+- **Specialist registry** (`app/specialists/`): one module per specialist with its instruction, tools and jobs, plus
+  `_template.py`. The leader's team list and routing table and the Cloud Scheduler jobs are generated from it.
+- **Project context**: `config/ops-context.md` (template included) is appended to every instruction.
+- Configurable issue labels (`OPS_ERROR_LABELS`, `OPS_SECURITY_LABELS`, `OPS_SEVERITY_LABELS`).
+- Scheduler trigger authentication: `OPS_TRIGGER_AUDIENCE` / `OPS_TRIGGER_SERVICE_ACCOUNTS`, configured automatically by
+  `make gcp-deploy` (ADK 2.12 requires trigger authentication to be configured).
+- Customization guide (English and Japanese) and folder-structure documentation.
+
+### Changed
+- Default severity labels are now `severity: critical|high|medium|low` and security issues get `security` only.
+  To keep the 0.2 labels set `OPS_SEVERITY_LABELS=critical=priority: critical,high=priority: high,medium=major,low=minor`
+  and `OPS_SECURITY_LABELS=security,infrastructure`.
+- Scheduler jobs come from the specialists' job definitions (`scripts/jobs.py`); `setup_schedules.sh` finds the service URL
+  itself and accepts `<SCHEDULE_KEY>_CRON` for new jobs.
+- GCP scripts fall back to `.env` names (`GOOGLE_CLOUD_PROJECT`, `OPS_TARGET`, `OPS_TARGET_REGION`); the deploy script checks
+  that the GitHub token secret exists.
+
 ## [0.2.0] - 2026-10-13
 
 ### Changed
@@ -40,6 +63,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   (Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, IAM, SCC, Artifact Analysis), GitHub issue filing with
   fingerprint de-duplication, dry-run mode, redaction, Cloud Run deployment and Cloud Scheduler wiring.
 
-[Unreleased]: https://github.com/atsuki-sakai/cloud-ops-team/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/atsuki-sakai/cloud-ops-team/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/atsuki-sakai/cloud-ops-team/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/atsuki-sakai/cloud-ops-team/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/atsuki-sakai/cloud-ops-team/releases/tag/v0.1.0

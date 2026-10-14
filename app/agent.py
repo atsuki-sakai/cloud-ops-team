@@ -19,6 +19,9 @@ root (cloud_ops_team) ─┬─ error_watch     : error triage, root-cause analy
                        ├─ security_audit  : monthly security / hygiene / EOL / threat-intel audit
                        └─ pr_review       : weekly verification of fixes (PR, CI, recurrence)
 
+Specialists are defined in ``app/specialists/`` (one module each) and built
+here; add one by copying ``app/specialists/_template.py`` and registering it.
+
 The cloud is pluggable (``OPS_CLOUD_PROVIDER=gcp|aws|azure``): specialists use
 cloud-neutral tools that delegate to the selected provider
 (``app/providers``). Specialists are ``mode="single_turn"`` sub-agents: ADK
@@ -37,12 +40,9 @@ from google.genai import types
 from app import prompts
 from app.config import CONFIG
 from app.providers import get_provider
-from app.tools import (
-    ERROR_WATCH_TOOLS,
-    PR_REVIEW_TOOLS,
-    SECURITY_AUDIT_TOOLS,
-    get_run_context,
-)
+from app.specialists import SPECIALISTS
+from app.specialists.base import Specialist
+from app.tools import get_run_context
 
 MODEL = CONFIG.model
 CLOUD = get_provider().profile.display_name
@@ -64,48 +64,16 @@ def _gen_config(max_output_tokens: int = 8192) -> types.GenerateContentConfig:
     )
 
 
-def create_error_watch_agent() -> Agent:
+def build_specialist(specialist: Specialist) -> Agent:
+    """Turn a specialist definition (app/specialists) into an ADK sub-agent."""
     return Agent(
-        name="error_watch",
+        name=specialist.name,
         model=_model(),
-        description=(
-            f"SRE: {CLOUD} のログ・サービス・スケジュールジョブ・メトリクスを調査してエラーをトリアージし、"
-            "原因分析付きの GitHub ISSUE を起票（重複は再発コメント）する。request にはジョブ名・遡り時間・制約を書く。"
-        ),
-        instruction=prompts.error_watch_instruction,
-        tools=ERROR_WATCH_TOOLS,
+        description=prompts.description_for(specialist),
+        instruction=prompts.instruction_for(specialist),
+        tools=list(specialist.tools),
         mode="single_turn",
-        generate_content_config=_gen_config(),
-    )
-
-
-def create_security_audit_agent() -> Agent:
-    return Agent(
-        name="security_audit",
-        model=_model(),
-        description=(
-            f"クラウドセキュリティ担当: {CLOUD} の IAM / 認証情報 / コンピュート / データベース / ネットワーク / "
-            "セキュリティサービス / イメージ脆弱性と、EOL・CISA KEV・Web 脅威動向を月次診断し、critical・high を ISSUE 起票、月次レポートを発行する。"
-        ),
-        instruction=prompts.security_audit_instruction,
-        tools=SECURITY_AUDIT_TOOLS,
-        mode="single_turn",
-        generate_content_config=_gen_config(),
-    )
-
-
-def create_pr_review_agent() -> Agent:
-    return Agent(
-        name="pr_review",
-        model=_model(),
-        description=(
-            "リリースマネージャー: チーム起票 ISSUE に紐づく PR のマージ状況・CI・ログ再発を検証し、"
-            "完了確認コメント / 停滞ラベルを付け、週次レビューをレポート発行する。"
-        ),
-        instruction=prompts.pr_review_instruction,
-        tools=PR_REVIEW_TOOLS,
-        mode="single_turn",
-        generate_content_config=_gen_config(),
+        generate_content_config=_gen_config(specialist.max_output_tokens),
     )
 
 
@@ -116,14 +84,10 @@ root_agent = Agent(
     # and anything selecting traces by name stops finding this agent's.
     name="cloud_ops_team",
     model=_model(),
-    description=f"{CLOUD} 運用保守チームのリーダー。ジョブ（error_watch / security_audit / pr_review）を専門家に割り振り、統合レポートを返す。",
+    description=f"{CLOUD} 運用保守チームのリーダー。ジョブを専門家に割り振り、統合レポートを返す。",
     instruction=prompts.root_instruction,
     tools=[get_run_context],
-    sub_agents=[
-        create_error_watch_agent(),
-        create_security_audit_agent(),
-        create_pr_review_agent(),
-    ],
+    sub_agents=[build_specialist(specialist) for specialist in SPECIALISTS],
     generate_content_config=_gen_config(),
 )
 

@@ -1,6 +1,6 @@
 [project]
 name = "cloud-ops-team"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous cloud operations team (error watch, security audit, PR verification) built with Google ADK"
 authors = [
     {name = "Atsuki Sakai"},

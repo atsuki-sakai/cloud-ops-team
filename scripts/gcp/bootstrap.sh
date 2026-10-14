@@ -2,15 +2,16 @@
 # One-time setup on Google Cloud: APIs, runtime service account and its roles,
 # read-only roles on the monitored project, and the GitHub token secret.
 #
+#   make gcp-bootstrap                              # reads .env, asks for the GitHub token
 #   PROJECT_ID=<deploy-project> GITHUB_TOKEN=<fine-grained PAT> ./scripts/gcp/bootstrap.sh
 #   # optional: TARGET_PROJECT=<monitored-project> SERVICE=cloud-ops-team
 #
 # Then: ./scripts/gcp/deploy_cloud_run.sh and ./scripts/gcp/setup_schedules.sh
 set -euo pipefail
-PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}}"
 : "${PROJECT_ID:?PROJECT_ID is required}"
 SERVICE="${SERVICE:-cloud-ops-team}"
-TARGET_PROJECT="${TARGET_PROJECT:-$PROJECT_ID}"
+TARGET_PROJECT="${TARGET_PROJECT:-${OPS_TARGET:-$PROJECT_ID}}"
 SA_ID="${SA_ID:-$SERVICE}"
 SA="${SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 SECRET="${GITHUB_TOKEN_SECRET:-${SERVICE}-github-token}"
@@ -35,6 +36,11 @@ echo "▶ Read-only roles on $TARGET_PROJECT"
 TARGET_PROJECT="$TARGET_PROJECT" AGENT_SA="$SA" "$(dirname "$0")/grant_target_roles.sh"
 
 echo "▶ GitHub token secret $SECRET"
+if [[ -z "${GITHUB_TOKEN:-}" && -t 0 ]] && ! gcloud secrets describe "$SECRET" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  echo "   Paste a GitHub token for the repository (fine-grained: Issues read/write; Pull requests,"
+  echo "   Actions, Contents, Metadata read). Input is hidden; leave empty to skip."
+  read -r -s -p "   GITHUB_TOKEN: " GITHUB_TOKEN; echo
+fi
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   if gcloud secrets describe "$SECRET" --project "$PROJECT_ID" >/dev/null 2>&1; then
     printf '%s' "$GITHUB_TOKEN" | gcloud secrets versions add "$SECRET" --data-file=- --project "$PROJECT_ID" >/dev/null
@@ -44,6 +50,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   fi
   echo "   ✓ stored"
 else
-  echo "   (skipped: set GITHUB_TOKEN to store it)"
+  gcloud secrets describe "$SECRET" --project "$PROJECT_ID" >/dev/null 2>&1 \
+    && echo "   (exists, kept)" || echo "   (skipped: set GITHUB_TOKEN to store it — deploy needs it)"
 fi
-echo "✅ Done. Next: PROJECT_ID=$PROJECT_ID GITHUB_REPO=owner/repo ./scripts/gcp/deploy_cloud_run.sh"
+echo "✅ Done. Next: make gcp-deploy"

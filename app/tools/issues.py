@@ -19,18 +19,21 @@ from app.core.fingerprint import build_meta_comment, parse_meta_comment
 from app.core.redact import redact
 from app.integrations.github import gh_graphql, gh_rest, repo_path
 
-KIND_LABELS: dict[str, list[str]] = {
-    "error": ["ops:error", "bug"],
-    "security": ["ops:security", "security", "infrastructure"],
-    "report": ["ops:report"],
-}
-SEVERITY_LABELS: dict[str, list[str]] = {
-    "critical": ["priority: critical"],
-    "high": ["priority: high"],
-    "medium": ["major"],
-    "low": ["minor"],
-    "info": [],
-}
+SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def kind_labels(kind: str) -> list[str]:
+    """``ops:<kind>`` plus the repository-specific labels from the configuration."""
+    extra = {"error": CONFIG.error_labels, "security": CONFIG.security_labels}.get(
+        kind, ()
+    )
+    return [f"ops:{kind}", *extra]
+
+
+def severity_labels(severity: str) -> list[str]:
+    return list((CONFIG.severity_labels or {}).get(severity, ()))
+
+
 LABEL_DEFS: dict[str, tuple[str, str]] = {
     "ops-agent": ("0052CC", "Created by the cloud-ops-team agents"),
     "ops:error": ("B60205", "Detected by the error watch"),
@@ -38,13 +41,15 @@ LABEL_DEFS: dict[str, tuple[str, str]] = {
     "ops:report": ("0E8A16", "Scheduled report from the ops team"),
     "ops:verified": ("0E8A16", "Fix verified by the ops team"),
     "ops:stale": ("FBCA04", "No progress for 14+ days"),
-    "priority: critical": ("B60205", ""),
-    "priority: high": ("D93F0B", ""),
-    "major": ("EDEDED", ""),
-    "minor": ("EDEDED", ""),
+    "severity: critical": ("B60205", "Critical: outage, data loss or exposed data"),
+    "severity: high": (
+        "D93F0B",
+        "High: ongoing failures or exploitable misconfiguration",
+    ),
+    "severity: medium": ("FBCA04", "Medium: needs attention"),
+    "severity: low": ("C2E0C6", "Low: minor"),
     "bug": ("D73A4A", "Something isn't working"),
-    "security": ("EDEDED", ""),
-    "infrastructure": ("0E8A16", "Infrastructure"),
+    "security": ("5319E7", "Security"),
 }
 
 # User-visible strings written to GitHub, selected by OPS_REPORT_LANGUAGE.
@@ -237,9 +242,9 @@ def create_ops_issue(
     severity = severity.strip().lower()
     if kind not in ("error", "security"):
         return {"status": "error", "message": "kind must be 'error' or 'security'"}
-    if severity not in SEVERITY_LABELS:
+    if severity not in SEVERITIES:
         severity = "medium"
-    labels = [CONFIG.issue_label, *KIND_LABELS[kind], *SEVERITY_LABELS[severity]]
+    labels = [CONFIG.issue_label, *kind_labels(kind), *severity_labels(severity)]
     meta = {
         "fingerprint": fingerprint,
         "kind": kind,

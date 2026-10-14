@@ -41,7 +41,7 @@ comment and add labels; closing an issue requires `OPS_AUTO_CLOSE_ISSUES=true`.
 
 ```mermaid
 flowchart TB
-    subgraph Agents["Agents (app/agent.py, app/prompts.py)"]
+    subgraph Agents["Agents (app/agent.py, app/prompts.py, app/specialists/)"]
         ROOT["cloud_ops_team (leader)"]
         EW["error_watch"]
         SA["security_audit"]
@@ -79,13 +79,68 @@ flowchart TB
 
 | Package | Responsibility |
 |---|---|
-| `app/agent.py`, `app/prompts.py` | The leader and three specialists, their instructions and tool lists |
+| `app/agent.py`, `app/prompts.py` | Builds the leader and renders every instruction (cloud, language, project context) |
+| `app/specialists/` | One module per specialist: role, instruction, tools and jobs; the registry drives routing and schedules |
 | `app/tools/` | Functions the model calls. Names and docstrings are cloud-neutral |
 | `app/providers/` | One adapter per cloud implementing the `CloudProvider` contract |
 | `app/core/` | Fingerprints, redaction, the shared audit result shape, time helpers |
 | `app/integrations/github.py` | Minimal GitHub REST + GraphQL client |
 | `app/config.py` | Everything configurable, from environment variables |
 | `app/fast_api_app.py` | ADK server with the Pub/Sub-style trigger endpoint enabled |
+
+## Folder structure
+
+★ marks the places you will typically change when adapting the team to your project
+([customization.md](customization.md)).
+
+```
+cloud-ops-team/
+├── app/                          the agent service (deployed to Cloud Run)
+│   ├── agent.py                  builds the leader; specialists are loaded from app/specialists
+│   ├── prompts.py                renders instructions (cloud, language, project context)
+│   ├── config.py                 settings from .env / environment variables
+│   ├── fast_api_app.py           HTTP server (scheduler endpoint /apps/app/trigger/pubsub)
+│   ├── specialists/              ★ one module per team member
+│   │   ├── base.py               Specialist and Job types
+│   │   ├── error_watch.py        error watch: instruction, tools, jobs
+│   │   ├── security_audit.py     monthly security audit
+│   │   ├── pr_review.py          weekly fix verification
+│   │   ├── _template.py          copy this to add a specialist
+│   │   └── __init__.py           registry (SPECIALISTS)
+│   ├── tools/                    ★ functions the model calls (cloud-neutral)
+│   │   ├── cloud.py              the 18 cloud capabilities (delegate to the provider)
+│   │   ├── issues.py             GitHub issues / PRs (dry-run aware)
+│   │   ├── threat_intel.py       CISA KEV, end-of-life, web threat research
+│   │   ├── repo.py               repository security posture
+│   │   ├── context.py            run context (time, target, capabilities)
+│   │   └── __init__.py           tool lists per specialist
+│   ├── providers/                ★ one adapter per cloud
+│   │   ├── base.py               CloudProvider contract (unimplemented = not_supported)
+│   │   ├── gcp/                  Google Cloud (implemented)
+│   │   ├── aws/                  AWS (skeleton)
+│   │   └── azure/                Azure (skeleton)
+│   ├── core/                     fingerprints, redaction, audit result shape, time helpers
+│   ├── integrations/github.py    GitHub REST + GraphQL client
+│   └── app_utils/                agents-cli server plumbing (A2A, sessions)
+├── config/
+│   └── ops-context.example.md    ★ project knowledge template (copy to ops-context.md)
+├── scripts/
+│   ├── setup.py                  create .env interactively (make setup)
+│   ├── doctor.py                 check configuration and access, print fixes (make doctor)
+│   ├── run_job.py                run one job and print every tool call (make run)
+│   ├── jobs.py                   list jobs and schedules (make jobs)
+│   ├── envrun.py                 run a command with .env loaded (used by the Makefile)
+│   ├── trigger_local.sh          send a scheduler-style request to a local server
+│   └── gcp/                      bootstrap, deploy_cloud_run, setup_schedules, grant_target_roles
+├── tests/
+│   ├── unit/                     offline: contracts, conventions, configuration
+│   ├── integration/              calls the model
+│   └── eval/                     LLM-judged behaviour cases
+├── docs/                         architecture, customization, providers, configuration, deployment (ja/: Japanese)
+├── Makefile                      entry point for every task (`make` lists them)
+├── .env.example                  configuration template
+└── Dockerfile                    image for Cloud Run (app/ and config/)
+```
 
 ## 3. Agents
 
@@ -95,6 +150,14 @@ flowchart TB
 | `error_watch` | Groups error logs by fingerprint, correlates with 5xx rates, failing jobs and recent deployments, writes a root-cause hypothesis with confidence, files issues | 15 | `[ops/error]` issues |
 | `security_audit` | IAM, credentials, compute, databases, network, security services, posture findings, image CVEs, EOL, CISA KEV, web threat research; files critical/high findings | 19 | `[ops/security]` issues + monthly report |
 | `pr_review` | For every open team issue: linked PRs, merge state, CI, and whether the error recurred after the merge | 13 | `ops:verified` / `ops:stale` + weekly report |
+
+**Specialists are data, not code paths.** Each one is a `Specialist` in `app/specialists/<name>.py` (role, instruction, tools,
+jobs) registered in `app/specialists/__init__.py`. `app/agent.py` turns every registered specialist into a sub-agent, the
+leader's team list and job routing table are rendered from the registry, and `scripts/jobs.py` derives the Cloud Scheduler jobs
+from the same definitions — adding a specialist or a job touches one module.
+
+**Project context.** `config/ops-context.md` (optional, `OPS_CONTEXT_FILE`) is appended to every instruction, so operators can
+describe their services, severity policy and known noise without editing prompts. It never overrides the safety rules.
 
 **Specialists are `mode="single_turn"` sub-agents.** ADK exposes each as a tool of the leader and runs it inline in the leader's
 session. Compared with wrapping them in `AgentTool`, every tool call streams as an event (HTTP/SSE clients and the scheduler
@@ -297,14 +360,17 @@ CI (`.github/workflows/ci.yml`) runs lint, type checks and unit tests on every p
 
 ## 15. Extending
 
-- **A cloud**: implement a `CloudProvider` subclass — see [providers.md](providers.md).
+Step-by-step recipes with code are in [customization.md](customization.md). In short:
+
+- **Project knowledge**: `config/ops-context.md` — no code.
+- **A specialist**: copy `app/specialists/_template.py`, fill in role / instruction / tools / jobs, append it to `SPECIALISTS`.
+  The leader's routing and the scheduler follow.
+- **A job**: add a `Job` to a specialist (`schedule`, `schedule_key`, `scheduled_params`); override its cron with `<KEY>_CRON`.
 - **A tool**: add a function to `app/tools/` (type hints, no defaults, a docstring the model can act on, return a dict with
-  `status`, never raise for API errors) and add it to the specialist's list in `app/tools/__init__.py`. GitHub writes must honour
-  `CONFIG.dry_run`.
-- **A capability**: add the method to `CloudProvider` (returning `not_supported`), a wrapper to `app/tools/cloud.py`, a glossary entry
-  to each profile, and implement it where possible. The contract tests enforce that all three exist.
-- **A specialist**: add `create_xxx_agent()` with `mode="single_turn"` and a `description` (the leader reads it as the tool
-  description), register it in `root_agent.sub_agents`, add a row to the job table in `app/prompts.py`, and a schedule.
+  `status`, never raise for API errors) and add it to a specialist's `tools`. GitHub writes must honour `CONFIG.dry_run`.
+- **A capability**: add the method to `CloudProvider` (returning `not_supported`), a wrapper to `app/tools/cloud.py`, a glossary
+  entry to each profile, and implement it where possible. The contract tests enforce that all three exist.
+- **A cloud**: implement a `CloudProvider` subclass — see [providers.md](providers.md).
 - **An issue tracker**: `app/tools/issues.py` and `app/tools/repo.py` are the only GitHub-aware modules.
 - **A model**: `OPS_MODEL` selects any Gemini model; other providers are possible through ADK's `LiteLlm` wrapper in `app/agent.py`.
 

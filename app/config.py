@@ -19,6 +19,15 @@ load_dotenv()
 DEFAULT_MODEL = "gemini-3.8-flash"
 LANGUAGES: dict[str, str] = {"ja": "日本語", "en": "English"}
 
+# Extra GitHub labels added to the team's issues (besides ops-agent / ops:*).
+# Override them to match your repository's conventions; empty disables them.
+DEFAULT_ERROR_LABELS = "bug"
+DEFAULT_SECURITY_LABELS = "security"
+DEFAULT_SEVERITY_LABELS = (
+    "critical=severity: critical,high=severity: high,"
+    "medium=severity: medium,low=severity: low"
+)
+
 # Provider-specific variables used when the generic OPS_TARGET / OPS_TARGET_REGION
 # are not set (keeps existing GCP deployments working unchanged).
 _PROVIDER_ENV: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
@@ -56,6 +65,27 @@ def _env_csv(name: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _label_list(name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    raw = default if raw is None else raw
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _label_map(name: str, default: str) -> dict[str, tuple[str, ...]]:
+    """Parse ``critical=severity: critical,high=severity: high`` (``|`` separates
+    several labels for one severity)."""
+    raw = os.getenv(name)
+    raw = default if raw is None else raw
+    mapping: dict[str, tuple[str, ...]] = {}
+    for item in raw.split(","):
+        key, sep, labels = item.partition("=")
+        if sep and key.strip():
+            mapping[key.strip().lower()] = tuple(
+                label.strip() for label in labels.split("|") if label.strip()
+            )
+    return mapping
+
+
 def _first_word(raw: str | None, default: str) -> str:
     """First whitespace-separated token, lower-cased (tolerates trailing comments)."""
     words = (raw or "").split()
@@ -88,6 +118,10 @@ class OpsConfig:
     recurrence_cooldown_hours: int
     timezone: str
     stack_keywords: tuple[str, ...]
+    error_labels: tuple[str, ...] = ("bug",)
+    security_labels: tuple[str, ...] = ("security",)
+    severity_labels: dict[str, tuple[str, ...]] | None = None
+    context_file: str = "config/ops-context.md"
     issue_label: str = "ops-agent"
 
     @property
@@ -129,6 +163,10 @@ def load_config() -> OpsConfig:
         recurrence_cooldown_hours=_env_int("OPS_RECURRENCE_COOLDOWN_HOURS", 24),
         timezone=(os.getenv("OPS_TIMEZONE") or "Asia/Tokyo").strip(),
         stack_keywords=_env_csv("OPS_STACK_KEYWORDS"),
+        error_labels=_label_list("OPS_ERROR_LABELS", DEFAULT_ERROR_LABELS),
+        security_labels=_label_list("OPS_SECURITY_LABELS", DEFAULT_SECURITY_LABELS),
+        severity_labels=_label_map("OPS_SEVERITY_LABELS", DEFAULT_SEVERITY_LABELS),
+        context_file=(os.getenv("OPS_CONTEXT_FILE") or "config/ops-context.md").strip(),
     )
 
 

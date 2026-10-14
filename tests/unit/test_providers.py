@@ -177,21 +177,22 @@ def test_agent_tools_follow_adk_conventions() -> None:
 @pytest.mark.parametrize("key", ("gcp", *SKELETONS))
 def test_prompts_render_for_every_provider(key, use_provider) -> None:
     from app import prompts
+    from app.specialists import SPECIALISTS
 
     provider = use_provider(key)
-    for render in (
+    renders = [
         prompts.root_instruction,
-        prompts.error_watch_instruction,
-        prompts.security_audit_instruction,
-        prompts.pr_review_instruction,
-    ):
+        *(prompts.instruction_for(s) for s in SPECIALISTS),
+    ]
+    for render in renders:
         text = render(None)
         assert "__" not in text.replace("__init__", ""), (
             f"unrendered placeholder in {render.__name__}"
         )
         assert provider.profile.display_name in text
     if key in SKELETONS:
-        assert "未対応" in prompts.security_audit_instruction(None)
+        security = next(s for s in SPECIALISTS if s.name == "security_audit")
+        assert "未対応" in prompts.instruction_for(security)(None)
 
 
 def test_run_context_reports_capabilities(use_provider) -> None:

@@ -33,6 +33,33 @@ otel_to_cloud = True
 
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Authentication of the scheduler trigger (/apps/app/trigger/pubsub).
+# OPS_TRIGGER_AUDIENCE set: ADK verifies the Google-signed OIDC token (audience = the
+#   service URL the scheduler targets) and, with OPS_TRIGGER_SERVICE_ACCOUNTS, its caller.
+# Not set: authentication is left to the platform — Cloud Run rejects unauthenticated
+#   requests (the service is deployed with --no-allow-unauthenticated) — or the request is
+#   local development traffic.
+TRIGGER_AUDIENCE = os.getenv("OPS_TRIGGER_AUDIENCE", "").strip()
+TRIGGER_SERVICE_ACCOUNTS = [
+    sa.strip()
+    for sa in os.getenv("OPS_TRIGGER_SERVICE_ACCOUNTS", "").split(",")
+    if sa.strip()
+]
+
+
+async def _platform_authenticated(_request: object) -> None:
+    """Trigger auth delegated to Cloud Run IAM (or local development)."""
+    return None
+
+
+if TRIGGER_AUDIENCE:
+    trigger_auth: dict = {
+        "trigger_oidc_audience": TRIGGER_AUDIENCE,
+        "trigger_oidc_service_accounts": TRIGGER_SERVICE_ACCOUNTS or None,
+    }
+else:
+    trigger_auth = {"trigger_auth_verifier": _platform_authenticated}
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -60,8 +87,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app: FastAPI = get_fast_api_app(
     agents_dir=AGENT_DIR,
     web=True,
-    # Cloud Scheduler -> Pub/Sub push -> POST /apps/app/trigger/pubsub
+    # Cloud Scheduler (HTTP + OIDC, Pub/Sub-shaped body) -> POST /apps/app/trigger/pubsub
     trigger_sources=["pubsub"],
+    **trigger_auth,
     artifact_service_uri=services.ARTIFACT_SERVICE_URI,
     allow_origins=allow_origins,
     session_service_uri=services.SESSION_SERVICE_URI,

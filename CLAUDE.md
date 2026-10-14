@@ -2,13 +2,15 @@
 
 ## This project: cloud-ops-team
 
-- Agents: `app/agent.py` (leader `cloud_ops_team` + `single_turn` specialists), instructions in `app/prompts.py`.
+- Agents: `app/agent.py` builds the leader `cloud_ops_team`; specialists are defined one per module in `app/specialists/`
+  (instruction, tools, jobs) and registered in `SPECIALISTS`. Shared prompt parts and rendering live in `app/prompts.py`.
+- Add a specialist: copy `app/specialists/_template.py`. Recipes: `docs/customization.md`.
 - Agent-facing tools live in `app/tools/` and must stay cloud-neutral; cloud specifics belong in `app/providers/<cloud>/`
   behind the `CloudProvider` contract (`app/providers/base.py`). Read `docs/architecture.md` and `docs/providers.md` first.
 - Never add a tool that changes cloud resources. GitHub writes must honour `CONFIG.dry_run`.
 - Do not change `app/core/fingerprint.py` formulas (golden tests protect open issues from being re-filed).
-- Fast checks: `uv run pytest tests/unit` and `agents-cli lint`. Long jobs locally: `uv run python scripts/run_job.py <job>`
-  (`agents-cli run` has a fixed 120 s read timeout).
+- Fast checks: `make test` and `make lint`. Run a job locally: `make run JOB=<job>` (`agents-cli run` has a fixed 120 s
+  read timeout). Check access: `make doctor`.
 
 ## Prerequisites
 

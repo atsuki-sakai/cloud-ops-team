@@ -9,7 +9,7 @@ cloud-ops-team は、クラウド環境の定常的な運用保守を小さな A
 - クラウド: **Google Cloud**（実装済み）、**AWS** / **Azure**（雛形。[providers.md](../providers.md)）
 - ISSUE トラッカー: GitHub
 
-English: [docs/architecture.md](../architecture.md)
+English: [docs/architecture.md](../architecture.md) ・ カスタマイズ: [customization.md](customization.md)
 
 ## 1. 人間とエージェントの役割分担
 
@@ -37,7 +37,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph Agents["エージェント（app/agent.py, app/prompts.py）"]
+    subgraph Agents["エージェント（app/agent.py, app/prompts.py, app/specialists/）"]
         ROOT["cloud_ops_team（リーダー）"]
         EW["error_watch"]
         SA["security_audit"]
@@ -75,13 +75,67 @@ flowchart TB
 
 | パッケージ | 責務 |
 |---|---|
-| `app/agent.py`, `app/prompts.py` | リーダーと 3 専門家、指示文、ツールの割り当て |
+| `app/agent.py`, `app/prompts.py` | リーダーの組み立てと、全指示文の生成（クラウド名・言語・プロジェクト情報の差し込み） |
+| `app/specialists/` | 担当ごとのモジュール（役割・指示文・ツール・ジョブ）。登録一覧から振り分けとスケジュールを自動生成 |
 | `app/tools/` | モデルが呼ぶ関数。名前と docstring はクラウド非依存 |
 | `app/providers/` | クラウドごとのアダプター（`CloudProvider` 契約の実装） |
 | `app/core/` | フィンガープリント、マスキング、監査結果の共通形式、時刻ヘルパー |
 | `app/integrations/github.py` | 最小限の GitHub クライアント |
 | `app/config.py` | 環境変数から読み込む全設定 |
 | `app/fast_api_app.py` | Pub/Sub 形式のトリガーを有効にした ADK サーバー |
+
+## フォルダ構成
+
+★ は、自分のプロジェクト向けに調整するときに主に触る場所です（[カスタマイズガイド](customization.md)）。
+
+```
+cloud-ops-team/
+├── app/                          エージェント本体（Cloud Run にデプロイされる）
+│   ├── agent.py                  リーダーを組み立てる（専門家は app/specialists から自動で読み込む）
+│   ├── prompts.py                指示文の組み立て（クラウド名・言語・プロジェクト情報の差し込み）
+│   ├── config.py                 .env / 環境変数から設定を読む
+│   ├── fast_api_app.py           HTTP サーバー（スケジューラが呼ぶ /apps/app/trigger/pubsub）
+│   ├── specialists/              ★ 担当（専門家）の定義。1 ファイル 1 担当
+│   │   ├── base.py               Specialist / Job の型
+│   │   ├── error_watch.py        エラー監視（指示文・ツール・ジョブ）
+│   │   ├── security_audit.py     月次セキュリティ診断
+│   │   ├── pr_review.py          週次の修正確認
+│   │   ├── _template.py          新しい担当のひな形
+│   │   └── __init__.py           登録一覧（SPECIALISTS）
+│   ├── tools/                    ★ エージェントが呼ぶ関数（クラウド非依存）
+│   │   ├── cloud.py              クラウド機能 18 種の窓口（プロバイダーに委譲）
+│   │   ├── issues.py             GitHub の ISSUE / PR（お試しモード対応）
+│   │   ├── threat_intel.py       CISA KEV・サポート期限・Web 脅威調査
+│   │   ├── repo.py               リポジトリのセキュリティ設定
+│   │   ├── context.py            実行コンテキスト（時刻・対象・使える機能）
+│   │   └── __init__.py           担当ごとのツール一覧
+│   ├── providers/                ★ クラウドごとの実装
+│   │   ├── base.py               CloudProvider 契約（未実装は not_supported）
+│   │   ├── gcp/                  Google Cloud（実装済み）
+│   │   ├── aws/                  AWS（雛形）
+│   │   └── azure/                Azure（雛形）
+│   ├── core/                     共通部品（フィンガープリント・伏せ字・診断結果の形・時刻）
+│   ├── integrations/github.py    GitHub API クライアント
+│   └── app_utils/                agents-cli が生成したサーバー部品（A2A・セッション）
+├── config/
+│   └── ops-context.example.md    ★ プロジェクト固有情報のひな形（ops-context.md にコピー）
+├── scripts/
+│   ├── setup.py                  対話で .env を作る（make setup）
+│   ├── doctor.py                 設定と権限を点検し、直し方を表示（make doctor）
+│   ├── run_job.py                ジョブを 1 回実行し、ツール呼び出しを全部表示（make run）
+│   ├── jobs.py                   ジョブと予定の一覧（make jobs）
+│   ├── envrun.py                 .env を読み込んでコマンドを実行（Makefile が使用）
+│   ├── trigger_local.sh          ローカルサーバーにスケジューラと同じ形式で送信
+│   └── gcp/                      Google Cloud 用: 初期設定・デプロイ・スケジュール・権限付与
+├── tests/
+│   ├── unit/                     オフラインのテスト（契約・規約・設定）
+│   ├── integration/              モデルを呼ぶテスト
+│   └── eval/                     LLM 採点の評価データ
+├── docs/                         設計・カスタマイズ・プロバイダー・設定・デプロイ（ja/ に日本語版）
+├── Makefile                      よく使う操作の入口（make で一覧表示）
+├── .env.example                  設定のひな形
+└── Dockerfile                    Cloud Run 用イメージ（app/ と config/ を含む）
+```
 
 ## 3. エージェント
 
@@ -92,6 +146,11 @@ flowchart TB
 | `security_audit` | IAM・認証情報・コンピュート・DB・ネットワーク・セキュリティサービス・検出結果・イメージ CVE・EOL・CISA KEV・Web 脅威調査 → critical/high を起票 | 19 | `[ops/security]` ISSUE + 月次レポート |
 | `pr_review` | チーム起票 ISSUE ごとに紐づく PR・マージ・CI・マージ後の再発を検証 | 13 | `ops:verified` / `ops:stale` + 週次レポート |
 
+- **担当はコードではなく「定義」**です。各担当は `app/specialists/<名前>.py` の `Specialist`（役割・指示文・ツール・ジョブ）で、
+  `app/specialists/__init__.py` に登録します。`app/agent.py` が登録された担当をサブエージェントに変換し、リーダーの担当一覧とジョブの振り分け表、
+  Cloud Scheduler のジョブ（`scripts/jobs.py`）も同じ定義から作られます。担当やジョブの追加は 1 ファイルの変更で済みます。
+- **プロジェクト固有の情報**: `config/ops-context.md`（任意、`OPS_CONTEXT_FILE`）の内容がすべての指示文に追加されます。
+  サービス構成・重要度の考え方・既知のノイズを、プロンプトを編集せずに伝えられます。安全ルールより優先されることはありません。
 - **専門家は `mode="single_turn"` のサブエージェント**です。ADK がリーダーのツールとして公開し、同じセッション内でインライン実行します。
   `AgentTool` と違い、専門家のツール呼び出しが 1 件ずつストリームされるので、HTTP/SSE やスケジューラの接続が無音にならず、トレースにも全呼び出しが残ります。
 - **指示文は関数（InstructionProvider）**で渡します。文字列だと ADK が JSON 例の `{...}` を変数展開しようとして壊れるためです。
@@ -143,7 +202,7 @@ POST /apps/app/trigger/pubsub      Authorization: Bearer <呼び出し用 SA の
 
 Google Cloud では `scripts/gcp/setup_schedules.sh` が Cloud Scheduler の **HTTP** ジョブを作ります。
 Pub/Sub push は 10 分上限で、未 ack だと再配送されるため、30 分のデッドライン・再試行 0 回にできる HTTP ジョブを選んでいます（長い月次診断が二重起動しない）。
-周期・遡り時間・タイムゾーン・ジョブ名はすべて環境変数で変えられ、再実行すると既存ジョブが更新されます（[configuration.md](../configuration.md#schedules-scriptsgcpsetup_schedulessh)）。
+周期・遡り時間・タイムゾーン・ジョブ名はすべて環境変数で変えられ、再実行すると既存ジョブが更新されます（[configuration.md](../configuration.md#schedules-make-gcp-schedule)）。
 
 ## 6. エラー監視の流れ
 
@@ -222,10 +281,14 @@ AWS / Azure プロバイダーは各 SDK の既定の認証チェーン（`boto3
 
 ## 11. 拡張ポイント
 
-- **クラウドを追加**: `CloudProvider` を継承して機能を 1 つずつ実装（[providers.md](../providers.md)）
-- **ツールを追加**: `app/tools/` に関数（型ヒント・既定値なし・docstring・`status` 付き dict を返す・例外を投げない）→ `app/tools/__init__.py` のリストへ。GitHub への書き込みは `CONFIG.dry_run` を尊重
+コード付きの手順は [カスタマイズガイド](customization.md) にあります。要点は次のとおりです。
+
+- **プロジェクトの事情を教える**: `config/ops-context.md`（コード変更なし）
+- **担当を追加**: `app/specialists/_template.py` をコピーして役割・指示文・ツール・ジョブを書き、`SPECIALISTS` に登録。リーダーの振り分けとスケジュールは自動で追従
+- **ジョブを追加**: 担当に `Job` を追加（`schedule`・`schedule_key`・`scheduled_params`）。時刻は `<キー>_CRON` で上書き可能
+- **ツールを追加**: `app/tools/` に関数（型ヒント・既定値なし・docstring・`status` 付き dict を返す・例外を投げない）を作り、担当の `tools` に追加。GitHub への書き込みは `CONFIG.dry_run` を尊重
 - **共通機能を追加**: `CloudProvider` にメソッド（`not_supported` を返す）、`app/tools/cloud.py` にラッパー、各プロファイルに用語を追加。契約テストが 3 点の整合を検査
-- **専門家を追加**: `mode="single_turn"` と `description` を持つ `create_xxx_agent()` を `root_agent.sub_agents` に登録し、ジョブ表とスケジュールに追加
+- **クラウドを追加**: `CloudProvider` を継承して機能を 1 つずつ実装（[providers.md](../providers.md)）
 - **モデルを変更**: `OPS_MODEL`。Gemini 以外は `app/agent.py` で ADK の `LiteLlm` を使う
 
 ## 12. 既知の制約

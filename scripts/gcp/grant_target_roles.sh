@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Grant the agent's runtime service account read-only roles on the project it monitors.
 #
+#   make gcp-grant                                  # reads .env
 #   TARGET_PROJECT=<target-project> AGENT_SA=<sa>@<deploy-project>.iam.gserviceaccount.com \
 #     ./scripts/gcp/grant_target_roles.sh
 #
 # Every role is a viewer / reviewer role: the team never changes cloud resources.
 set -euo pipefail
+TARGET_PROJECT="${TARGET_PROJECT:-${OPS_TARGET:-}}"
 : "${TARGET_PROJECT:?TARGET_PROJECT is required}"
-: "${AGENT_SA:?AGENT_SA (runtime service account email) is required}"
+if [[ -z "${AGENT_SA:-}" ]]; then
+  DEPLOY_PROJECT="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-$TARGET_PROJECT}}"
+  AGENT_SA="${SERVICE:-cloud-ops-team}@${DEPLOY_PROJECT}.iam.gserviceaccount.com"
+fi
 
 ROLES=(
   roles/serviceusage.serviceUsageConsumer    # call APIs billed to the target (x-goog-user-project)

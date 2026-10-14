@@ -8,8 +8,8 @@
 **An AI operations team for your cloud.** Three specialist agents watch production errors, audit security every month and
 verify every week that merged pull requests really fixed what they found — and they talk to you through GitHub issues.
 
-[日本語 README](README.ja.md) · [Architecture](docs/architecture.md) · [Providers (GCP / AWS / Azure)](docs/providers.md) ·
-[Configuration](docs/configuration.md) · [Deploy on Google Cloud](docs/deployment-gcp.md)
+[日本語 README](README.ja.md) · [Architecture](docs/architecture.md) · [Customization](docs/customization.md) ·
+[Providers (GCP / AWS / Azure)](docs/providers.md) · [Configuration](docs/configuration.md) · [Deploy on Google Cloud](docs/deployment-gcp.md)
 
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
@@ -53,38 +53,47 @@ flowchart LR
 On every cloud, repository posture, CISA KEV, end-of-life checks, web threat research and the weekly PR review work today.
 See [docs/providers.md](docs/providers.md) to add or complete a provider.
 
-## Quick start (local)
+## Use it for your own project
+
+This repository is meant to be **cloned and adapted**: click **Use this template** on GitHub (or clone it), then everything
+runs through `make` (`make` alone lists the tasks).
 
 Requirements: Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), [agents-cli](https://github.com/google/agents-cli)
-(`uv tool install google-agents-cli`), Gemini access (Vertex AI or `GEMINI_API_KEY`), read access to the cloud you monitor and
-a GitHub token (or `gh auth login`).
+(`uv tool install google-agents-cli`), `make`, `gcloud` (logged in, plus `gcloud auth application-default login`), Gemini access
+(Vertex AI or `GEMINI_API_KEY`) and a GitHub token or `gh auth login`.
 
 ```bash
-git clone https://github.com/atsuki-sakai/cloud-ops-team && cd cloud-ops-team
-agents-cli install                 # uv sync
-cp .env.example .env               # set OPS_TARGET, GITHUB_REPO, ... (OPS_DRY_RUN=true by default)
-
-# Run a job once and watch every tool call (nothing is written to GitHub in dry-run mode)
-uv run python scripts/run_job.py error_watch --hours 24
-uv run python scripts/run_job.py weekly_pr_review --days 7
-uv run python scripts/run_job.py monthly_security_audit --kev-days 30
-
-# Or chat with it
-agents-cli playground
+git clone https://github.com/<you>/cloud-ops-team && cd cloud-ops-team
+make setup                       # install, then answer a few questions to create .env
+make doctor                      # check configuration, Gemini, GitHub and cloud access — prints a fix for every gap
+make run JOB=error_watch         # run one job locally and watch every tool call (dry-run: nothing is written)
+cp config/ops-context.example.md config/ops-context.md   # optional: describe your services, severity policy, known noise
 ```
 
-## Deploy
-
-Google Cloud (Cloud Run + Cloud Scheduler), about ten minutes:
+Deploy to Google Cloud (Cloud Run + Cloud Scheduler):
 
 ```bash
-PROJECT_ID=my-project GITHUB_TOKEN=github_pat_xxx ./scripts/gcp/bootstrap.sh
-PROJECT_ID=my-project GITHUB_REPO=owner/repo ./scripts/gcp/deploy_cloud_run.sh
-PROJECT_ID=my-project AGENT_URL=https://... CLOUD_RUN_SERVICE=cloud-ops-team ./scripts/gcp/setup_schedules.sh
+make gcp-bootstrap               # once: APIs, runtime service account, read-only roles, GitHub token secret (prompts)
+make gcp-deploy                  # dry-run first; OPS_DRY_RUN=false make gcp-deploy to start filing issues
+make gcp-schedule                # create the jobs (finds the service URL itself)
+make gcp-logs                    # recent runs
 ```
 
-Every schedule is configurable (`ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1` for hourly, for example).
-Full guide and runbook: [docs/deployment-gcp.md](docs/deployment-gcp.md).
+Change schedules with variables, e.g. `ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 make gcp-schedule` for an hourly
+error watch (`make jobs` shows the current ones). Full guide and runbook: [docs/deployment-gcp.md](docs/deployment-gcp.md).
+
+## Customize
+
+| You want to | Do this |
+|---|---|
+| Tell the team what your services do and which errors are noise | `config/ops-context.md` (no code) |
+| Use your repository's labels, another language, other schedules | `.env` (no code) |
+| Change a specialist's procedure or issue format | edit `INSTRUCTION` in `app/specialists/<name>.py` |
+| Add a tool | a function in `app/tools/`, added to a specialist's `tools` |
+| Add a job or a whole specialist | add a `Job`, or copy `app/specialists/_template.py` and register it — routing and schedules follow |
+| Support another cloud capability | implement it in `app/providers/<cloud>/` |
+
+Recipes with code: [docs/customization.md](docs/customization.md) (日本語: [docs/ja/customization.md](docs/ja/customization.md)).
 
 ## Configuration
 
@@ -97,27 +106,36 @@ Full guide and runbook: [docs/deployment-gcp.md](docs/deployment-gcp.md).
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
 | `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
+| `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels to match your repository |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge for the agents |
 
 All variables: [docs/configuration.md](docs/configuration.md).
 
-## Project layout
+## Folder structure
 
 ```
-app/
-  agent.py, prompts.py     leader + specialists, cloud-neutral instructions
-  config.py                environment-driven settings
-  tools/                   tools the model calls: cloud.py (capabilities), threat_intel.py, repo.py, issues.py, context.py
-  providers/               base.py (contract), gcp/ (implemented), aws/ and azure/ (skeletons)
-  core/                    fingerprint, redaction, findings, time helpers
-  integrations/github.py   GitHub REST + GraphQL client
-scripts/                   run_job.py, trigger_local.sh, gcp/{bootstrap,deploy_cloud_run,setup_schedules,grant_target_roles}.sh
-tests/                     unit (no network), integration, eval (LLM-as-judge)
-docs/                      architecture, providers, configuration, deployment
+cloud-ops-team/
+├── app/
+│   ├── specialists/        ★ team members: instruction, tools and jobs (copy _template.py to add one)
+│   ├── tools/              ★ tools the model calls (cloud-neutral)
+│   ├── providers/          ★ one adapter per cloud: gcp (implemented), aws and azure (skeletons)
+│   ├── agent.py            builds the leader; specialists are loaded from the registry
+│   ├── prompts.py          renders instructions (cloud, language, project context)
+│   ├── config.py           settings from .env
+│   └── core/ integrations/ fingerprints and redaction; GitHub client
+├── config/ops-context.example.md   ★ template for your project knowledge
+├── scripts/                setup, doctor, run_job, jobs; gcp/ (bootstrap, deploy, schedules, roles)
+├── tests/                  unit (offline), integration, eval (LLM-judged)
+├── docs/                   architecture, customization, providers, configuration, deployment (ja/: Japanese)
+└── Makefile                entry point for every task
 ```
+
+★ marks what you typically change. File-by-file description: [docs/architecture.md#folder-structure](docs/architecture.md#folder-structure).
 
 ## Contributing
 
-Issues and pull requests are welcome — especially AWS and Azure capabilities. Start with [CONTRIBUTING.md](CONTRIBUTING.md);
+Issues and pull requests are welcome — especially AWS and Azure capabilities. Use `make test`, `make lint`, `make run` and
+`make eval` while developing, and start with [CONTRIBUTING.md](CONTRIBUTING.md);
 security reports go through [SECURITY.md](SECURITY.md).
 
 ## License

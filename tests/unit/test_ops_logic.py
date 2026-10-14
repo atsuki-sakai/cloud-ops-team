@@ -12,7 +12,7 @@ from app.core.fingerprint import (
     search_text_from,
 )
 from app.core.redact import redact, redact_obj
-from app.tools.issues import KIND_LABELS, SEVERITY_LABELS, _title
+from app.tools.issues import _title, kind_labels, severity_labels
 
 
 def test_message_template_collapses_variable_parts() -> None:
@@ -89,12 +89,30 @@ def test_redact_obj_recurses() -> None:
 
 
 def test_issue_labels_and_title_prefix() -> None:
-    assert "ops:error" in KIND_LABELS["error"] and "bug" in KIND_LABELS["error"]
-    assert "security" in KIND_LABELS["security"]
-    assert SEVERITY_LABELS["critical"] == ["priority: critical"]
-    assert SEVERITY_LABELS["info"] == []
+    assert kind_labels("error") == ["ops:error", "bug"]
+    assert kind_labels("security") == ["ops:security", "security"]
+    assert kind_labels("report") == ["ops:report"]
+    assert severity_labels("critical") == ["severity: critical"]
+    assert severity_labels("info") == []
     assert _title("error", "x が落ちている") == "[ops/error] x が落ちている"
     assert _title("error", "[ops/error] already") == "[ops/error] already"
+
+
+def test_labels_are_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("OPS_ERROR_LABELS", "")
+    monkeypatch.setenv("OPS_SECURITY_LABELS", "security, infrastructure")
+    monkeypatch.setenv(
+        "OPS_SEVERITY_LABELS",
+        "critical=priority: critical,high=priority: high|urgent,medium=major",
+    )
+    cfg = load_config()
+    assert cfg.error_labels == ()
+    assert cfg.security_labels == ("security", "infrastructure")
+    assert cfg.severity_labels == {
+        "critical": ("priority: critical",),
+        "high": ("priority: high", "urgent"),
+        "medium": ("major",),
+    }
 
 
 def test_config_env_parsing(monkeypatch) -> None:
