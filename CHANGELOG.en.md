@@ -7,6 +7,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Invalid dry-run values enabling GitHub writes, and secret backups being included in Git or deployment uploads.
+- Unredacted log grouping fields and unfinished searches being reported as zero recurring errors.
+- Issue target isolation, pagination beyond 100 issues, and closure after verification comment or label failures.
+- Firewall defaults and numeric protocols, scanning every serving revision, and MySQL PITR detection.
+- Inaccessible GitHub settings being reported as insecure, missing raw-file version information, and malformed EOL responses.
+- Deployment label values conflicting with argument delimiters; added offline regression tests for these cases.
+
 ### Changed
 - Documentation is now **Japanese-first**: `README.md`, `docs/*.md`, `CONTRIBUTING.md` and `CHANGELOG.md` are Japanese;
   the English versions are `README.en.md`, `docs/en/*.md`, `CONTRIBUTING.en.md` and `CHANGELOG.en.md`.

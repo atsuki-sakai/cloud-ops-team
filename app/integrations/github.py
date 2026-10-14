@@ -91,7 +91,7 @@ def gh_rest(
     accept: str | None = None,
     timeout: float = 30.0,
 ) -> tuple[bool, Any]:
-    """Call ``https://api.github.com{path}``. Returns ``(ok, payload)``."""
+    """Return ``(ok, payload)``; raw media types preserve text as ``{"raw": text}``."""
     try:
         resp = httpx.request(
             method,
@@ -107,6 +107,8 @@ def gh_rest(
         return False, {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
     if resp.status_code >= 400:
         return False, _error(resp)
+    if accept and "application/vnd.github.raw" in accept:
+        return True, {"raw": resp.text}
     if resp.status_code == 204 or not resp.content:
         return True, {}
     try:

@@ -51,27 +51,20 @@ if ! gcloud secrets describe "$GITHUB_TOKEN_SECRET" --project "$PROJECT_ID" >/de
   exit 1
 fi
 
-# "^|^" switches the gcloud list delimiter to "|" so values may contain commas.
-ENV_VARS="^|^OPS_CLOUD_PROVIDER=gcp"
-ENV_VARS+="|GOOGLE_GENAI_USE_ENTERPRISE=true|GOOGLE_CLOUD_PROJECT=${PROJECT_ID}|GOOGLE_CLOUD_LOCATION=global"
-ENV_VARS+="|OPS_TARGET=${TARGET_PROJECT}|OPS_TARGET_REGION=${TARGET_REGION}|OPS_GCP_AUTH=adc|GITHUB_REPO=${GITHUB_REPO}"
-ENV_VARS+="|OPS_DRY_RUN=${OPS_DRY_RUN:-true}|OPS_AUTO_CLOSE_ISSUES=${OPS_AUTO_CLOSE_ISSUES:-false}"
-ENV_VARS+="|OPS_REPORT_LANGUAGE=${OPS_REPORT_LANGUAGE:-ja}|OPS_MODEL=${OPS_MODEL:-gemini-3.8-flash}"
-ENV_VARS+="|OPS_MAX_ISSUES_PER_RUN=${OPS_MAX_ISSUES_PER_RUN:-10}|OPS_ERROR_LOOKBACK_HOURS=${OPS_ERROR_LOOKBACK_HOURS:-24}"
-ENV_VARS+="|OPS_RECURRENCE_COOLDOWN_HOURS=${OPS_RECURRENCE_COOLDOWN_HOURS:-24}|OPS_TIMEZONE=${OPS_TIMEZONE:-Asia/Tokyo}"
-ENV_VARS+="|ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false"
-[[ -n "$OPS_TRIGGER_AUDIENCE" ]] && ENV_VARS+="|OPS_TRIGGER_AUDIENCE=${OPS_TRIGGER_AUDIENCE}|OPS_TRIGGER_SERVICE_ACCOUNTS=${OPS_TRIGGER_SERVICE_ACCOUNTS}"
-for var in OPS_STACK_KEYWORDS OPS_ERROR_LABELS OPS_SECURITY_LABELS OPS_SEVERITY_LABELS OPS_RESEARCH_MODEL; do
-  [[ -n "${!var+x}" ]] && ENV_VARS+="|${var}=${!var}"
-done
-
 cd "$(dirname "$0")/../.."
+# An env file preserves commas, pipes, whitespace and empty label settings.
+# JSON is also a valid YAML mapping for gcloud's --env-vars-file.
+ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/cloud-ops-env.XXXXXX")"
+trap 'rm -f "$ENV_FILE"' EXIT
+export PROJECT_ID TARGET_PROJECT TARGET_REGION OPS_TRIGGER_AUDIENCE OPS_TRIGGER_SERVICE_ACCOUNTS
+uv run --quiet python scripts/gcp/deploy_env.py "$ENV_FILE"
+
 gcloud run deploy "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --source . \
   --memory "${MEMORY:-2Gi}" --cpu "${CPU:-1}" \
   --min-instances "${MIN_INSTANCES:-0}" --max-instances "${MAX_INSTANCES:-2}" --concurrency "${CONCURRENCY:-4}" \
   --timeout "${TIMEOUT:-1800}" --no-allow-unauthenticated \
   --service-account "$RUNTIME_SA" \
-  --set-env-vars "$ENV_VARS" \
+  --env-vars-file "$ENV_FILE" \
   --update-secrets "GITHUB_TOKEN=${GITHUB_TOKEN_SECRET}:latest" \
   --labels "app=cloud-ops-team" \
   --quiet

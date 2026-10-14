@@ -35,6 +35,11 @@ English: [docs/en/configuration.md](en/configuration.md)
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | 1 回の実行で新しく作る ISSUE の上限 |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | 同じ ISSUE への再発コメントは、この時間内に 1 回までにします |
 
+真偽値は `true/false`、`yes/no`、`on/off`、`1/0`（大文字小文字を区別しません）を受け付けます。
+未設定・空値は既定値を使い、それ以外の値は設定エラーとして起動を止めます。
+`make setup` が保存する `.env` とそのバックアップは所有者だけが読み書きでき、
+`.env.backup-*` は Git とデプロイのアップロード対象から除外されます。
+
 ### 動作
 
 | 変数 | 既定値 | 説明 |
@@ -131,5 +136,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 | `CONCURRENCY` | `4` | 1 インスタンスが同時に処理するリクエスト数 |
 | `TIMEOUT` | `1800` | リクエストのタイムアウト（秒） |
 
-このスクリプトは `--set-env-vars` を使うため、デプロイのたびにサービスの環境変数がすべて置き換わります。
+このスクリプトは許可した設定を一時ファイルに書き、`--env-vars-file` で渡すため、
+カンマ・縦棒・空値を含むラベル設定もそのまま保持します。一時ファイルは終了時に削除します。
+デプロイのたびにサービスの環境変数がすべて置き換わります。
 GitHub に書き込ませたいサービスでは、デプロイのたびに `OPS_DRY_RUN=false` を指定してください。

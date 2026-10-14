@@ -25,24 +25,90 @@ _VERSION_FILES = (
 )
 
 
+def _get(
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    accept: str | None = None,
+    list_key: str | None = None,
+    expect_list: bool = False,
+) -> tuple[bool, Any]:
+    """Reject malformed successful responses before treating them as observations."""
+    ok, payload = gh_rest("GET", path, params=params, accept=accept)
+    if not ok:
+        return ok, payload
+    valid = isinstance(payload, list if expect_list else dict)
+    if valid and expect_list:
+        valid = all(isinstance(item, dict) for item in payload)
+    elif valid and list_key:
+        items = payload.get(list_key)
+        valid = isinstance(items, list) and all(
+            isinstance(item, dict) for item in items
+        )
+        if valid and list_key == "tree":
+            valid = all(isinstance(item.get("path"), str) for item in items)
+    elif valid and accept:
+        valid = isinstance(payload.get("raw"), str)
+    if not valid:
+        return False, {
+            "status": "error",
+            "message": f"Unexpected response shape for {path}",
+        }
+    return True, payload
+
+
 def get_repo_security_posture() -> dict:
     """Summarise the GitHub repository's security hygiene: security features,
     branch protection, latest runs of security workflows, Dockerfile base
     images and toolchain version pins (for EOL checks), Dependabot PRs."""
-    ok, repo = gh_rest("GET", repo_path())
+    ok, repo = _get(repo_path())
     if not ok:
         return error_result("repo_posture", repo)
     default_branch = repo.get("default_branch", "main")
-    sec = repo.get("security_and_analysis") or {}
-    ok_va, _ = gh_rest("GET", f"{repo_path()}/vulnerability-alerts")
-    ok_bp, protection = gh_rest(
-        "GET", f"{repo_path()}/branches/{default_branch}/protection"
+    sec = repo.get("security_and_analysis")
+    sec = {} if sec is None else sec
+    if (
+        not isinstance(default_branch, str)
+        or not isinstance(sec, dict)
+        or any(not isinstance(value, dict) for value in sec.values())
+    ):
+        return error_result(
+            "repo_posture",
+            {"status": "error", "message": "Unexpected repository metadata shape"},
+        )
+    errors = []
+
+    def record_error(check: str, payload: dict[str, Any]) -> None:
+        errors.append({"check": check, **payload})
+
+    ok_va, alerts = _get(f"{repo_path()}/vulnerability-alerts")
+    alerts_enabled = True if ok_va else None
+    if not ok_va:
+        # Repository admin rights do not prove the token's endpoint permissions.
+        # GitHub may mask missing token permissions with the same 404 as disabled alerts.
+        record_error("dependabot_alerts", alerts)
+    ok_bp, protection = _get(f"{repo_path()}/branches/{default_branch}/protection")
+    branch_protection = bool(protection) if ok_bp else None
+    if not ok_bp:
+        if (
+            protection.get("http_status") == 404
+            and str(protection.get("message", "")).strip().lower()
+            == "branch not protected"
+        ):
+            branch_protection = False
+        else:
+            record_error("branch_protection", protection)
+    ok_rs, rulesets = _get(
+        f"{repo_path()}/rulesets", params={"per_page": 20}, expect_list=True
     )
-    ok_rs, rulesets = gh_rest("GET", f"{repo_path()}/rulesets", params={"per_page": 20})
+    if not ok_rs:
+        record_error("rulesets", rulesets)
 
     workflows_out = []
-    ok_wf, workflows = gh_rest(
-        "GET", f"{repo_path()}/actions/workflows", params={"per_page": 100}
+    ok_wf, workflows = _get(
+        f"{repo_path()}/actions/workflows",
+        params={"per_page": 100},
+        list_key="workflows",
     )
     if ok_wf:
         for wf in workflows.get("workflows") or []:
@@ -50,11 +116,19 @@ def get_repo_security_posture() -> dict:
                 f"{wf.get('name', '')} {wf.get('path', '')}"
             ):
                 continue
-            ok_r, runs = gh_rest(
-                "GET",
+            if "id" not in wf:
+                record_error(
+                    "security_workflows",
+                    {"status": "error", "message": "Workflow is missing id"},
+                )
+                continue
+            ok_r, runs = _get(
                 f"{repo_path()}/actions/workflows/{wf['id']}/runs",
                 params={"per_page": 1},
+                list_key="workflow_runs",
             )
+            if not ok_r:
+                record_error(f"workflow_runs:{wf['id']}", runs)
             latest = ((runs or {}).get("workflow_runs") or [{}])[0] if ok_r else {}
             workflows_out.append(
                 {
@@ -68,11 +142,15 @@ def get_repo_security_posture() -> dict:
                     "url": latest.get("html_url"),
                 }
             )
+    else:
+        record_error("security_workflows", workflows)
 
     dockerfiles = []
     version_pins: dict[str, str] = {}
-    ok_tree, tree = gh_rest(
-        "GET", f"{repo_path()}/git/trees/{default_branch}", params={"recursive": "1"}
+    ok_tree, tree = _get(
+        f"{repo_path()}/git/trees/{default_branch}",
+        params={"recursive": "1"},
+        list_key="tree",
     )
     if ok_tree:
         paths = [
@@ -89,12 +167,13 @@ def get_repo_security_posture() -> dict:
             )
         ][:6]
         for path in docker_paths:
-            ok_c, content = gh_rest(
-                "GET",
+            ok_c, content = _get(
                 f"{repo_path()}/contents/{path}",
                 params={"ref": default_branch},
                 accept="application/vnd.github.raw+json",
             )
+            if not ok_c:
+                record_error(f"content:{path}", content)
             text = content.get("raw", "") if isinstance(content, dict) else ""
             if ok_c and text:
                 from_lines = [
@@ -105,12 +184,13 @@ def get_repo_security_posture() -> dict:
                 dockerfiles.append({"path": path, "from": from_lines})
         for vf in _VERSION_FILES:
             if vf in paths:
-                ok_v, content = gh_rest(
-                    "GET",
+                ok_v, content = _get(
                     f"{repo_path()}/contents/{vf}",
                     params={"ref": default_branch},
                     accept="application/vnd.github.raw+json",
                 )
+                if not ok_v:
+                    record_error(f"content:{vf}", content)
                 text = content.get("raw", "") if isinstance(content, dict) else ""
                 if ok_v and text:
                     if vf == "package.json":
@@ -122,35 +202,28 @@ def get_repo_security_posture() -> dict:
                         version_pins[vf] = "(present)"
                     else:
                         version_pins[vf] = text.strip()[:120]
-    ok_dp, dependabot = gh_rest(
-        "GET",
+    else:
+        record_error("repository_tree", tree)
+    ok_dp, dependabot = _get(
         "/search/issues",
         params={
             "q": f"repo:{CONFIG.github_repo} is:pr is:open author:app/dependabot",
             "per_page": 1,
         },
     )
-    ok_rn, renovate = gh_rest(
-        "GET",
+    if not ok_dp:
+        record_error("dependabot_prs", dependabot)
+    ok_rn, renovate = _get(
         "/search/issues",
         params={
             "q": f"repo:{CONFIG.github_repo} is:pr is:open author:app/renovate",
             "per_page": 1,
         },
     )
+    if not ok_rn:
+        record_error("renovate_prs", renovate)
 
     findings: list[dict[str, Any]] = []
-    if not ok_va:
-        findings.append(
-            finding(
-                "repo.dependabot_alerts",
-                "medium",
-                "Dependabot alerts が無効",
-                CONFIG.github_repo,
-                "vulnerability-alerts が有効化されていません。",
-                "Settings > Code security で Dependabot alerts / security updates を有効化。",
-            )
-        )
     if (sec.get("secret_scanning") or {}).get("status") not in (None, "enabled"):
         findings.append(
             finding(
@@ -162,7 +235,7 @@ def get_repo_security_posture() -> dict:
                 "Secret scanning + push protection を有効化。",
             )
         )
-    if not ok_bp and not (ok_rs and rulesets):
+    if branch_protection is False and ok_rs and not rulesets:
         findings.append(
             finding(
                 "repo.branch_protection",
@@ -189,11 +262,11 @@ def get_repo_security_posture() -> dict:
         "default_branch": default_branch,
         "visibility": repo.get("visibility"),
         "security_and_analysis": sec,
-        "dependabot_alerts_enabled": ok_va,
-        "branch_protection": bool(ok_bp and protection),
+        "dependabot_alerts_enabled": alerts_enabled,
+        "branch_protection": branch_protection,
         "rulesets": [r.get("name") for r in rulesets]
         if ok_rs and isinstance(rulesets, list)
-        else [],
+        else None,
         "security_workflows": workflows_out,
         "dockerfiles": dockerfiles,
         "version_pins": version_pins,
@@ -201,4 +274,7 @@ def get_repo_security_posture() -> dict:
         "open_renovate_prs": (renovate or {}).get("total_count") if ok_rn else None,
         "pushed_at": repo.get("pushed_at"),
     }
-    return result("repo_posture", findings, summary)
+    out = result("repo_posture", findings, summary)
+    if errors:
+        out.update(status="partial", errors=errors)
+    return out
