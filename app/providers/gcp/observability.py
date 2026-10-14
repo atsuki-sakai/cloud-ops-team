@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -12,7 +13,7 @@ from app.config import CONFIG
 from app.core.fingerprint import fingerprint, message_template, search_text_from
 from app.core.redact import redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
-from app.providers.gcp.client import gcp_list, project_path
+from app.providers.gcp.client import gcp_get, gcp_list, gcp_post, project_path
 
 LOGGING = "https://logging.googleapis.com/v2"
 RUN = "https://run.googleapis.com/v2"
@@ -44,11 +45,37 @@ _MSG_KEYS = (
     "reason",
     "status",
 )
+_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.I)
 
 
 def _search_text_for(entry: dict[str, Any], raw_message: str) -> str:
-    return search_text_from(
-        (entry.get("httpRequest") or {}).get("requestUrl"), raw_message
+    url = str((entry.get("httpRequest") or {}).get("requestUrl") or "")
+    safe_message, safe_url = redact(raw_message), redact(url)
+    candidate = search_text_from(url, raw_message)
+    if (
+        candidate
+        and not _MASKED_TEXT.search(candidate)
+        and (candidate in safe_message or candidate in safe_url)
+    ):
+        return candidate
+
+    # A mask is not a literal present in the original log. Choose a literal
+    # from an unchanged span instead, preserving later recurrence searches.
+    candidates = [
+        search_text_from(None, span)
+        for safe_text in (safe_message, safe_url)
+        for span in _MASKED_TEXT.split(safe_text)
+    ]
+    return max(
+        (
+            text
+            for text in candidates
+            if len(text) >= 8
+            and (text in raw_message or text in url)
+            and redact(text) == text
+        ),
+        key=len,
+        default="",
     )
 
 
@@ -119,14 +146,22 @@ def _compact(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _list_entries(
-    filter_: str, *, page_size: int, order: str, max_pages: int
+    filter_: str,
+    *,
+    page_size: int,
+    order: str,
+    max_pages: int,
+    full_response: bool = False,
 ) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
+    """Fetch a complete bounded search, or one raw page for explicit previews."""
     body = {
         "resourceNames": [project_path()],
         "filter": filter_,
         "orderBy": order,
         "pageSize": page_size,
     }
+    if full_response:
+        return gcp_post(f"{LOGGING}/entries:list", json=body)
     return gcp_list(
         f"{LOGGING}/entries:list",
         "entries",
@@ -192,7 +227,7 @@ def summarize_error_groups(hours: int) -> dict:
                 "fingerprint": key,
                 "resource_type": compact["resource_type"],
                 "service": compact["service"],
-                "template": template,
+                "template": message_template(redact(raw_message)),
                 "count": 0,
                 "first_seen": ts,
                 "last_seen": ts,
@@ -204,6 +239,7 @@ def summarize_error_groups(hours: int) -> dict:
                 "search_text": _search_text_for(entry, raw_message),
                 "log_name": compact["log_name"],
             }
+            group["search_text_available"] = bool(group["search_text"])
         group["count"] = int(group["count"]) + 1
         if ts and (group["first_seen"] is None or ts < group["first_seen"]):
             group["first_seen"] = ts
@@ -250,16 +286,27 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
     clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
     if service_name:
         clauses.append(_service_clause(service_name))
-    ok, entries = _list_entries(
-        " AND ".join(clauses), page_size=limit, order="timestamp desc", max_pages=1
+    ok, payload = _list_entries(
+        " AND ".join(clauses),
+        page_size=limit,
+        order="timestamp desc",
+        max_pages=1,
+        full_response=True,
     )
     if not ok:
-        return {"status": entries.get("status", "error"), "error": entries}
-    assert isinstance(entries, list)
+        return {"status": payload.get("status", "error"), "error": payload}
+    assert isinstance(payload, dict)
+    entries = payload.get("entries") or []
+    token = payload.get("nextPageToken")
+    truncated = bool(token) or len(entries) > limit
+    entries = entries[:limit]
     return {
         "status": "ok",
         "count": len(entries),
         "entries": [_compact(e) for e in entries],
+        "truncated": truncated,
+        "complete": not truncated,
+        "next_page_token": token,
     }
 
 
@@ -295,16 +342,27 @@ def get_log_context(
         clauses.append(f'timestamp<="{iso_utc(centre + dt.timedelta(minutes=window))}"')
         if service_name:
             clauses.append(_service_clause(service_name))
-    ok, entries = _list_entries(
-        " AND ".join(clauses), page_size=80, order="timestamp asc", max_pages=1
+    ok, payload = _list_entries(
+        " AND ".join(clauses),
+        page_size=80,
+        order="timestamp asc",
+        max_pages=1,
+        full_response=True,
     )
     if not ok:
-        return {"status": entries.get("status", "error"), "error": entries}
-    assert isinstance(entries, list)
+        return {"status": payload.get("status", "error"), "error": payload}
+    assert isinstance(payload, dict)
+    entries = payload.get("entries") or []
+    token = payload.get("nextPageToken")
+    truncated = bool(token) or len(entries) > 80
+    entries = entries[:80]
     return {
         "status": "ok",
         "count": len(entries),
         "entries": [_compact(e) for e in entries],
+        "truncated": truncated,
+        "complete": not truncated,
+        "next_page_token": token,
     }
 
 
@@ -319,6 +377,12 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         search_text: Literal text to search for across all log fields.
         since: ISO-8601 timestamp to count from.
     """
+    if not search_text.strip():
+        return {
+            "status": "error",
+            "message": "A nonempty, safe search_text is required to check recurrence.",
+            "complete": False,
+        }
     start = parse_time(since) or (utcnow() - dt.timedelta(days=7))
     clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
     if service_name:
@@ -330,14 +394,23 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         " AND ".join(clauses), page_size=1000, order="timestamp desc", max_pages=2
     )
     if not ok:
-        return {"status": entries.get("status", "error"), "error": entries}
+        out = {"status": entries.get("status", "error"), "error": entries}
+        if entries.get("incomplete"):
+            out.update(
+                capped=True,
+                complete=False,
+                count=entries["count"],
+                since=iso_utc(start),
+            )
+        return out
     assert isinstance(entries, list)
     timestamps = [e.get("timestamp") for e in entries if e.get("timestamp")]
     return {
         "status": "ok",
         "since": iso_utc(start),
         "count": len(entries),
-        "capped": len(entries) >= 2000,
+        "capped": False,
+        "complete": True,
         "first_seen": min(timestamps) if timestamps else None,
         "last_seen": max(timestamps) if timestamps else None,
         "latest_samples": [_compact(e) for e in entries[:3]],
@@ -424,15 +497,15 @@ def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
         limit: Max revisions to return (1-20).
     """
     limit = max(1, min(int(limit), 20))
-    ok, revisions = gcp_list(
+    ok, payload = gcp_get(
         f"{_run_parent()}/services/{service_name}/revisions",
-        "revisions",
-        params={"pageSize": 50},
-        max_pages=1,
+        params={"pageSize": limit},
     )
     if not ok:
-        return {"status": revisions.get("status", "error"), "error": revisions}
-    assert isinstance(revisions, list)
+        return {"status": payload.get("status", "error"), "error": payload}
+    revisions = payload.get("revisions") or []
+    token = payload.get("nextPageToken")
+    truncated = bool(token) or len(revisions) > limit
     revisions.sort(key=lambda r: r.get("createTime", ""), reverse=True)
     out = []
     for rev in revisions[:limit]:
@@ -458,6 +531,9 @@ def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
         "service": service_name,
         "count": len(out),
         "revisions": out,
+        "truncated": truncated,
+        "complete": not truncated,
+        "next_page_token": token,
     }
 
 

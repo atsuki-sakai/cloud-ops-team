@@ -44,6 +44,18 @@ def fetch_cisa_kev(days: int) -> dict:
             data = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
             return {"status": "error", "message": f"KEV fetch failed: {exc}"}
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("vulnerabilities"), list)
+            or any(
+                not isinstance(v, dict) or not isinstance(v.get("dateAdded"), str)
+                for v in data["vulnerabilities"]
+            )
+        ):
+            return {
+                "status": "error",
+                "message": "KEV response must contain a list of vulnerability objects with dateAdded strings",
+            }
         _kev_cache = (now, data)
     cutoff = (utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%d")
     keywords = [k.lower() for k in effective_stack_keywords()]
@@ -118,7 +130,23 @@ def check_eol_status(product: str, version: str) -> dict:
         }
     if resp.status_code >= 400:
         return {"status": "error", "http_status": resp.status_code}
-    cycles = resp.json()
+    try:
+        cycles = resp.json()
+    except ValueError as exc:
+        return {
+            "status": "error",
+            "message": f"endoflife.date JSON decode failed: {exc}",
+        }
+    if not isinstance(cycles, list) or any(
+        not isinstance(c, dict)
+        or not isinstance(c.get("cycle"), (str, int))
+        or isinstance(c.get("cycle"), bool)
+        for c in cycles
+    ):
+        return {
+            "status": "error",
+            "message": "endoflife.date response must be a list of cycle objects",
+        }
     ver = version.strip().lstrip("v")
     parts = ver.split(".")
     candidates = [ver, ".".join(parts[:2]), parts[0]]

@@ -153,7 +153,12 @@ def gcp_list(
     json: dict[str, Any] | None = None,
     max_pages: int = 5,
 ) -> tuple[bool, list[Any] | dict[str, Any]]:
-    """Follow ``nextPageToken`` pagination and concatenate ``item_key`` lists."""
+    """Return a complete list, or an explicit error when pagination is unfinished.
+
+    A bounded search can stop on an empty page with a continuation token.
+    Do not expose that result as a successful empty list, or include raw
+    partial items in the error payload (they can contain unredacted data).
+    """
     items: list[Any] = []
     params = dict(params or {})
     body = dict(json or {})
@@ -173,6 +178,16 @@ def gcp_list(
         token = payload.get("nextPageToken")
         if not token:
             break
+    if token:
+        return False, {
+            "status": "error",
+            "message": "The page limit was reached before the search completed.",
+            "incomplete": True,
+            "complete": False,
+            "truncated": True,
+            "count": len(items),
+            "next_page_token": token,
+        }
     return True, items
 
 

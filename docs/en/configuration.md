@@ -35,6 +35,11 @@ Provider-specific fallbacks when `OPS_TARGET` / `OPS_TARGET_REGION` are not set:
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | Maximum new issues per run |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | At most one recurrence comment per issue within this window |
 
+Boolean settings accept `true/false`, `yes/no`, `on/off` or `1/0`, case-insensitively.
+Unset or empty values use the default; other values stop startup with a configuration error.
+`make setup` gives the owner exclusive read/write access to `.env` and its backup.
+`.env.backup-*` files are excluded from Git and deployment uploads.
+
 ### Behaviour
 
 | Variable | Default | Description |
@@ -119,5 +124,6 @@ A longer look-back than the interval is harmless — duplicates are de-duplicate
 `PROJECT_ID` (default `GOOGLE_CLOUD_PROJECT`), `REGION` (default `OPS_TARGET_REGION`), `SERVICE` (`cloud-ops-team`), `RUNTIME_SA`,
 `TARGET_PROJECT`, `TARGET_REGION`, `GITHUB_TOKEN_SECRET` (`<SERVICE>-github-token`) and the sizing variables `MEMORY` (`2Gi`),
 `CPU` (`1`), `MIN_INSTANCES` (`0`), `MAX_INSTANCES` (`2`), `CONCURRENCY` (`4`), `TIMEOUT` (`1800`).
-It uses `--set-env-vars`, so every deploy fully defines the service configuration: pass `OPS_DRY_RUN=false` on each deploy
+It writes only allowlisted settings to a temporary `--env-vars-file`, preserving commas, pipes and empty label settings.
+The file is removed on exit. Every deploy fully defines the service configuration: pass `OPS_DRY_RUN=false` on each deploy
 of a service that should write to GitHub.

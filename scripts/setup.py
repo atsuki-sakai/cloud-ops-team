@@ -232,9 +232,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{env_path.name}.backup-{dt.datetime.now():%Y%m%d-%H%M%S}"
         )
         shutil.copy2(env_path, backup)
+        backup.chmod(0o600)
         print(f"  backed up the old file to {backup.name}")
 
     env_path.write_text(render_env((ROOT / ".env.example").read_text(), values))
+    env_path.chmod(0o600)
     print(f"\n✅ Wrote {env_path} (dry-run mode: nothing is written to GitHub yet)\n")
     print("Next:")
     print("  make doctor                 # check model, GitHub and cloud access")

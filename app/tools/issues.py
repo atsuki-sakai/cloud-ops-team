@@ -94,23 +94,27 @@ def _now_local() -> str:
     return dt.datetime.now(CONFIG.tz).strftime("%Y-%m-%d %H:%M %Z")
 
 
-def _ensure_labels(labels: list[str]) -> list[str]:
+def _ensure_labels(labels: list[str]) -> tuple[bool, list[str] | dict[str, Any]]:
+    """Cache only confirmed labels and stop on failed reads or creation."""
     created = []
     for label in labels:
         if label in _ensured_labels:
             continue
-        ok, _ = gh_rest("GET", f"{repo_path()}/labels/{quote(label, safe='')}")
+        ok, payload = gh_rest("GET", f"{repo_path()}/labels/{quote(label, safe='')}")
         if not ok:
+            if payload.get("status") != "not_found":
+                return False, payload
             color, description = LABEL_DEFS.get(label, ("EDEDED", ""))
-            ok2, _ = gh_rest(
+            ok, payload = gh_rest(
                 "POST",
                 f"{repo_path()}/labels",
                 json={"name": label, "color": color, "description": description},
             )
-            if ok2:
-                created.append(label)
+            if not ok:
+                return False, payload
+            created.append(label)
         _ensured_labels.add(label)
-    return created
+    return True, created
 
 
 def _title(kind: str, title: str) -> str:
@@ -128,6 +132,35 @@ def _footer(meta: dict[str, Any]) -> str:
 def _meta_target(meta: dict[str, Any]) -> str | None:
     """Target recorded in an issue (``project`` is the pre-multi-cloud key)."""
     return meta.get("target") or meta.get("project")
+
+
+def _matches_scope(meta: dict[str, Any]) -> bool:
+    """Keep legacy issues without scope metadata compatible with existing runs."""
+    target = _meta_target(meta)
+    provider = meta.get("provider")
+    return (not target or target == CONFIG.target) and (
+        not provider or provider == CONFIG.provider
+    )
+
+
+def _issue_scope_error(issue: dict[str, Any]) -> dict[str, Any] | None:
+    if _matches_scope(parse_meta_comment(issue.get("body") or "")):
+        return None
+    return {
+        "status": "scope_mismatch",
+        "number": issue.get("number"),
+        "message": "Issue belongs to another cloud provider or target.",
+    }
+
+
+def _get_scoped_issue(issue_number: int) -> tuple[bool, dict[str, Any]]:
+    ok, issue = gh_rest("GET", f"{repo_path()}/issues/{int(issue_number)}")
+    if not ok:
+        return False, issue
+    if not isinstance(issue, dict):
+        return False, {"status": "error", "message": "Invalid GitHub issue response."}
+    error = _issue_scope_error(issue)
+    return (False, error) if error else (True, issue)
 
 
 def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
@@ -148,6 +181,7 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "service": meta.get("service"),
         "search_text": meta.get("search_text"),
         "severity": meta.get("severity"),
+        "provider": meta.get("provider"),
         "target": _meta_target(meta),
     }
 
@@ -155,20 +189,34 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
 def _list_issues(
     state: str, labels: list[str], per_page: int = 100
 ) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
-    ok, issues = gh_rest(
-        "GET",
-        f"{repo_path()}/issues",
-        params={
-            "state": state,
-            "labels": ",".join(labels),
-            "per_page": per_page,
-            "sort": "updated",
-            "direction": "desc",
-        },
-    )
-    if not ok:
-        return False, issues
-    return True, [i for i in issues if "pull_request" not in i]
+    per_page = max(1, min(per_page, 100))
+    rows = []
+    page = 1
+    while True:
+        ok, issues = gh_rest(
+            "GET",
+            f"{repo_path()}/issues",
+            params={
+                "state": state,
+                "labels": ",".join(labels),
+                "per_page": per_page,
+                "page": page,
+                "sort": "updated",
+                "direction": "desc",
+            },
+        )
+        if not ok:
+            return False, {**issues, "page": page, "partial_count": len(rows)}
+        if not isinstance(issues, list) or not all(isinstance(i, dict) for i in issues):
+            return False, {
+                "status": "error",
+                "message": "Invalid GitHub issue list response.",
+                "page": page,
+            }
+        rows.extend(i for i in issues if "pull_request" not in i)
+        if len(issues) < per_page:
+            return True, rows
+        page += 1
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +249,7 @@ def find_existing_ops_issue(fingerprint: str) -> dict:
             compact = _compact_issue(issue)
             if compact["fingerprint"] != fingerprint:
                 continue
-            # Several targets (e.g. staging / prod) may share one repository.
-            if (
-                compact["target"]
-                and CONFIG.target
-                and compact["target"] != CONFIG.target
-            ):
+            if not _matches_scope(parse_meta_comment(issue.get("body") or "")):
                 continue
             return {"status": "found", **compact}
     return {"status": "not_found"}
@@ -261,7 +304,7 @@ def create_ops_issue(
     existing = (
         find_existing_ops_issue(fingerprint) if fingerprint else {"status": "not_found"}
     )
-    if existing.get("status") not in ("found", "not_found"):
+    if existing.get("status") not in ("found", "not_found") or "error" in existing:
         return existing
     if existing["status"] == "found" and existing["state"] == "open":
         cooldown = (
@@ -320,7 +363,10 @@ def create_ops_issue(
             "severity": severity,
             "body_preview": full_body[:900],
         }
-    _ensure_labels(labels)
+    ok, payload = _ensure_labels(labels)
+    if not ok:
+        assert isinstance(payload, dict)
+        return {"status": payload.get("status", "error"), "error": payload}
     ok, issue = gh_rest(
         "POST",
         f"{repo_path()}/issues",
@@ -374,7 +420,10 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
             "labels": labels,
             "body_preview": full_body[:1200],
         }
-    _ensure_labels(labels)
+    ok, payload = _ensure_labels(labels)
+    if not ok:
+        assert isinstance(payload, dict)
+        return {"status": payload.get("status", "error"), "error": payload}
     ok, issue = gh_rest(
         "POST",
         f"{repo_path()}/issues",
@@ -402,6 +451,9 @@ def comment_on_issue(issue_number: int, body: str) -> dict:
         issue_number: Issue number.
         body: Comment body.
     """
+    ok, issue = _get_scoped_issue(issue_number)
+    if not ok:
+        return {"status": issue.get("status", "error"), "error": issue}
     clean = redact(body)
     if CONFIG.dry_run:
         return {
@@ -430,6 +482,9 @@ def add_issue_labels(issue_number: int, labels: list[str]) -> dict:
         issue_number: Issue number.
         labels: Label names, e.g. ``["ops:verified"]`` or ``["ops:stale"]``.
     """
+    ok, issue = _get_scoped_issue(issue_number)
+    if not ok:
+        return {"status": issue.get("status", "error"), "error": issue}
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
@@ -437,7 +492,10 @@ def add_issue_labels(issue_number: int, labels: list[str]) -> dict:
             "number": issue_number,
             "labels": labels,
         }
-    _ensure_labels(labels)
+    ok, payload = _ensure_labels(labels)
+    if not ok:
+        assert isinstance(payload, dict)
+        return {"status": payload.get("status", "error"), "error": payload}
     ok, payload = gh_rest(
         "POST",
         f"{repo_path()}/issues/{int(issue_number)}/labels",
@@ -462,6 +520,9 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
         issue_number: Issue number.
         reason_comment: What was verified (merged PR, no recurrence, etc.).
     """
+    ok, issue = _get_scoped_issue(issue_number)
+    if not ok:
+        return {"status": issue.get("status", "error"), "error": issue}
     comment = f"{_msg('verified', when=_now_local())}\n\n{redact(reason_comment)}"
     if not CONFIG.auto_close_issues:
         comment += f"\n\n{_msg('auto_close_off')}"
@@ -472,20 +533,43 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
             "number": issue_number,
             "comment_preview": comment[:600],
         }
-    _ensure_labels(["ops:verified"])
-    gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/labels",
-        json={"labels": ["ops:verified"]},
-    )
-    ok_c, _ = gh_rest(
+    ok, payload = _ensure_labels(["ops:verified"])
+    if not ok:
+        assert isinstance(payload, dict)
+        return {
+            "status": payload.get("status", "error"),
+            "number": issue_number,
+            "failed_step": "ensure_labels",
+            "error": payload,
+        }
+    ok_c, payload = gh_rest(
         "POST",
         f"{repo_path()}/issues/{int(issue_number)}/comments",
         json={"body": comment},
     )
+    if not ok_c:
+        return {
+            "status": payload.get("status", "error"),
+            "number": issue_number,
+            "failed_step": "comment",
+            "error": payload,
+        }
+    ok_l, payload = gh_rest(
+        "POST",
+        f"{repo_path()}/issues/{int(issue_number)}/labels",
+        json={"labels": ["ops:verified"]},
+    )
+    if not ok_l:
+        return {
+            "status": payload.get("status", "error"),
+            "number": issue_number,
+            "failed_step": "label",
+            "completed_steps": ["comment"],
+            "error": payload,
+        }
     if not CONFIG.auto_close_issues:
         return {
-            "status": "verified_not_closed" if ok_c else "error",
+            "status": "verified_not_closed",
             "number": issue_number,
         }
     ok, payload = gh_rest(
@@ -506,7 +590,7 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
 
 
 def list_ops_issues(state: str, kind: str) -> dict:
-    """List issues created by the team.
+    """List team issues for the configured cloud provider and target.
 
     Args:
         state: ``open`` | ``closed`` | ``all``.
@@ -521,7 +605,11 @@ def list_ops_issues(state: str, kind: str) -> dict:
     if not ok:
         return {"status": issues.get("status", "error"), "error": issues}
     assert isinstance(issues, list)
-    rows = [_compact_issue(i) for i in issues]
+    rows = [
+        _compact_issue(i)
+        for i in issues
+        if _matches_scope(parse_meta_comment(i.get("body") or ""))
+    ]
     return {"status": "ok", "count": len(rows), "issues": rows}
 
 
@@ -531,7 +619,7 @@ def get_issue(issue_number: int) -> dict:
     Args:
         issue_number: Issue number.
     """
-    ok, issue = gh_rest("GET", f"{repo_path()}/issues/{int(issue_number)}")
+    ok, issue = _get_scoped_issue(issue_number)
     if not ok:
         return {"status": issue.get("status", "error"), "error": issue}
     compact = _compact_issue(issue)
@@ -700,7 +788,7 @@ def get_issue_linked_prs(issue_number: int) -> dict:
     """
     query = (
         "query($owner:String!,$name:String!,$number:Int!){ repository(owner:$owner,name:$name){"
-        " issue(number:$number){ number title state closedAt"
+        " issue(number:$number){ number title state closedAt body"
         "  closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes { number title state merged mergedAt url mergeCommit { oid } } }"
         "  timelineItems(first:50, itemTypes:[CROSS_REFERENCED_EVENT]){ nodes { ... on CrossReferencedEvent {"
         "   source { ... on PullRequest { number title state merged mergedAt url mergeCommit { oid } } } } } } } } }"
@@ -718,6 +806,9 @@ def get_issue_linked_prs(issue_number: int) -> dict:
     issue = (data.get("repository") or {}).get("issue")
     if not issue:
         return {"status": "not_found", "number": issue_number}
+    scope_error = _issue_scope_error(issue)
+    if scope_error:
+        return scope_error
     prs: dict[int, dict[str, Any]] = {}
     for node in (issue.get("closedByPullRequestsReferences") or {}).get("nodes") or []:
         prs[node["number"]] = {

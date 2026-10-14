@@ -453,7 +453,11 @@ def get_cloud_sql_instances() -> dict:
                 "ssl_mode": ip.get("sslMode"),
                 "require_ssl": ip.get("requireSsl"),
                 "backup_enabled": bool(backup.get("enabled")),
-                "pitr_enabled": bool(backup.get("pointInTimeRecoveryEnabled")),
+                "pitr_enabled": bool(
+                    backup.get("binaryLogEnabled")
+                    if _engine_of(inst.get("databaseVersion")) == "mysql"
+                    else backup.get("pointInTimeRecoveryEnabled")
+                ),
                 "backup_retention": (backup.get("backupRetentionSettings") or {}).get(
                     "retainedBackups"
                 ),
@@ -682,18 +686,24 @@ def audit_firewall_rules() -> dict:
     for rule in rules:
         if (
             rule.get("disabled")
-            or rule.get("direction") != "INGRESS"
+            or rule.get("direction", "INGRESS") != "INGRESS"
             or not rule.get("allowed")
         ):
             continue
         ranges = rule.get("sourceRanges") or []
+        if not ranges and not (
+            rule.get("sourceTags") or rule.get("sourceServiceAccounts")
+        ):
+            ranges = ["0.0.0.0/0"]
         if not any(r in ("0.0.0.0/0", "::/0") for r in ranges):
             continue
         name = rule.get("name", "")
         exposed: list[str] = []
         all_ports = False
         for allowed in rule["allowed"]:
-            proto = allowed.get("IPProtocol")
+            proto = {"6": "tcp", "17": "udp"}.get(
+                str(allowed.get("IPProtocol")), allowed.get("IPProtocol")
+            )
             ports = allowed.get("ports") or []
             if proto == "all" or (proto in ("tcp", "udp") and not ports):
                 all_ports = True
@@ -851,30 +861,87 @@ def scan_deployed_images() -> dict:
         return error_result("image_scan", services)
     assert isinstance(services, list)
     images: dict[str, list[str]] = {}
+    errors: list[dict[str, Any]] = []
     for raw in services:
-        svc_name = str(raw.get("name", "")).rsplit("/", 1)[-1]
-        rev = str(raw.get("latestReadyRevision") or "")
-        if not rev:
-            continue
-        ok2, revision = gcp_get(f"{RUN}/{rev}")
-        if not ok2:
-            continue
-        template_images = [c.get("image", "") for c in revision.get("containers") or []]
-        digests: list[str] = []
-        for idx, status in enumerate(revision.get("containerStatuses") or []):
-            digest = status.get("imageDigest") or ""
-            if digest and "@" not in digest and idx < len(template_images):
-                digest = (
-                    template_images[idx].split("@", 1)[0].rsplit(":", 1)[0]
-                    + "@"
-                    + digest
+        service_path = str(raw.get("name", ""))
+        svc_name = service_path.rsplit("/", 1)[-1]
+        traffic = raw.get("trafficStatuses")
+        if traffic is None:
+            # Older responses can omit trafficStatuses; retain the existing
+            # latest-ready fallback only when actual traffic is unavailable.
+            revisions = {str(raw.get("latestReadyRevision") or "")} - {""}
+        else:
+            revisions = set()
+            for target in traffic:
+                if not (target.get("percent", 0) > 0 or target.get("tag")):
+                    continue
+                rev = str(target.get("revision") or "")
+                if (
+                    not rev
+                    and target.get("type") == "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+                ):
+                    rev = str(raw.get("latestReadyRevision") or "")
+                if rev:
+                    revisions.add(rev)
+                else:
+                    errors.append(
+                        {
+                            "service": svc_name,
+                            "status": "unknown",
+                            "message": "A serving traffic target has no resolved revision.",
+                        }
+                    )
+        for rev in sorted(revisions):
+            revision_path = (
+                rev
+                if rev.startswith("projects/")
+                else f"{service_path}/revisions/{rev}"
+            )
+            ok2, revision = gcp_get(f"{RUN}/{revision_path}")
+            if not ok2:
+                errors.append(
+                    {
+                        "service": svc_name,
+                        "revision": revision_path,
+                        "status": revision.get("status", "error"),
+                        "message": redact(
+                            str(
+                                revision.get("message") or "Revision could not be read."
+                            )
+                        ),
+                    }
                 )
-            if digest:
-                digests.append(digest)
-        if not digests:  # containerStatuses is not always populated; digest-pinned images are fine as-is
-            digests = [img for img in template_images if "@sha256:" in img]
-        for digest in digests:
-            images.setdefault(digest, []).append(svc_name)
+                continue
+            containers = revision.get("containers") or []
+            statuses = revision.get("containerStatuses") or []
+            statuses_by_name = {s["name"]: s for s in statuses if s.get("name")}
+            digests: list[str] = []
+            for idx, container in enumerate(containers):
+                image = container.get("image", "")
+                status = statuses_by_name.get(container.get("name"), {})
+                if not status and idx < len(statuses) and not statuses[idx].get("name"):
+                    status = statuses[idx]
+                digest = status.get("imageDigest") or (
+                    image if "@sha256:" in image else ""
+                )
+                if digest and "@" not in digest:
+                    image_base = image.split("@", 1)[0]
+                    if ":" in image_base.rsplit("/", 1)[-1]:
+                        image_base = image_base.rsplit(":", 1)[0]
+                    digest = image_base + "@" + digest
+                if digest:
+                    digests.append(digest)
+            if len(digests) < len(containers) or not digests:
+                errors.append(
+                    {
+                        "service": svc_name,
+                        "revision": revision_path,
+                        "status": "unknown",
+                        "message": "Not all serving container image digests could be resolved.",
+                    }
+                )
+            for digest in digests:
+                images.setdefault(digest, []).append(svc_name)
     results = []
     for image, used_by in images.items():
         params = {
@@ -888,11 +955,19 @@ def scan_deployed_images() -> dict:
             max_pages=3,
         )
         if not ok3:
-            return error_result(
-                "image_scan",
-                occurrences,
-                hint="Artifact Registry の脆弱性スキャンを有効化: `gcloud services enable containerscanning.googleapis.com`（イメージが別プロジェクトのレジストリにある場合はそのプロジェクトで）。",
+            errors.append(
+                {"image": image, "used_by": sorted(set(used_by)), **occurrences}
             )
+            results.append(
+                {
+                    "image": image,
+                    "used_by": sorted(set(used_by)),
+                    "status": occurrences.get("status", "error"),
+                    "scanned": False,
+                    "complete": False,
+                }
+            )
+            continue
         assert isinstance(occurrences, list)
         counts: dict[str, int] = {}
         fixable = 0
@@ -930,8 +1005,10 @@ def scan_deployed_images() -> dict:
             }
         )
     return {
-        "status": "ok",
+        "status": "error" if errors else "ok",
+        "complete": not errors,
         "image_count": len(results),
         "images": results,
+        "errors": errors,
         "note": "total=0 の場合はスキャン未実施（API 無効 / 別プロジェクト / 古いイメージ）の可能性があります。",
     }
