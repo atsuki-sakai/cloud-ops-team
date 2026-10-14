@@ -38,6 +38,9 @@ make eval                                # 振る舞いの評価（LLM が採点
 | エージェントの振る舞いを変える | `app/specialists/<name>.py` の `INSTRUCTION`、共通部分は `app/prompts.py` | `tests/eval/` の評価ケース |
 | デプロイ | `scripts/<cloud>/` と `docs/deployment-<cloud>.md`、`docs/en/deployment-<cloud>.md` | [docs/deployment-gcp.md](docs/deployment-gcp.md) |
 
+[既知の制約と改善計画](docs/known-limitations.md) に、確認済みの未修正項目と責務の分割・共通化の方向を記載しています。
+対応する項目を修正したら、再現条件の回帰テストを追加し、日英の制約説明と参照ガイドも実装に合わせて更新してください。
+
 ## 守ってほしいルール
 
 - **クラウドに対しては読み取り専用です。** ツールやプロバイダーがクラウドのリソースを変更してはいけません。変更を伴う呼び出しを追加する PR はお断りします。
@@ -64,6 +67,9 @@ make eval                                # 振る舞いの評価（LLM が採点
 | `CHANGELOG.md` | `CHANGELOG.en.md` |
 
 ドキュメントを変えるときは両方の言語を更新してください。片方しか書けない場合は PR にその旨を書いてもらえれば、メンテナーが翻訳します。
+仕様上の目標、現在の実装、未修正の制約を分けて記述し、README の要約と詳細ガイドを一致させてください。
+文書だけの変更では、`uv run --extra lint codespell`、相対リンク先・見出しアンカーの確認、`git diff --check` を行い、
+PR に実施した確認を記載してください。単体テストや実モデル・配置先での検証を行っていない場合は、その結果を確認済みと書かないでください。
 
 ## プルリクエスト
 

@@ -3,8 +3,9 @@
 English: [docs/en/deployment-gcp.md](en/deployment-gcp.md)
 
 チームは 1 つの Cloud Run サービスとして動きます。Cloud Scheduler が、OIDC で認証した HTTP リクエストでこのサービスを呼び出します。
-費用のほとんどはモデルのトークン代です。毎日のエラー監視、週次レビュー、月次診断を合わせても、1 か月に数十回の短いリクエストで済みます。
-それ以外の時間はインスタンスが 0 台まで縮小されます。
+既定の予定では、毎日のエラー監視、週次レビュー、月次診断で 1 か月に数十回呼び出します。
+費用と実行時間はログ量、モデル、再試行、手動実行などに左右されます。既定の最小インスタンス数は 0 です。
+配置前に [既知の制限](known-limitations.md) を確認してください。以下の手順だけで監査の完全性や重複起票の防止を保証するものではありません。
 
 ```mermaid
 flowchart LR
@@ -38,6 +39,11 @@ make gcp-bootstrap          # または: PROJECT_ID=my-project TARGET_PROJECT=my
 - 監視対象に対する閲覧専用のロールを付与します（`scripts/gcp/grant_target_roles.sh`）
 - GitHub トークンをシークレット `cloud-ops-team-github-token` に保存します（`GITHUB_TOKEN` が未設定なら入力を求められます）
 
+現在の bootstrap は `roles/secretmanager.secretAccessor` を**デプロイ先プロジェクト全体**に付与します。
+GitHub トークン以外のシークレットにもアクセスできる範囲です。権限縮小はスクリプトに未実装なので、運用者が
+トークンのシークレット単位のアクセス付与を確認したうえで、不要なプロジェクト単位の付与を見直してください。
+bootstrap の再実行ではプロジェクト単位の付与が戻るため、再確認が必要です（[Secret Manager のアクセス制御](https://docs.cloud.google.com/secret-manager/docs/access-control)）。
+
 ## 2. デプロイ
 
 まずはお試しモードで動かし、チームが登録しようとする ISSUE を確認してから、書き込みを有効にします。
@@ -49,11 +55,39 @@ OPS_DRY_RUN=false make gcp-deploy       # ISSUE の登録を開始
 
 スクリプトは最後に `SERVICE_URL=...` を表示し、その URL 宛ての OIDC トークンだけを受け付けるようにサービスを設定します
 （`OPS_TRIGGER_AUDIENCE`、`OPS_TRIGGER_SERVICE_ACCOUNTS`）。動作確認は次のとおりです。
+直接の `gcloud` コマンドは `.env` を読みません。次の値を `.env` の配置先 `PROJECT_ID` / `GOOGLE_CLOUD_PROJECT`、
+`SERVICE`、`REGION` に合わせてください。監視対象の `OPS_TARGET` と配置先は異なる場合があります。
 
 ```bash
-URL=$(gcloud run services describe cloud-ops-team --region asia-northeast1 --format='value(status.url)')
+DEPLOY_PROJECT=my-project
+SERVICE_NAME=cloud-ops-team
+DEPLOY_REGION=asia-northeast1
+URL=$(gcloud run services describe "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region "$DEPLOY_REGION" --format='value(status.url)')
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" "$URL/list-apps"     # ["app"] と表示されれば OK
 ```
+
+この確認はサービスへの接続とアプリ一覧の取得までです。監視対象の API、GitHub へのアクセス、ジョブの完了は別途確認してください。
+
+### 配置後の補完設定
+
+標準スクリプトは許可した設定を `--env-vars-file` で渡し、カンマ・縦棒・空値を含むラベル設定も保持します。
+ただし、`APP_URL` と `OPS_CONTEXT_FILE` は現在許可リストに含まれません。
+
+A2A を使う場合は、上で取得したサービス URL を設定し、カードがその URL の `/a2a/app` を広告することを確認してください。
+未設定のカードは `http://0.0.0.0:8000/a2a/app` を広告するため、外部クライアントの接続先として使えません。
+
+```bash
+gcloud run services update "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region "$DEPLOY_REGION" --update-env-vars "APP_URL=$URL"
+```
+
+プロジェクトの事情は既定の `config/ops-context.md` に置くのが簡単です。独自パスを使う場合は、そのファイルが
+コンテナ内に含まれていることを確認し、配置後に設定します。次の例は `config/custom-context.md` をイメージへ含めた場合です。
+
+```bash
+gcloud run services update "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region "$DEPLOY_REGION" --update-env-vars OPS_CONTEXT_FILE=config/custom-context.md
+```
+
+`make gcp-deploy` は環境変数を置き換えるので、これらの補完設定は再デプロイのたびにやり直し、実行結果でも読み込みを確認してください。
 
 ## 3. 定期実行の登録
 
@@ -81,10 +115,19 @@ gcloud scheduler jobs run cloud-ops-error-watch --location asia-northeast1   # �
 | ロールバックする | `gcloud run services update-traffic cloud-ops-team --region asia-northeast1 --to-revisions=<以前のリビジョン>=100` |
 | サービス自体のエラーを見る | `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cloud-ops-team" AND severity>=ERROR' --limit 20` |
 
+Scheduler や HTTP の成功だけでは、監査が完了したとは判断できません。既定のセッション保存はメモリ内で、
+ISSUE が作られなかった調査不能の説明はインスタンス終了後に残らない場合があります。
+ログ・ツールのエラー・GitHub の結果を合わせて確認し、未確認項目と最終結果を運用側でも記録してください。
+監査 findings が空でも、[プロバイダーの補完確認](providers.md) が必要です。
+
+同じ対象・リポジトリへの手動実行と定期実行が重ならないようにしてください。必要に応じてインスタンス数と同時リクエスト数を
+絞ることは競合を減らす方法ですが、複数サービスや再試行を含む重複防止の保証にはなりません。
+
 ## 複数のプロジェクトを監視する
 
 監視対象ごとにサービスを 1 つずつデプロイし（`SERVICE=cloud-ops-staging TARGET_PROJECT=...`）、定期実行ジョブにもそれぞれ別の接頭辞を付けます
-（`JOB_PREFIX=cloud-ops-staging`）。同じリポジトリを共有しても構いません。重複の判定は、各 ISSUE に記録された監視対象ごとに行われます。
+（`JOB_PREFIX=cloud-ops-staging`）。同じリポジトリを共有しても構いません。重複の検索・更新は、各 ISSUE に記録されたプロバイダーと監視対象で絞り込みます。
+同じ対象を複数のサービスで同時に処理すると、検索と作成の間に競合し、重複起票される可能性は残ります。
 
 ## Terraform や CI/CD を使う場合
 

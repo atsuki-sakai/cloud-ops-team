@@ -5,6 +5,9 @@ cloud-ops-team は、クローンしたあとに **自分のプロジェクト�
 
 English: [docs/en/customization.md](en/customization.md) ・ 全体の仕組み: [architecture.md](architecture.md) ・ フォルダ構成: [architecture.md#フォルダ構成](architecture.md#フォルダ構成)
 
+現在の起票制御・監査・配置には [既知の制限](known-limitations.md) があります。指示文を変更しても、
+複数インスタンスの重複防止や修正完了判定がコードで保証されるわけではありません。
+
 ## まず全体像
 
 ```mermaid
@@ -35,7 +38,7 @@ flowchart LR
 
 ```bash
 make test                      # ルール違反がないか（オフライン・数秒）
-make run JOB=error_watch       # 実データで 1 回動かす（お試しモード）
+OPS_DRY_RUN=true make run JOB=error_watch  # 実データで 1 回動かす（書き込みを無効化）
 make eval                      # 振る舞いが悪くなっていないか（任意・数分）
 ```
 
@@ -59,6 +62,9 @@ cp config/ops-context.example.md config/ops-context.md
 このファイルの内容は、すべてのエージェントの指示文の末尾に「プロジェクト固有の情報」として追加されます。
 最大 8,000 文字です。安全ルール（読み取り専用など）より優先されることはありません。
 デプロイ時にイメージに含まれるので、**秘密情報は書かないでください**。別の場所に置く場合は `OPS_CONTEXT_FILE` でパスを指定します。
+ただし、標準デプロイスクリプトはこの変数を転送しません。Cloud Run では既定の `config/ops-context.md` を使うか、
+独自ファイルをイメージ内に含めたうえで [配置後の補完設定](deployment-gcp.md) を行ってください。
+ローカルの任意のファイルが自動でイメージに入るわけではなく、再デプロイ時には補完設定もやり直す必要があります。
 
 ## 2. 実行時間・頻度を変える（コード変更なし）
 
@@ -121,6 +127,8 @@ OPS_SEVERITY_LABELS=critical=priority: critical,high=priority: high,medium=prior
 
 ツールの意味の対応表、出力言語、プロジェクト固有の情報は自動で末尾に追加されます。
 手順を変えたら `make run` で動きを確かめ、可能なら `make eval` で点数が下がっていないか確認してください。
+「検証済み」の基準を変える場合は、PR の所属リポジトリと修正関係、CI の SHA、配置されたリビジョン、
+ログの取得範囲を確認するケースも評価してください。ツールの取得成功と、障害の解消確認は別の条件です。
 
 ## 5. 調査ツールを追加する
 
@@ -187,6 +195,10 @@ SPECIALIST = Specialist(
 - **読み取り専用**。クラウドや外部サービスを変更しない。GitHub に書く場合は `CONFIG.dry_run` を守る
 - 秘密情報を返さない（ログの抜粋は `app.core.redact.redact` を通す）
 - どのクラウドでも同じ意味になるツールは `app/tools/` に、クラウド固有の取得処理は `app/providers/<cloud>/` に置く
+
+新しい取得・監査ツールでは、ページ上限・部分取得失敗・期限・条件を落とさず、未確認項目が分かる結果にしてください。
+`status: ok` や findings が空であることだけを、全対象の確認完了と同一視しないようにします。
+現在の GCP 監査にもこの点の制限が残るため、[プロバイダーガイド](providers.md) を参照してください。
 
 ## 6. 既存の担当に新しいジョブを追加する
 

@@ -6,10 +6,16 @@
 ![Built with Google ADK](https://img.shields.io/badge/built%20with-Google%20ADK-4285F4)
 
 **An AI operations team for your cloud.** Three specialist agents watch production errors, audit security every month and
-verify every week that merged pull requests really fixed what they found — and they talk to you through GitHub issues.
+review every week whether merged pull requests fixed what they found, and report through GitHub issues.
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
-[Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md)
+[Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md) ·
+[Known limitations and improvement plan](docs/en/known-limitations.md) · [Changelog](CHANGELOG.en.md)
+
+The current version provides evidence for human review. PR identity, audit coverage and concurrent issue writes have
+unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with
+`OPS_DRY_RUN=true` and `OPS_AUTO_CLOSE_ISSUES=false`. Disabling automatic closure still allows verification labels and
+comments when writes are enabled; inspect their evidence before accepting a fix as complete.
 
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
@@ -35,10 +41,13 @@ flowchart LR
 - **Read-only by design.** No tool can change your cloud. GitHub writes are limited to issues, comments and labels, and are
   off (`OPS_DRY_RUN=true`) until you enable them.
 - **Cloud-neutral agents, pluggable clouds.** The agents use 18 capability tools (`list_services`, `audit_network`, ...);
-  a provider maps them to a cloud. Google Cloud is fully implemented; AWS and Azure ship as skeletons that the agents already
+  a provider maps them to a cloud. Google Cloud implements all 18 capabilities, with known audit limitations; AWS and Azure ship as skeletons that the agents already
   understand — capabilities can be added one at a time.
-- **No database.** Issues are the ledger: a log fingerprint stored in each issue de-duplicates findings and lets the weekly
-  review count recurrences after a fix is merged.
+- **Issues are the ledger.** A stored fingerprint helps find existing issues and count recurrences after a merge.
+  There is no shared lock or database to prevent duplicate writes across concurrent runs.
+- **Issue limits have gaps.** The default counter of ten applies to normal issue creation, persists across requests in the
+  same session, and excludes reports. Recurrence cooldown uses the issue's update time. These controls do not guarantee a
+  total issue limit or one comment under concurrent execution; see [known limitations](docs/en/known-limitations.md).
 - **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli); specialists run as
   `single_turn` sub-agents so every tool call is streamed and traced.
 
@@ -46,11 +55,12 @@ flowchart LR
 
 | Cloud | Status | Logs · services · jobs · DBs · metrics | Security checks |
 |---|---|---|---|
-| Google Cloud | ✅ Implemented | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring | IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
+| Google Cloud | ✅ 18 capabilities implemented; known coverage and classification gaps | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring | IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
 | AWS | 🚧 Skeleton — contributions welcome | CloudWatch Logs, ECS / Lambda, EventBridge, RDS (planned) | IAM, Security Hub, Inspector, security groups (planned) |
 | Azure | 🚧 Skeleton — contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
 
-On every cloud, repository posture, CISA KEV, end-of-life checks, web threat research and the weekly PR review work today.
+On every cloud, repository posture, CISA KEV, end-of-life checks, web threat research and PR progress review are available.
+Without a log capability, the weekly review cannot verify recurrence; confirm that evidence separately.
 See [docs/providers.md](docs/en/providers.md) to add or complete a provider.
 
 ## Use it for your own project
@@ -93,7 +103,7 @@ error watch (`make jobs` shows the current ones). Full guide and runbook: [docs/
 | Add a job or a whole specialist | add a `Job`, or copy `app/specialists/_template.py` and register it — routing and schedules follow |
 | Support another cloud capability | implement it in `app/providers/<cloud>/` |
 
-Recipes with code: [docs/customization.md](docs/en/customization.md) (日本語: [docs/customization.md](docs/en/customization.md)).
+Recipes with code: [Customization](docs/en/customization.md) (日本語: [カスタマイズ](docs/customization.md)).
 
 ## Configuration
 
@@ -104,10 +114,11 @@ Recipes with code: [docs/customization.md](docs/en/customization.md) (日本語:
 | `GITHUB_REPO` | — | `owner/repo` |
 | `OPS_DRY_RUN` | `true` | Preview instead of writing to GitHub |
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue counter; persists within a session and excludes reports |
 | `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
 | `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels to match your repository |
-| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge for the agents |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge; the standard deployment does not forward custom paths |
 
 All variables: [docs/configuration.md](docs/en/configuration.md).
 

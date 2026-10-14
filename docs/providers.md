@@ -11,9 +11,13 @@ English: [docs/en/providers.md](en/providers.md)
 | Amazon Web Services | `aws` | 雛形。すべての機能が `not_supported` を返します | [`app/providers/aws/__init__.py`](../app/providers/aws/__init__.py) |
 | Microsoft Azure | `azure` | 雛形。すべての機能が `not_supported` を返します | [`app/providers/azure/__init__.py`](../app/providers/azure/__init__.py) |
 
-雛形のプロバイダーでも役に立ちます。リポジトリの診断、CISA KEV、サポート期限（EOL）の確認、最新の攻撃動向の調査、週次の PR 確認は
-クラウドへのアクセスが不要で、未対応の機能はエージェントがすべて「確認できなかった項目」として報告します。
+雛形のプロバイダーでも、リポジトリの診断、CISA KEV、サポート期限（EOL）の確認、最新の攻撃動向の調査、PR・CI の取得は利用できます。
+ただし、週次レビューで配置とエラー再発まで確認するには、対応するクラウド機能が必要です。
+未対応の機能は `not_supported` を返し、エージェントには「確認できなかった項目」として報告するよう指示しています。
 機能は 1 つずつ実装できます。コントリビューションを歓迎します。
+
+「実装済み」はメソッドが存在するという意味で、監査の完全性を保証するものではありません。
+現在の監査の制限と人による補完確認は [既知の制限](known-limitations.md) を参照してください。
 
 ## 守るべき約束
 
@@ -46,12 +50,14 @@ class AwsProvider(CloudProvider):
    失敗時は短い `message` と、役に立つ場合は人間向けの直し方を示す `hint`（有効にすべき API、不足しているロールなど）を付けます。
    API の失敗で例外を投げないでください。ラッパーが例外を `status: error` に変換しますが、明確なメッセージのほうが役に立ちます。
 3. **応答を小さく保つ。** 一覧には上限を設け（GCP プロバイダーはエラーグループ最大 30 件、ログ 200 件、デプロイ 20 件まで）、
-   長い文字列は切り詰め、ページングはサーバー側で行います。
+   長い文字列は切り詰め、ページングはサーバー側で行います。上限や部分取得失敗は結果に残し、取得件数を総件数と混同しないでください。
 4. **伏せ字にする。** ログの抜粋や自由記述のテキストは `app.core.redact.redact` を通します。環境変数は名前だけを返し、値は返しません。
 5. **共通の形を使う。** 監査は `app.core.findings.finding(...)` で作った検出結果を `app.core.findings.result(check, findings, summary)` で返します。
    エラーグループのフィンガープリントは `app.core.fingerprint` で作ります。
 6. **設定** は `app.config.CONFIG`（`target`、`region`）と、このファイルに記載するプロバイダー固有の環境変数
    （たとえば `OPS_AWS_LOG_GROUPS`）から読みます。
+7. **条件を保持する。** IAM の条件、ACL の期限、エンジンごとの設定名を正規化時に捨てないでください。
+   評価できない条件や取得失敗は未確認として残します。これは新規実装の方針で、既存 GCP 監査のすべてに適用済みではありません。
 
 ## 機能一覧
 
@@ -104,8 +110,10 @@ class AwsProvider(CloudProvider):
 **`list_error_logs`、`get_log_context`**: `{"status", "count", "entries": [{"timestamp", "severity", "service", "revision",
 "message", "http_status", "trace", "insert_id"}]}`（メッセージは伏せ字済み）。
 
-**`count_matching_errors`**: `{"status", "since", "count"（必須）, "capped", "first_seen", "last_seen", "latest_samples"}`。
-`search_text` はメッセージとリクエスト URL の両方に照合します。
+**`count_matching_errors`**: `{"status", "since", "count", "capped", "complete", "first_seen", "last_seen", "latest_samples"}`。
+`search_text` はメッセージとリクエスト URL の両方に照合します。GCP 実装では空の検索文字列をエラーとして返し、
+ページ上限や途中失敗では `complete: false` を返します。取得済みの件数が 0 でも、`status: ok` かつ `complete: true` でなければ
+「再発なし」の証拠には使えません。全取得失敗時は `count` が存在しない場合があります。
 
 **`list_services`**: `{"status", "target", "region", "count", "services": [{"name"（必須）, "uri", "ready"（必須）,
 "update_time"（必須）, "images", "service_account", "scaling", "env_plain_names", "env_secret_names", "labels"}]}`。
@@ -163,6 +171,16 @@ class AwsProvider(CloudProvider):
 | セキュリティサービス | Service Usage で有効になっている API |
 | セキュリティ検出結果 | Security Command Center の `sources/-/findings` |
 | イメージ | トラフィックを受けているダイジェストに対する Container Analysis のオカレンス |
+
+現行の GCP 監査を使う際は、次を人が補完してください。
+
+- **サービスアカウント鍵:** 一覧の先頭 60 アカウントのみが調査対象です。それ以降の鍵を別途確認してください。
+- **Cloud Run 公開状態:** IAM 取得に失敗しても `public: false` になる場合があります。IAM ポリシー取得成功を別途確認してください。
+- **IAM と Cloud SQL:** 条件付き binding と許可ネットワークの期限が判定に保持されず、失効した設定を現在有効として指摘する場合があります。
+- **MySQL IAM 認証:** 有効な `cloudsql_iam_authentication` を無効と判定する場合があります。MySQL のフラグを直接確認してください。
+
+これらは未修正の制限です。一方、MySQL の PITR 判定、ファイアウォールの省略値・数値プロトコル、
+トラフィックを受ける旧リビジョンのイメージ調査は修正済みです。GitHub の取得失敗も、設定無効の証拠として扱わず未確認として返します。
 
 ### AWS（未実装。boto3 を使用）
 

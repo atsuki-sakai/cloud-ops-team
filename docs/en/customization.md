@@ -6,6 +6,9 @@ cloud-ops-team is meant to be cloned and **grown into your own operations team**
 日本語（メイン）: [docs/customization.md](../customization.md) · How it works: [architecture.md](architecture.md) ·
 Folder structure: [architecture.md#folder-structure](architecture.md#folder-structure)
 
+Issue control, audits and deployment have [known limitations](known-limitations.md). Editing instructions does not add
+code-enforced guarantees for cross-instance de-duplication or fix verification.
+
 | You want to | Change | Code? |
 |---|---|---|
 | Tell the team what your services do and which errors are noise | `config/ops-context.md` | No |
@@ -18,7 +21,7 @@ Folder structure: [architecture.md#folder-structure](architecture.md#folder-stru
 | Add a specialist | copy `app/specialists/_template.py` | Yes |
 | Implement AWS / Azure capabilities | `app/providers/aws/`, `azure/` | Yes ([providers.md](providers.md)) |
 
-After a change: `make test` (offline, seconds), `make run JOB=error_watch` (one real run in dry-run mode), optionally
+After a change: `make test` (offline, seconds), `OPS_DRY_RUN=true make run JOB=error_watch` (one real run with writes disabled), optionally
 `make eval` (LLM-judged behaviour).
 
 ## 1. Teach the team about your project (no code)
@@ -31,6 +34,9 @@ Describe your services and which ones matter most, your severity policy ("anythi
 noise that should not become issues, and what you want in recommended fixes. The file is appended to every agent's
 instructions (up to 8,000 characters) and never overrides the safety rules. It ships in the container image, so **no secrets**.
 Use `OPS_CONTEXT_FILE` to point elsewhere.
+The standard deploy script does not forward that variable. On Cloud Run, use the default `config/ops-context.md` or include
+the custom file in the image and apply the [post-deploy settings](deployment-gcp.md).
+An arbitrary local file is not automatically included in the image, and those settings must be reapplied after redeployment.
 
 ## 2. Change schedules (no code)
 
@@ -62,6 +68,8 @@ Each specialist's instruction is plain text in `app/specialists/<name>.py` (`err
 `pr_review.py`). Edit it directly — for example, file `medium` security findings too by changing the filing rule.
 Placeholders: `__PROVIDER__`, `__TARGET__`, `__TARGET_LABEL__`, `__REGION__`, `__REPO__`, `__LOOKBACK__`, `__STACK__`, `__CLI__`,
 `__LANG__`. The tool glossary, output language and project context are appended automatically.
+If you change the verification criteria, evaluate the PR repository and fix relationship, CI SHA, deployed revision and log
+coverage. Successful data retrieval and confirmation that an incident is resolved are separate conditions.
 
 ## 5. Add a tool
 
@@ -101,6 +109,10 @@ Give it to a specialist (`tools=[*SECURITY_AUDIT_TOOLS, check_tls_certificate]`)
 when to use it. Rules, enforced by `make test`: type hints on every parameter and **no default values**; a docstring for the
 model; return a dict with `status` and never raise for API errors; read-only; GitHub writes honour `CONFIG.dry_run`; no
 secrets in results. Cloud-neutral tools live in `app/tools/`; cloud-specific fetching belongs in `app/providers/<cloud>/`.
+
+New fetching and audit tools should preserve page limits, partial failures, expiry and conditions so unchecked items remain
+visible. Do not treat `status: ok` or empty findings alone as evidence that every target was checked.
+The current GCP audits still have limitations here; see the [provider guide](providers.md).
 
 ## 6. Add a job to an existing specialist
 

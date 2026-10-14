@@ -3,8 +3,9 @@
 日本語版（メイン）: [docs/configuration.md](../configuration.md)
 
 Everything is configured with environment variables: `.env` locally (create it with `make setup`, template
-[`.env.example`](../../.env.example)), service environment variables when deployed (`make gcp-deploy` sets them from `.env`).
-Run `make doctor` after any change to check that the configuration works.
+[`.env.example`](../../.env.example)), service environment variables when deployed (`make gcp-deploy` copies allowlisted values from `.env`).
+Run `make doctor` after any change to check configuration and access, then inspect the run results.
+See [known limitations](known-limitations.md) for the current guarantees and checks an operator must supplement.
 
 ## Agent settings (`app/config.py`)
 
@@ -32,13 +33,17 @@ Provider-specific fallbacks when `OPS_TARGET` / `OPS_TARGET_REGION` are not set:
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | Never write to GitHub; tools return previews of what they would create |
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close issues it verified (otherwise it labels `ops:verified` and comments) |
-| `OPS_MAX_ISSUES_PER_RUN` | `10` | Maximum new issues per run |
-| `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | At most one recurrence comment per issue within this window |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | New-issue cap for `create_ops_issue`. The current counter is session-scoped and carries into subsequent requests in the same session; `publish_report` is excluded |
+| `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | Skip recurrence comments within this interval of an issue's `updated_at`. Human edits affect the interval, and this does not guarantee one post across multiple instances |
 
 Boolean settings accept `true/false`, `yes/no`, `on/off` or `1/0`, case-insensitively.
 Unset or empty values use the default; other values stop startup with a configuration error.
 `make setup` gives the owner exclusive read/write access to `.env` and its backup.
 `.env.backup-*` files are excluded from Git and deployment uploads.
+
+Resetting the issue budget per invocation and including reports are proposed improvements, not current guarantees.
+Before enabling automatic closure, have an operator check the PR repository and fix relationship, CI, deployment and log coverage.
+Distinguishing a reference PR from a fixing PR has [known limitations](known-limitations.md).
 
 ### Behaviour
 
@@ -58,7 +63,7 @@ Unset or empty values use the default; other values stop startup with a configur
 | `OPS_ERROR_LABELS` | `bug` | Extra labels on error issues (comma separated, empty = none) |
 | `OPS_SECURITY_LABELS` | `security` | Extra labels on security issues |
 | `OPS_SEVERITY_LABELS` | `critical=severity: critical,high=severity: high,medium=severity: medium,low=severity: low` | Severity → labels (`high=a\|b` for several) |
-| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge appended to every instruction (copy `config/ops-context.example.md`) |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge appended to instructions. Custom paths work locally, but the standard deploy script does not forward this variable (see [post-deploy settings](deployment-gcp.md)) |
 
 Every issue also gets `ops-agent` and `ops:error` / `ops:security` / `ops:report`, which the team relies on.
 
@@ -68,6 +73,10 @@ Every issue also gets `ops-agent` and `ops:error` / `ops:security` / `ops:report
 |---|---|---|
 | `OPS_TRIGGER_AUDIENCE` | set by `make gcp-deploy` to the service URL | ADK verifies the scheduler's Google-signed OIDC token against this audience. Empty: authentication is left to Cloud Run IAM (or local development) |
 | `OPS_TRIGGER_SERVICE_ACCOUNTS` | `<JOB_PREFIX>-invoker@<project>` | Callers allowed to trigger jobs when the audience is set |
+
+The A2A card builds its endpoint from `APP_URL` (the externally reachable service URL).
+When unset, it advertises `http://0.0.0.0:8000/a2a/app`. `make gcp-deploy` does not forward `APP_URL` either:
+if you use A2A, follow the [deployment guide](deployment-gcp.md) to set it after deployment and check the advertised endpoint.
 
 ### Model access
 
@@ -116,14 +125,17 @@ gcloud scheduler jobs pause  cloud-ops-error-watch --location asia-northeast1
 gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 ```
 
-A longer look-back than the interval is harmless — duplicates are de-duplicated by fingerprint — but costs more tokens.
+A longer look-back retrieves the same errors again. Existing issues are searched by fingerprint, but simultaneous runs can
+still create duplicates. Avoid overlapping runs and inspect issues and recurrence comments. A larger window also costs more tokens.
 
 ## Deployment (`make gcp-deploy`)
 
-`make gcp-deploy` runs `scripts/gcp/deploy_cloud_run.sh` with `.env` loaded. It accepts every agent setting above plus
+`make gcp-deploy` runs `scripts/gcp/deploy_cloud_run.sh` with `.env` loaded. It forwards agent settings allowlisted in
+`scripts/gcp/deploy_env.py`, plus
 `PROJECT_ID` (default `GOOGLE_CLOUD_PROJECT`), `REGION` (default `OPS_TARGET_REGION`), `SERVICE` (`cloud-ops-team`), `RUNTIME_SA`,
 `TARGET_PROJECT`, `TARGET_REGION`, `GITHUB_TOKEN_SECRET` (`<SERVICE>-github-token`) and the sizing variables `MEMORY` (`2Gi`),
 `CPU` (`1`), `MIN_INSTANCES` (`0`), `MAX_INSTANCES` (`2`), `CONCURRENCY` (`4`), `TIMEOUT` (`1800`).
+`OPS_CONTEXT_FILE` and `APP_URL` are currently excluded and require post-deploy settings.
 It writes only allowlisted settings to a temporary `--env-vars-file`, preserving commas, pipes and empty label settings.
 The file is removed on exit. Every deploy fully defines the service configuration: pass `OPS_DRY_RUN=false` on each deploy
 of a service that should write to GitHub.
