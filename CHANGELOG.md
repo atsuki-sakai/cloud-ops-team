@@ -27,6 +27,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   itself and accepts `<SCHEDULE_KEY>_CRON` for new jobs.
 - GCP scripts fall back to `.env` names (`GOOGLE_CLOUD_PROJECT`, `OPS_TARGET`, `OPS_TARGET_REGION`); the deploy script checks
   that the GitHub token secret exists.
+- Dependencies: google-adk 2.12, google-genai 2.30, opentelemetry-resourcedetector-gcp 1.14, and the `eval` extra now
+  allows google-cloud-aiplatform 2.x (locked at 2.4). CI uses actions/checkout v7 and astral-sh/setup-uv v7.
 
 ## [0.2.0] - 2026-10-13
 
