@@ -261,6 +261,7 @@ existing IAM, credential and configuration audits. No recommendations may mean n
 Only API-provided savings are quoted, with units and duration. Each proposal considers availability, peak demand and standby
 requirements and includes evidence, expected benefit, change risk, implementation, verification and rollback steps.
 Steps describe the target and intended setting in prose; unverified commands or Terraform code are not generated. Zero recommendations do not establish optimal configuration or zero savings. Change impact remains unverified until dependencies are checked.
+Recommendation prerequisites and grant scope also require verification. Moving grants to a parent folder or organization is not presented as a reduction. Unverified implementation details, such as connection methods, remain checks for the operator to resolve against official specifications and the current configuration.
 For scheduled runs, the specialist's report is authoritative; the leader returns a short execution receipt, report references and remaining unknowns.
 
 Both specialists use existing dry-run, redaction and issue caps. Critical/high security findings use `kind="security"` and
