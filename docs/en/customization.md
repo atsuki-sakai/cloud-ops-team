@@ -32,6 +32,9 @@ noise that should not become issues, and what you want in recommended fixes. The
 instructions (up to 8,000 characters) and never overrides the safety rules. It ships in the container image, so **no secrets**.
 Use `OPS_CONTEXT_FILE` to point elsewhere.
 
+For access investigation, describe approved security tests, planned IAM changes and log collection/exclusion/retention.
+For infrastructure review, describe peak periods, availability targets, standby resources and work that must retain its access.
+
 ## 2. Change schedules (no code)
 
 Schedules are generated from each specialist's jobs; environment variables override them.
@@ -41,7 +44,9 @@ make jobs                                                              # current
 ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # every 6 hours
 ```
 
-Built-in overrides: `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS`, `WEEKLY_CRON` / `WEEKLY_DAYS`, `MONTHLY_CRON` / `MONTHLY_KEV_DAYS`.
+Built-in overrides: `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS`, `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS`,
+`INFRASTRUCTURE_REVIEW_CRON`, `WEEKLY_CRON` / `WEEKLY_DAYS`, `MONTHLY_CRON` / `MONTHLY_KEV_DAYS`.
+Access review defaults to daily at 08:30 with a 24-hour window; infrastructure review defaults to Mondays at 10:00 (Asia/Tokyo).
 Jobs you add get `<SCHEDULE_KEY>_CRON` (e.g. `DEPLOY_WATCH_CRON`). `ONLY_JOBS=error-watch` limits an update to some jobs.
 
 ## 3. Match your repository's labels (no code)
@@ -59,7 +64,10 @@ Use `high=priority: high|urgent` for several labels per severity. Missing labels
 ## 4. Change a specialist's procedure
 
 Each specialist's instruction is plain text in `app/specialists/<name>.py` (`error_watch.py`, `security_audit.py`,
-`pr_review.py`). Edit it directly — for example, file `medium` security findings too by changing the filing rule.
+`pr_review.py`, `access_watch.py`, `infrastructure_review.py`). Edit it directly — for example, file `medium` security findings too by changing the filing rule.
+Keep evidence separate from hypotheses: denied requests and sensitive operations alone do not prove compromise.
+Infrastructure review must not invent savings or apply changes. Reuse `check_id:resource` and `kind="security"` for the same
+audit findings as the monthly review to avoid duplicate issues; include change risks, validation and rollback proposals.
 Placeholders: `__PROVIDER__`, `__TARGET__`, `__TARGET_LABEL__`, `__REGION__`, `__REPO__`, `__LOOKBACK__`, `__STACK__`, `__CLI__`,
 `__LANG__`. The tool glossary, output language and project context are appended automatically.
 

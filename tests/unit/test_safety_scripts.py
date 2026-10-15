@@ -173,3 +173,47 @@ def test_deploy_preserves_label_values_and_removes_env_file(
     assert "GITHUB_TOKEN" not in data["values"]
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in data["values"]
     assert not Path(data["path"]).exists()
+
+
+def test_bootstrap_configures_observation_on_the_monitored_project(tmp_path):
+    """Record the actual setup script's CLI calls without reaching any cloud."""
+    cli_dir = tmp_path / "bin"
+    cli_dir.mkdir()
+    capture = tmp_path / "calls.jsonl"
+    gcloud = cli_dir / "gcloud"
+    gcloud.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['REVIEW_CAPTURE'], 'a') as output:\n"
+        "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+    )
+    gcloud.chmod(0o755)
+    completed = subprocess.run(
+        ["bash", str(ROOT / "scripts/gcp/bootstrap.sh")],
+        cwd=ROOT,
+        env={
+            "PATH": str(cli_dir) + os.pathsep + os.defpath,
+            "PROJECT_ID": "runtime-project",
+            "TARGET_PROJECT": "monitored-project",
+            "REVIEW_CAPTURE": str(capture),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    calls = [json.loads(line) for line in capture.read_text().splitlines()]
+    observation = next(call for call in calls if "recommender.googleapis.com" in call)
+    assert observation[:2] == ["services", "enable"]
+    assert observation[observation.index("--project") + 1] == "monitored-project"
+    for role in ("roles/logging.privateLogViewer", "roles/recommender.iamViewer"):
+        binding = next(call for call in calls if role in call)
+        assert binding[:3] == [
+            "projects",
+            "add-iam-policy-binding",
+            "monitored-project",
+        ]
+        assert (
+            "serviceAccount:cloud-ops-team@runtime-project.iam.gserviceaccount.com"
+            in binding
+        )

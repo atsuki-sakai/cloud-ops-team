@@ -55,6 +55,8 @@ cp config/ops-context.example.md config/ops-context.md
 - **重要度の考え方**: 「決済に関わるものは 1 回でも high」など
 - **既知のノイズ**: ボットの 404、毎晩のバックアップ中に出る単発エラーなど、起票しなくてよいもの
 - **修正の進め方**: 推奨対応に書いてほしいこと（ファイルパス、担当チームなど）
+- **不審アクセス調査の前提**: 許可されたセキュリティ検査、正規の IAM 変更予定、ログの収集・除外・保持期間
+- **インフラの制約**: ピーク時刻、可用性要件、待機系の用途、権限変更で維持すべき業務
 
 このファイルの内容は、すべてのエージェントの指示文の末尾に「プロジェクト固有の情報」として追加されます。
 最大 8,000 文字です。安全ルール（読み取り専用など）より優先されることはありません。
@@ -72,6 +74,8 @@ ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # 6 時�
 | 変数 | 意味 |
 |---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | エラー監視の予定 / さかのぼる時間 |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | 不審アクセス調査の予定 / さかのぼる時間（既定: 毎日 08:30 / 24 時間） |
+| `INFRASTRUCTURE_REVIEW_CRON` | インフラ見直し（既定: 毎週月曜 10:00） |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | 週次の修正確認 |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | 月次のセキュリティ診断 |
 | `<ジョブキー>_CRON` | 自分で追加したジョブ（例: `DEPLOY_WATCH_CRON`） |
@@ -98,10 +102,16 @@ OPS_SEVERITY_LABELS=critical=priority: critical,high=priority: high,medium=prior
 各担当の指示文は `app/specialists/<担当>.py` の `INSTRUCTION` にあります。普通の文章なので、そのまま編集できます。
 
 - `app/specialists/error_watch.py`: エラー監視（起票する / 静観する基準、ISSUE の見出し）
+- `app/specialists/access_watch.py`: 不審アクセス調査（証拠・確度・取得範囲の扱い、調査の優先度）
+- `app/specialists/infrastructure_review.py`: インフラ見直し（費用・権限・構成の優先度、変更リスク・確認・ロールバック案）
 - `app/specialists/security_audit.py`: 月次診断（チェックリスト、起票する重要度）
 - `app/specialists/pr_review.py`: 修正の確認（「確認済み」「停滞」の判定）
 
 例: 「medium 以上も起票する」に変えたい場合は `security_audit.py` の起票ルールを書き換えます。
+
+不審アクセス調査では、HTTP 拒否や重要操作を単独で侵入成功と扱わず、証拠と推測を分けるルールを維持してください。
+インフラ見直しでは、API にない節約額を推測しないこと、クラウドを自動変更しないこと、既存の月次診断と同じ
+`check_id:resource`・`kind="security"` で重複を防ぐことを維持します。
 
 ```text
 ## 起票ルール
@@ -275,10 +285,19 @@ SPECIALIST = Specialist(
 
 ```python
 # app/specialists/__init__.py
-from app.specialists import deploy_watch, error_watch, pr_review, security_audit
+from app.specialists import (
+    access_watch,
+    deploy_watch,
+    error_watch,
+    infrastructure_review,
+    pr_review,
+    security_audit,
+)
 
 SPECIALISTS = [
     error_watch.SPECIALIST,
+    access_watch.SPECIALIST,
+    infrastructure_review.SPECIALIST,
     security_audit.SPECIALIST,
     pr_review.SPECIALIST,
     deploy_watch.SPECIALIST,  # 追加

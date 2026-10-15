@@ -174,7 +174,23 @@ def gcp_list(
         )
         if not ok:
             return False, payload
-        items.extend(payload.get(item_key, []) or [])
+        if (
+            not isinstance(payload, dict)
+            or "raw" in payload
+            or not isinstance(payload.get(item_key, []), list)
+            or (
+                payload.get("nextPageToken") is not None
+                and not isinstance(payload["nextPageToken"], str)
+            )
+        ):
+            return False, {
+                "status": "error",
+                "message": "The API returned an invalid list response.",
+                "complete": False,
+                "incomplete": True,
+                "count": len(items),
+            }
+        items.extend(payload.get(item_key, []))
         token = payload.get("nextPageToken")
         if not token:
             break

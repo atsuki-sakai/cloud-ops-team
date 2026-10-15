@@ -21,6 +21,9 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
   `SECURITY.md` と ISSUE・PR のテンプレートは日英併記にし、`CODE_OF_CONDUCT.md` には日本語の要約を加えました。
 
 ### 追加
+- 毎日 08:30 に直近 24 時間を調べる `access_watch` を追加しました。監査ログ、HTTP 認証拒否・探索パス、Cloud Armor の拒否から、証拠・確度・未確認範囲付きで不審な兆候を報告します。
+- 毎週月曜 10:00 の `infrastructure_review` を追加しました。GCP Recommender の費用・IAM 推奨事項と既存の構成監査をまとめ、影響・リスク・実施・確認・ロールバック案を提案します。クラウドの自動変更は行いません。
+- 共通機能 `investigate_access(hours)` / `list_optimization_recommendations()`、定期実行の設定、導入先でのログ収集・追加閲覧権限の案内を追加しました。AWS / Azure はこの 2 機能も `not_supported` を返します。
 - 設定一覧、Google Cloud へのデプロイ手順書、プロバイダーガイドの日本語版を追加しました。
   日本語のアーキテクチャ解説も、英語版のすべての内容をカバーするようにしました。
 

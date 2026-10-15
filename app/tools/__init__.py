@@ -18,9 +18,11 @@ from app.tools.cloud import (
     get_alerting_setup,
     get_log_context,
     get_request_error_rates,
+    investigate_access,
     list_databases,
     list_deployments,
     list_error_logs,
+    list_optimization_recommendations,
     list_scheduled_jobs,
     list_security_findings,
     list_services,
@@ -102,8 +104,38 @@ PR_REVIEW_TOOLS = [
     publish_report,
 ]
 
+ACCESS_WATCH_TOOLS = [
+    get_run_context,
+    investigate_access,
+    list_security_findings,
+    audit_iam,
+    find_existing_ops_issue,
+    search_issues,
+    create_ops_issue,
+    publish_report,
+]
+
+INFRASTRUCTURE_REVIEW_TOOLS = [
+    get_run_context,
+    list_optimization_recommendations,
+    list_services,
+    list_databases,
+    audit_iam,
+    audit_credentials,
+    audit_compute,
+    audit_databases,
+    audit_network,
+    get_alerting_setup,
+    find_existing_ops_issue,
+    search_issues,
+    create_ops_issue,
+    publish_report,
+]
+
 __all__ = [
+    "ACCESS_WATCH_TOOLS",
     "ERROR_WATCH_TOOLS",
+    "INFRASTRUCTURE_REVIEW_TOOLS",
     "PR_REVIEW_TOOLS",
     "SECURITY_AUDIT_TOOLS",
     "get_run_context",

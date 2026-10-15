@@ -76,6 +76,15 @@ def test_default_schedules_match_the_documented_ones() -> None:
         "job": "monthly_security_audit",
         "kev_days": 30,
     }
+    assert schedules["access-watch"]["cron"] == "30 8 * * *"
+    assert json.loads(schedules["access-watch"]["payload"]) == {
+        "job": "access_watch",
+        "hours": 24,
+    }
+    assert schedules["infrastructure-review"]["cron"] == "0 10 * * 1"
+    assert json.loads(schedules["infrastructure-review"]["payload"]) == {
+        "job": "infrastructure_review",
+    }
 
 
 def test_schedule_overrides_from_environment() -> None:
@@ -83,11 +92,17 @@ def test_schedule_overrides_from_environment() -> None:
         "ERROR_WATCH_CRON": "0 * * * *",
         "ERROR_WATCH_HOURS": "1",
         "WEEKLY_DAYS": "14",
+        "ACCESS_WATCH_CRON": "0 * * * *",
+        "ACCESS_WATCH_HOURS": "1",
+        "INFRASTRUCTURE_REVIEW_CRON": "0 10 1 * *",
     }
     schedules = {job["key"]: job for job in scheduled_jobs(env)}
     assert schedules["error-watch"]["cron"] == "0 * * * *"
     assert json.loads(schedules["error-watch"]["payload"])["hours"] == 1
     assert json.loads(schedules["weekly-pr-review"]["payload"])["days"] == 14
+    assert schedules["access-watch"]["cron"] == "0 * * * *"
+    assert json.loads(schedules["access-watch"]["payload"])["hours"] == 1
+    assert schedules["infrastructure-review"]["cron"] == "0 10 1 * *"
 
 
 def test_new_job_gets_a_generic_cron_variable() -> None:
@@ -203,6 +218,7 @@ def test_setup_writes_env_non_interactively(tmp_path, monkeypatch) -> None:
     [
         ({"status": "ok"}, "ok", ""),
         ({"status": "not_supported"}, "info", ""),
+        ({"status": "partial"}, "fail", "check the source errors"),
         (
             {
                 "status": "api_disabled",
@@ -242,3 +258,36 @@ def test_scripts_have_docstrings() -> None:
     for name in ("setup", "doctor", "jobs", "envrun", "run_job"):
         module = _load_script(name)
         assert inspect.getdoc(module), name
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_doctor_checks_new_capabilities_and_reports_partial_evidence(
+    monkeypatch, partial
+):
+    import app.providers as providers
+    from app.providers.base import CloudProvider
+
+    doctor = _load_script("doctor")
+    calls = []
+
+    class Fake(CloudProvider):
+        profile = providers.load_provider_class("gcp").profile
+
+        def investigate_access(self, hours: int) -> dict:
+            calls.append(("access", hours))
+            return {"status": "partial" if partial else "ok"}
+
+        def list_optimization_recommendations(self) -> dict:
+            calls.append(("optimization",))
+            return {"status": "ok"}
+
+    monkeypatch.setattr(providers, "get_provider", lambda: Fake("test", "test-region"))
+    monkeypatch.setattr(doctor, "gcp_identity", lambda: "offline test identity")
+    checks = {check.title: check for check in doctor.check_cloud(quick=False)}
+    assert ("access", 1) in calls
+    assert ("optimization",) in calls
+    assert checks["investigate_access"].level == ("fail" if partial else "ok")
+    assert checks["list_optimization_recommendations"].level == "ok"
+    calls.clear()
+    doctor.check_cloud(quick=True)
+    assert calls == []

@@ -20,6 +20,11 @@ echo "▶ APIs on $PROJECT_ID"
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   secretmanager.googleapis.com cloudscheduler.googleapis.com aiplatform.googleapis.com --project "$PROJECT_ID"
 
+echo "▶ Observation APIs on $TARGET_PROJECT"
+gcloud services enable logging.googleapis.com recommender.googleapis.com --project "$TARGET_PROJECT"
+# Data Access audit logging and load-balancer/Cloud Armor logging must be
+# configured by the operator. Enabling APIs alone does not create those logs.
+
 echo "▶ Runtime service account $SA"
 gcloud iam service-accounts describe "$SA" --project "$PROJECT_ID" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$SA_ID" --display-name "cloud-ops-team runtime" --project "$PROJECT_ID"

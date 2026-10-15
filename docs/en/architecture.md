@@ -1,8 +1,8 @@
 # Architecture
 
 cloud-ops-team runs the routine operations work of a cloud environment with a small team of AI agents:
-an **error watch** that turns production errors into well-researched GitHub issues, a **monthly security audit**,
-and a **weekly review** that verifies whether merged pull requests actually fixed those issues.
+an **error watch**, daily **access investigation**, weekly **infrastructure review**, a **monthly security audit**,
+and a **weekly fix review** that verifies whether merged pull requests fixed the issues.
 Humans (often with AI coding tools) implement the fixes; the agents never change the cloud.
 
 - Framework: [Agent Development Kit (ADK)](https://adk.dev/) 2.x for Python, scaffolded with [agents-cli](https://github.com/google/agents-cli)
@@ -18,6 +18,8 @@ Humans (often with AI coding tools) implement the fixes; the agents never change
 flowchart LR
     subgraph Agents["cloud-ops-team (automated)"]
         EW["error_watch<br/>daily: detect and analyse errors"]
+        AW["access_watch<br/>daily: investigate access"]
+        IR["infrastructure_review<br/>weekly: cost, permissions and configuration"]
         SA["security_audit<br/>monthly: posture, CVEs, EOL, threats"]
         PR["pr_review<br/>weekly: verify merged fixes"]
     end
@@ -27,6 +29,7 @@ flowchart LR
         H3["Close the verified issue"]
     end
     EW -- "[ops/error] issue" --> H1
+    AW & IR -- "evidence, proposals and coverage gaps" --> H1
     SA -- "[ops/security] issue + monthly report" --> H1
     H1 --> H2
     H2 -- "merge" --> PR
@@ -46,10 +49,12 @@ flowchart TB
         EW["error_watch"]
         SA["security_audit"]
         PR["pr_review"]
-        ROOT --> EW & SA & PR
+        AW["access_watch"]
+        IR["infrastructure_review"]
+        ROOT --> EW & SA & PR & AW & IR
     end
     subgraph Tools["Agent-facing tools (app/tools) — identical on every cloud"]
-        CLOUD["cloud.py<br/>18 capabilities"]
+        CLOUD["cloud.py<br/>20 capabilities"]
         TI["threat_intel.py<br/>CISA KEV · EOL · web research"]
         REPO["repo.py<br/>repository posture"]
         ISS["issues.py<br/>issues · PRs · CI"]
@@ -70,7 +75,7 @@ flowchart TB
         TU["timeutil"]
     end
     GH["GitHub REST / GraphQL<br/>app/integrations/github.py"]
-    EW & SA & PR --> Tools
+    EW & SA & PR & AW & IR --> Tools
     CLOUD --> BASE
     ISS & REPO --> GH
     Providers --> Core
@@ -103,12 +108,14 @@ cloud-ops-team/
 │   ├── specialists/              ★ one module per team member
 │   │   ├── base.py               Specialist and Job types
 │   │   ├── error_watch.py        error watch: instruction, tools, jobs
+│   │   ├── access_watch.py       daily suspicious access investigation
+│   │   ├── infrastructure_review.py  weekly cost, IAM and configuration review
 │   │   ├── security_audit.py     monthly security audit
 │   │   ├── pr_review.py          weekly fix verification
 │   │   ├── _template.py          copy this to add a specialist
 │   │   └── __init__.py           registry (SPECIALISTS)
 │   ├── tools/                    ★ functions the model calls (cloud-neutral)
-│   │   ├── cloud.py              the 18 cloud capabilities (delegate to the provider)
+│   │   ├── cloud.py              the 20 cloud capabilities (delegate to the provider)
 │   │   ├── issues.py             GitHub issues / PRs (dry-run aware)
 │   │   ├── threat_intel.py       CISA KEV, end-of-life, web threat research
 │   │   ├── repo.py               repository security posture
@@ -146,8 +153,10 @@ cloud-ops-team/
 
 | Agent | Role | Tools | Output |
 |---|---|---|---|
-| `cloud_ops_team` (root) | Reads the job (JSON from the scheduler or natural language), calls the right specialist, writes the consolidated report | `get_run_context` + 3 specialists | Report |
+| `cloud_ops_team` (root) | Reads the job (JSON from the scheduler or natural language), calls the right specialist, writes the consolidated report | `get_run_context` + 5 specialists | Report |
 | `error_watch` | Groups error logs by fingerprint, correlates with 5xx rates, failing jobs and recent deployments, writes a root-cause hypothesis with confidence, files issues | 15 | `[ops/error]` issues |
+| `access_watch` | Reviews audit logs, HTTP denials/probe paths and Cloud Armor denials; distinguishes suspicion, confirmation and coverage | 8 | `[ops/security]` issues + investigation report |
+| `infrastructure_review` | Combines cost/IAM recommendations with existing audits; proposes risk, implementation, validation and rollback steps | 14 | `[ops/security]` issues + improvement report |
 | `security_audit` | IAM, credentials, compute, databases, network, security services, posture findings, image CVEs, EOL, CISA KEV, web threat research; files critical/high findings | 19 | `[ops/security]` issues + monthly report |
 | `pr_review` | For every open team issue: linked PRs, merge state, CI, and whether the error recurred after the merge | 13 | `ops:verified` / `ops:stale` + weekly report |
 
@@ -161,18 +170,18 @@ describe their services, severity policy and known noise without editing prompts
 
 **Specialists are `mode="single_turn"` sub-agents.** ADK exposes each as a tool of the leader and runs it inline in the leader's
 session. Compared with wrapping them in `AgentTool`, every tool call streams as an event (HTTP/SSE clients and the scheduler
-connection never go silent, and `agents-cli run` / `eval generate` stay under their 120-second read timeout) and every call is
+connection can expose progress). Model calls can still leave gaps between events, so clients may need a longer read timeout. Every call is
 recorded in traces and session history.
 
 **Instructions are providers (callables)**, not strings: ADK would otherwise try to template the `{...}` JSON examples they contain.
 They are rendered from the provider profile (display name, target type, CLI, glossary), `CONFIG` and the report language.
 
-**Budgets are part of the prompts**: at most 25–30 tool calls, three issue searches, one web research call and a 5–8 minute
-target per run. Measured on Google Cloud: error watch 60–150 s, monthly audit about 200 s with 27 tool calls.
+**Call budgets are part of the prompts**, with tool and search limits for each specialist. Runtime depends on model and API latency.
+Real-environment trials of the new access and infrastructure reviews took about 10 and 15 minutes respectively; completion within 5–8 minutes is not guaranteed. The default scheduled request deadline is 30 minutes.
 
 ## 4. Provider abstraction
 
-The specialists only ever see the 18 capability tools in `app/tools/cloud.py`. Each tool calls the method of the same name on
+The specialists only ever see the 20 capability tools in `app/tools/cloud.py`. Each tool calls the method of the same name on
 the provider selected by `OPS_CLOUD_PROVIDER`:
 
 | Capability | Normalized meaning | Google Cloud | AWS (planned) | Azure (planned) |
@@ -192,6 +201,8 @@ the provider selected by `OPS_CLOUD_PROVIDER`:
 | `audit_security_services` | Posture / scanning services enabled | SCC, container scanning, ... | GuardDuty, Security Hub, Inspector | Defender for Cloud plans |
 | `list_security_findings` | Active posture findings | Security Command Center | Security Hub | Defender for Cloud |
 | `scan_deployed_images` | CVEs in running images | Artifact Analysis | Amazon Inspector | Defender for Containers |
+| `investigate_access` | Suspicious access signals and coverage | Cloud Audit Logs, HTTP access logs, Cloud Armor logs | Not implemented | Not implemented |
+| `list_optimization_recommendations` | Cost and permission proposals | Recommender (Cloud Run, Cloud SQL, IAM) | Not implemented | Not implemented |
 
 Design rules:
 
@@ -223,9 +234,11 @@ ADK (`trigger_sources=["pubsub"]`) decodes it and runs the leader with
 | `job` | Parameters | Default schedule (configurable) | Specialist |
 |---|---|---|---|
 | `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`) | daily 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
+| `access_watch` | `hours` (24) | daily 08:30 (`ACCESS_WATCH_CRON`, `ACCESS_WATCH_HOURS`) | access_watch |
+| `infrastructure_review` | — | Monday 10:00 (`INFRASTRUCTURE_REVIEW_CRON`) | infrastructure_review |
 | `weekly_pr_review` | `days` (7) | Monday 09:00 (`WEEKLY_CRON`) | pr_review |
 | `monthly_security_audit` | `kev_days` (30) | 1st of the month 09:00 (`MONTHLY_CRON`) | security_audit |
-| `full` | — | manual | all three |
+| `full` | — | manual | all five |
 
 On Google Cloud, `scripts/gcp/setup_schedules.sh` creates Cloud Scheduler **HTTP** jobs rather than Pub/Sub push subscriptions:
 push deliveries are capped at 10 minutes and redelivered when not acknowledged, while HTTP jobs allow a 30-minute deadline and
@@ -234,6 +247,25 @@ re-running the script updates jobs in place. On AWS the equivalent is EventBridg
 a Container Apps job or Logic App.
 
 Natural language works through the same endpoint and through `/run_sse` ("check the errors of the last 24 hours").
+
+### Access and infrastructure review boundaries
+
+Access investigation is a scheduled review. Denials, probes and sensitive operations are distinguished from successful intrusion.
+Reports include the observation window, scope, evidence, confidence and follow-up checks. API failures, missing collection,
+limits and sampling remain visible unknowns; zero matching logs do not prove that unauthorized access did not occur.
+No blocking or automatic remediation is performed.
+HTTP status codes alone do not establish successful blocking or safety. IAM change legitimacy remains unverified until matched against approval records.
+
+Infrastructure review combines Recommender for Cloud Run/Cloud SQL in the target region and project IAM in `global` with
+existing IAM, credential and configuration audits. No recommendations may mean none generated, inaccessible or out of scope.
+Only API-provided savings are quoted, with units and duration. Each proposal considers availability, peak demand and standby
+requirements and includes evidence, expected benefit, change risk, implementation, verification and rollback steps.
+Steps describe the target and intended setting in prose; unverified commands or Terraform code are not generated. Zero recommendations do not establish optimal configuration or zero savings. Change impact remains unverified until dependencies are checked.
+For scheduled runs, the specialist's report is authoritative; the leader returns a short execution receipt, report references and remaining unknowns.
+
+Both specialists use existing dry-run, redaction and issue caps. Critical/high security findings use `kind="security"` and
+`check_id:resource`, matching the monthly audit so that the same finding is not filed twice. Cost proposals belong in the report.
+Cloud permissions, log collection and scheduled execution must be verified on the actual target separately from offline tests.
 
 ## 6. Error watch, step by step
 

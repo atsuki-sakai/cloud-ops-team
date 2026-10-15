@@ -5,8 +5,8 @@
 ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue)
 ![Built with Google ADK](https://img.shields.io/badge/built%20with-Google%20ADK-4285F4)
 
-**An AI operations team for your cloud.** Three specialist agents watch production errors, audit security every month and
-verify every week that merged pull requests really fixed what they found — and they talk to you through GitHub issues.
+**An AI operations team for your cloud.** Five specialist agents watch production errors and suspicious access daily,
+review infrastructure weekly, audit security monthly and verify merged fixes weekly. They report through GitHub issues.
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
 [Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md)
@@ -14,28 +14,34 @@ verify every week that merged pull requests really fixed what they found — and
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
 | `error_watch` | daily 08:00 | SRE | Groups error logs by fingerprint, correlates them with 5xx rates, failing scheduled jobs and recent deployments, and files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate |
+| `access_watch` | daily 08:30 | Access investigator | Reviews the last 24 hours of audit logs, HTTP 401/403 and probe paths, and Cloud Armor denials. Separates suspicious signals from confirmed compromise and reports evidence, confidence and coverage gaps |
+| `infrastructure_review` | Mondays 10:00 | Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits; proposes changes with impact, risk, validation and rollback steps |
 | `monthly_security_audit` | 1st of the month | Cloud security | Reviews IAM, long-lived credentials, compute, databases, network rules, security services, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel; files critical and high findings plus a monthly report |
 | `weekly_pr_review` | Mondays 09:00 | Release manager | For each open team issue: are linked PRs merged, is CI green, and did the error stop occurring? Marks `ops:verified` or `ops:stale` and publishes a weekly report |
 
-You can also just talk to it: *"check the errors of the last 24 hours"*, *"run a security audit"*, *"what is the PR status?"*.
+Schedules default to `Asia/Tokyo`. You can also ask: *"investigate suspicious access"*, *"review infrastructure waste and permissions"*, *"what is the PR status?"*.
+
+Access investigation is a scheduled log review, with no real-time protection or blocking. Missing, inaccessible or truncated
+logs and zero detections do not establish that no unauthorized access occurred. Savings are quoted only when the API returns
+an estimate. Optimization covers Cloud Run and Cloud SQL in the target region and project IAM, not every cloud resource.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     SCH["Scheduler"] --> ROOT["cloud_ops_team<br/>leader"]
-    ROOT --> EW["error_watch"] & SA["security_audit"] & PR["pr_review"]
-    EW & SA & PR --> TOOLS["cloud-neutral tools"]
+    ROOT --> EW["error_watch"] & SA["security_audit"] & PR["pr_review"] & AW["access_watch"] & IR["infrastructure_review"]
+    EW & SA & PR & AW & IR --> TOOLS["cloud-neutral tools"]
     TOOLS --> PROV["provider<br/>GCP · AWS · Azure"]
-    EW & SA & PR --> GH["GitHub issues"]
+    EW & SA & PR & AW & IR --> GH["GitHub issues"]
     GH --> HUMAN["you + your AI coding tools"]
     HUMAN -- "PR: closes #N" --> GH
 ```
 
 - **Read-only by design.** No tool can change your cloud. GitHub writes are limited to issues, comments and labels, and are
   off (`OPS_DRY_RUN=true`) until you enable them.
-- **Cloud-neutral agents, pluggable clouds.** The agents use 18 capability tools (`list_services`, `audit_network`, ...);
-  a provider maps them to a cloud. Google Cloud is fully implemented; AWS and Azure ship as skeletons that the agents already
+- **Cloud-neutral agents, pluggable clouds.** The agents use 20 capability tools (`list_services`, `audit_network`, ...);
+  a provider maps them to a cloud. Google Cloud implements these capabilities for the services listed below; AWS and Azure ship as skeletons that the agents already
   understand — capabilities can be added one at a time.
 - **No database.** Issues are the ledger: a log fingerprint stored in each issue de-duplicates findings and lets the weekly
   review count recurrences after a fix is merged.
@@ -46,7 +52,7 @@ flowchart LR
 
 | Cloud | Status | Logs · services · jobs · DBs · metrics | Security checks |
 |---|---|---|---|
-| Google Cloud | ✅ Implemented | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring | IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
+| Google Cloud | ✅ Implemented | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, Recommender | Audit/access logs, Cloud Armor denials, IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
 | AWS | 🚧 Skeleton — contributions welcome | CloudWatch Logs, ECS / Lambda, EventBridge, RDS (planned) | IAM, Security Hub, Inspector, security groups (planned) |
 | Azure | 🚧 Skeleton — contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
 
@@ -67,6 +73,8 @@ git clone https://github.com/<you>/cloud-ops-team && cd cloud-ops-team
 make setup                       # install, then answer a few questions to create .env
 make doctor                      # check configuration, Gemini, GitHub and cloud access — prints a fix for every gap
 make run JOB=error_watch         # run one job locally and watch every tool call (dry-run: nothing is written)
+make run JOB=access_watch ARGS="--hours 24"   # investigate suspicious access
+make run JOB=infrastructure_review          # review cost, permissions and configuration
 cp config/ops-context.example.md config/ops-context.md   # optional: describe your services, severity policy, known noise
 ```
 
@@ -137,6 +145,7 @@ cloud-ops-team/
 Issues and pull requests are welcome — especially AWS and Azure capabilities. Use `make test`, `make lint`, `make run` and
 `make eval` while developing, and start with [CONTRIBUTING.en.md](CONTRIBUTING.en.md);
 security reports go through [SECURITY.md](SECURITY.md).
+Live-model checks (`uv run pytest tests/integration -q`) require cloud credentials. Adjust the HTTP/SSE and A2A model read wait with `OPS_E2E_MODEL_TIMEOUT_SECONDS` (default 180 seconds, range 1–900). This bounds idle read time; it is not a performance guarantee.
 
 ## License
 

@@ -21,6 +21,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   `SECURITY.md` and the issue and PR templates are bilingual, and `CODE_OF_CONDUCT.md` has a Japanese summary.
 
 ### Added
+- Daily `access_watch` at 08:30 with a 24-hour window: audit logs, HTTP authentication denials/probe paths and Cloud Armor denials, reported with evidence, confidence and coverage gaps.
+- Weekly `infrastructure_review` on Mondays at 10:00: GCP Recommender cost/IAM recommendations and existing configuration audits, with impact, risks, implementation, validation and rollback proposals. No automatic cloud changes.
+- Cloud-neutral `investigate_access(hours)` / `list_optimization_recommendations()` capabilities, schedule settings and deployment guidance for logging coverage and additional read roles. AWS/Azure return `not_supported` for both capabilities.
 - Japanese versions of the configuration reference, the Google Cloud deployment guide and the provider guide;
   the Japanese architecture document now covers everything the English one does.
 

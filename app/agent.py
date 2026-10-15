@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cloud ops team: a leader agent and three specialists.
+"""Cloud ops team: a leader agent and five specialists.
 
 root (cloud_ops_team) ─┬─ error_watch     : error triage, root-cause analysis, issue filing
                        ├─ security_audit  : monthly security / hygiene / EOL / threat-intel audit
-                       └─ pr_review       : weekly verification of fixes (PR, CI, recurrence)
+                       ├─ pr_review       : weekly verification of fixes (PR, CI, recurrence)
+                       ├─ access_watch    : daily investigation of suspicious access
+                       └─ infrastructure_review : weekly efficiency and configuration review
 
 Specialists are defined in ``app/specialists/`` (one module each) and built
 here; add one by copying ``app/specialists/_template.py`` and registering it.

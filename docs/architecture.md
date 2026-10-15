@@ -1,8 +1,8 @@
 # アーキテクチャ
 
 cloud-ops-team は、クラウド環境の定常的な運用保守を小さな AI エージェントチームで回します。
-本番エラーを調査済みの GitHub ISSUE に変える **エラー監視**、**月次セキュリティ診断**、マージされた PR が本当に問題を直したかを確かめる
-**週次レビュー** の 3 つです。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
+本番エラーを調査する **エラー監視**、毎日の **不審アクセス調査**、毎週の **インフラ見直し**、
+**月次セキュリティ診断**、マージされた PR の修正を確かめる **週次レビュー** の 5 つです。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
 
 - フレームワーク: [ADK](https://adk.dev/) 2.x（Python）、[agents-cli](https://github.com/google/agents-cli) でスキャフォールド
 - モデル: Gemini（既定 `gemini-3.8-flash`、`OPS_MODEL` で変更）
@@ -17,6 +17,8 @@ English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [
 flowchart LR
     subgraph Agents["cloud-ops-team（自動）"]
         EW["error_watch<br/>毎日: エラー検知・原因分析"]
+        AW["access_watch<br/>毎日: 不審アクセス調査"]
+        IR["infrastructure_review<br/>週次: 費用・権限・構成見直し"]
         SA["security_audit<br/>月次: 設定・CVE・EOL・脅威動向"]
         PR["pr_review<br/>週次: マージ済み修正の検証"]
     end
@@ -26,6 +28,7 @@ flowchart LR
         H3["検証済み ISSUE をクローズ"]
     end
     EW -- "[ops/error] ISSUE" --> H1
+    AW & IR -- "証拠・推奨案・調査の限界" --> H1
     SA -- "[ops/security] ISSUE + 月次レポート" --> H1
     H1 --> H2
     H2 -- "マージ" --> PR
@@ -45,10 +48,12 @@ flowchart TB
         EW["error_watch"]
         SA["security_audit"]
         PR["pr_review"]
-        ROOT --> EW & SA & PR
+        AW["access_watch"]
+        IR["infrastructure_review"]
+        ROOT --> EW & SA & PR & AW & IR
     end
     subgraph Tools["エージェントが使うツール（app/tools）— どのクラウドでも同じ"]
-        CLOUD["cloud.py<br/>18 の共通機能"]
+        CLOUD["cloud.py<br/>20 の共通機能"]
         TI["threat_intel.py<br/>CISA KEV・EOL・Web 調査"]
         REPO["repo.py<br/>リポジトリ診断"]
         ISS["issues.py<br/>ISSUE・PR・CI"]
@@ -69,7 +74,7 @@ flowchart TB
         TU["timeutil"]
     end
     GH["GitHub REST / GraphQL<br/>app/integrations/github.py"]
-    EW & SA & PR --> Tools
+    EW & SA & PR & AW & IR --> Tools
     CLOUD --> BASE
     ISS & REPO --> GH
     Providers --> Core
@@ -101,12 +106,14 @@ cloud-ops-team/
 │   ├── specialists/              ★ 担当（専門家）の定義。1 ファイル 1 担当
 │   │   ├── base.py               Specialist / Job の型
 │   │   ├── error_watch.py        エラー監視（指示文・ツール・ジョブ）
+│   │   ├── access_watch.py       毎日の不審アクセス調査
+│   │   ├── infrastructure_review.py  週次の費用・権限・構成見直し
 │   │   ├── security_audit.py     月次セキュリティ診断
 │   │   ├── pr_review.py          週次の修正確認
 │   │   ├── _template.py          新しい担当のひな形
 │   │   └── __init__.py           登録一覧（SPECIALISTS）
 │   ├── tools/                    ★ エージェントが呼ぶ関数（クラウド非依存）
-│   │   ├── cloud.py              クラウド機能 18 種の窓口（プロバイダーに委譲）
+│   │   ├── cloud.py              クラウド機能 20 種の窓口（プロバイダーに委譲）
 │   │   ├── issues.py             GitHub の ISSUE / PR（お試しモード対応）
 │   │   ├── threat_intel.py       CISA KEV・サポート期限・Web 脅威調査
 │   │   ├── repo.py               リポジトリのセキュリティ設定
@@ -144,8 +151,10 @@ cloud-ops-team/
 
 | エージェント | 役割 | ツール | 出力 |
 |---|---|---|---|
-| `cloud_ops_team`（リーダー） | ジョブ（スケジューラの JSON か自然言語）を解釈して担当を呼び、統合レポートを書く | `get_run_context` ＋ 担当 3 人 | レポート |
+| `cloud_ops_team`（リーダー） | ジョブ（スケジューラの JSON か自然言語）を解釈して担当を呼び、統合レポートを書く | `get_run_context` ＋ 担当 5 人 | レポート |
 | `error_watch` | エラーをフィンガープリント単位に集約し、5xx 率・失敗ジョブ・直近デプロイと突き合わせ、確度付きの原因仮説を立てて起票 | 15 個 | `[ops/error]` ISSUE |
+| `access_watch` | 監査ログ・HTTP 認証拒否と探索パス・Cloud Armor 拒否を確認し、疑いと確証・取得範囲を区別 | 8 個 | `[ops/security]` ISSUE ＋ 調査レポート |
+| `infrastructure_review` | Recommender の費用・IAM 推奨事項と既存監査を統合。変更リスク・実施・検証・ロールバック案を提示 | 14 個 | `[ops/security]` ISSUE ＋ 改善レポート |
 | `security_audit` | IAM・認証情報・コンピュート・DB・ネットワーク・セキュリティサービス・検出結果・イメージ CVE・EOL・CISA KEV・Web 脅威調査を確認し、critical / high を起票 | 19 個 | `[ops/security]` ISSUE ＋ 月次レポート |
 | `pr_review` | チームが起票した open ISSUE ごとに、紐づく PR・マージ状態・CI・マージ後の再発を検証 | 13 個 | `ops:verified` / `ops:stale` ＋ 週次レポート |
 
@@ -156,16 +165,16 @@ cloud-ops-team/
   サービス構成・重要度の考え方・既知のノイズを、プロンプトを編集せずに伝えられます。安全ルールより優先されることはありません。
 - **担当は `mode="single_turn"` のサブエージェント**です。ADK がリーダーのツールとして公開し、リーダーと同じセッション内でインライン実行します。
   `AgentTool` で包む方式と比べて、担当のツール呼び出しが 1 件ずつイベントとしてストリームされます。そのため HTTP/SSE のクライアントや
-  スケジューラの接続が無音にならず、`agents-cli run` / `eval generate` の 120 秒の読み取りタイムアウトにもかかりません。
+  スケジューラで途中の進捗を観測できます。ただしモデル応答中はイベントが届かない時間があり、クライアントの読み取り待ち時間には調整が必要です。
   すべての呼び出しはトレースとセッション履歴に残ります。
 - **指示文は文字列ではなく関数（InstructionProvider）**で渡します。文字列だと ADK が指示文中の JSON 例の `{...}` を変数展開しようとして壊れるためです。
   プロバイダーのプロファイル（表示名・対象の種別・CLI・用語集）、`CONFIG`、出力言語から組み立てます。
-- **予算をプロンプトに明記**しています。1 回の実行でツール呼び出し 25〜30 回以内、ISSUE 検索 3 回、Web 調査 1 回、5〜8 分が目安です。
-  Google Cloud での実測は、エラー監視が 60〜150 秒、月次診断が約 200 秒でツール呼び出し 27 回です。
+- **呼び出し予算をプロンプトに明記**しています。担当ごとにツール・検索回数を制限します。
+  所要時間はモデル・API の応答に依存します。実環境試験では新しいアクセス調査が約10分、インフラ見直しが約15分となった例があり、5〜8分での完了は保証しません。定期実行の既定期限は30分です。
 
 ## 4. プロバイダー抽象
 
-担当が見るのは `app/tools/cloud.py` の 18 個の共通ツールだけです。各ツールは `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
+担当が見るのは `app/tools/cloud.py` の 20 個の共通ツールだけです。各ツールは `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
 
 | 共通機能 | 正規化された意味 | Google Cloud | AWS（予定） | Azure（予定） |
 |---|---|---|---|---|
@@ -184,6 +193,8 @@ cloud-ops-team/
 | `audit_security_services` | セキュリティ診断サービスの有効化状況 | SCC、コンテナスキャンなど | GuardDuty、Security Hub、Inspector | Defender for Cloud のプラン |
 | `list_security_findings` | 有効な検出結果 | Security Command Center | Security Hub | Defender for Cloud |
 | `scan_deployed_images` | 稼働中イメージの CVE | Artifact Analysis | Amazon Inspector | Defender for Containers |
+| `investigate_access` | 不審なアクセスの兆候と取得範囲 | Cloud Audit Logs・HTTP アクセスログ・Cloud Armor ログ | 未実装 | 未実装 |
+| `list_optimization_recommendations` | 費用・権限の改善提案 | Recommender（Cloud Run・Cloud SQL・IAM） | 未実装 | 未実装 |
 
 設計ルール:
 
@@ -213,9 +224,11 @@ ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセ�
 | `job` | パラメータ | 既定の周期（変更可） | 担当 |
 |---|---|---|---|
 | `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`） | 毎日 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
+| `access_watch` | `hours`（24） | 毎日 08:30（`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS`） | access_watch |
+| `infrastructure_review` | — | 月曜 10:00（`INFRASTRUCTURE_REVIEW_CRON`） | infrastructure_review |
 | `weekly_pr_review` | `days`（7） | 月曜 09:00（`WEEKLY_CRON`） | pr_review |
 | `monthly_security_audit` | `kev_days`（30） | 毎月 1 日 09:00（`MONTHLY_CRON`） | security_audit |
-| `full` | — | 手動 | 3 人全員 |
+| `full` | — | 手動 | 5 人全員 |
 
 Google Cloud では `scripts/gcp/setup_schedules.sh` が、Pub/Sub の push サブスクリプションではなく Cloud Scheduler の **HTTP** ジョブを作ります。
 Pub/Sub push は配信の上限が 10 分で、応答がないと再配送されます。HTTP ジョブなら 30 分のデッドラインと再試行 0 回を設定できるので、
@@ -225,6 +238,23 @@ Pub/Sub push は配信の上限が 10 分で、応答がないと再配送され
 AWS では EventBridge Scheduler がサービスの URL を呼ぶ形、Azure では Container Apps のジョブか Logic App が同じ役割を担います。
 
 自然言語の依頼も同じエンドポイントと `/run_sse` で受け付けます（例:「直近 24 時間のエラーを確認して」）。
+
+### 不審アクセス調査とインフラ見直しの判断境界
+
+アクセス調査は定期レビューです。権限拒否、探索リクエスト、IAM などの重要操作を、侵入成功とは区別します。
+観測期間・対象・証拠・確度・追加確認を報告し、API エラー・未収集・取得上限・サンプリングなどの不確実性を残します。
+「該当ログを検出しなかった」は「不正アクセスがない」の証明にはなりません。遮断や自動修復は行いません。
+HTTP応答コードだけで遮断成功・安全性を判定せず、IAM変更の正当性は承認履歴と照合するまで未確認とします。
+
+インフラ見直しは対象リージョンの Cloud Run・Cloud SQL と `global` の IAM Recommender、既存の IAM・認証情報・構成監査を使います。
+推奨事項がない場合も、未生成・権限不足・対象範囲外を区別します。節約額は API の値がある場合だけ単位・期間とともに提示します。
+可用性・ピーク時の性能・待機系の用途を考慮し、提案ごとに根拠・期待効果・変更リスク・実施手順・確認方法・ロールバック案を記載します。
+手順は変更対象と設定値を文章で示し、未検証のコマンドやTerraformコードは生成しません。推薦0件を最適構成や削減額0円と解釈せず、変更影響は依存関係の確認まで未確認とします。
+定期実行では担当のレポートを正本とし、リーダーは実行結果・レポート参照・未確認項目を短く返します。
+
+両担当は既存の dry-run・伏せ字・ISSUE 上限を使います。critical / high のセキュリティ検出には `kind="security"` と
+`check_id:resource` を使い、月次診断と同じ問題を二重起票しません。費用改善はレポートにまとめます。
+実クラウド上での取得権限・ログ収集・定期実行の確認は、オフラインテストとは別に導入先で行います。
 
 ## 6. エラー監視の流れ
 

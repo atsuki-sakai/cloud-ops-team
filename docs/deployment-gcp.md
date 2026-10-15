@@ -3,14 +3,15 @@
 English: [docs/en/deployment-gcp.md](en/deployment-gcp.md)
 
 チームは 1 つの Cloud Run サービスとして動きます。Cloud Scheduler が、OIDC で認証した HTTP リクエストでこのサービスを呼び出します。
-費用のほとんどはモデルのトークン代です。毎日のエラー監視、週次レビュー、月次診断を合わせても、1 か月に数十回の短いリクエストで済みます。
+主な費用はモデルのトークン代です。既定では毎日のエラー監視と不審アクセス調査、週次の修正確認とインフラ見直し、月次診断を実行します。
+ログの収集量や保持設定に応じた費用も導入先で確認してください。
 それ以外の時間はインスタンスが 0 台まで縮小されます。
 
 ```mermaid
 flowchart LR
-    SCH["Cloud Scheduler<br/>3 つの HTTP ジョブ"] -- "OIDC 認証（呼び出し用 SA）" --> RUN["Cloud Run<br/>cloud-ops-team"]
+    SCH["Cloud Scheduler<br/>5 つの HTTP ジョブ"] -- "OIDC 認証（呼び出し用 SA）" --> RUN["Cloud Run<br/>cloud-ops-team"]
     RUN -- "実行用 SA" --> VTX["Vertex AI（Gemini）"]
-    RUN -- "閲覧専用のロール" --> TGT["監視対象のプロジェクト<br/>Logging · Monitoring · Run · SQL · IAM · SCC"]
+    RUN -- "閲覧専用のロール" --> TGT["監視対象のプロジェクト<br/>Logging · Monitoring · Run · SQL · IAM · SCC · Recommender"]
     RUN -- "Secret Manager のトークン" --> GH["GitHub の ISSUE / PR"]
 ```
 
@@ -38,6 +39,28 @@ make gcp-bootstrap          # または: PROJECT_ID=my-project TARGET_PROJECT=my
 - 監視対象に対する閲覧専用のロールを付与します（`scripts/gcp/grant_target_roles.sh`）
 - GitHub トークンをシークレット `cloud-ops-team-github-token` に保存します（`GITHUB_TOKEN` が未設定なら入力を求められます）
 
+### アクセス調査とインフラ見直しの取得条件
+
+- 監視対象で `logging.googleapis.com` と `recommender.googleapis.com` を有効にします。初期設定スクリプトにも含まれます。
+- `grant_target_roles.sh` は既存の閲覧ロールに加え、Data Access 監査ログを読む `roles/logging.privateLogViewer` と
+  IAM 推奨事項を読む `roles/recommender.iamViewer` を付与します。既存環境は `make gcp-grant` で権限を更新してください。
+- Data Access 監査ログは多くのサービスで既定では無効です。監視したいサービスの収集設定、除外、保存先、保持期間を管理者が確認します。
+  初期設定スクリプトは Data Access の収集設定を変更しません。[監査ログと必要権限](https://docs.cloud.google.com/logging/docs/audit)
+- HTTP 調査には `httpRequest` を含むアクセスログが必要です。Cloud Armor の拒否は、そのログが収集されている場合に調べられます。
+  Cloud Armor の導入やログ有効化は自動で行いません。ログが 0 件でも、未収集と攻撃なしを区別できない場合があります。
+- Recommender は対象リージョンの Cloud Run・Cloud SQL と `global` のプロジェクト IAM を調べます。
+  未生成の推奨事項、API 未有効化、権限不足、部分取得を「改善余地なし」と扱いません。
+  推奨事項の閲覧権限は [Recommender のロール一覧](https://docs.cloud.google.com/iam/docs/roles-permissions/recommender) で確認できます。
+
+導入先で `make doctor` に続けて次を実行し、取得範囲・未確認項目・提案内容を確認します。
+
+```bash
+OPS_DRY_RUN=true make run JOB=access_watch ARGS="--hours 24"
+OPS_DRY_RUN=true make run JOB=infrastructure_review
+```
+
+ローカルのテスト成功は、導入先のログ収集・API 権限・定期実行が動く証拠にはなりません。デプロイ後は実行履歴とレポートを確認してください。
+
 ## 2. デプロイ
 
 まずはお試しモードで動かし、チームが登録しようとする ISSUE を確認してから、書き込みを有効にします。
@@ -63,7 +86,8 @@ make gcp-schedule            # ジョブを作成または更新（サービス�
 gcloud scheduler jobs run cloud-ops-error-watch --location asia-northeast1   # 今すぐ 1 回実行
 ```
 
-既定の予定は、エラー監視が毎日 8:00、週次レビューが毎週月曜 9:00、月次診断が毎月 1 日 9:00 です（いずれも Asia/Tokyo）。
+既定の予定は、エラー監視が毎日 8:00、不審アクセス調査が毎日 8:30、修正確認が毎週月曜 9:00、
+インフラ見直しが毎週月曜 10:00、月次診断が毎月 1 日 9:00 です（いずれも Asia/Tokyo）。
 どれも環境変数で変えられます。詳しくは [設定一覧](configuration.md#定期実行の設定make-gcp-schedule) を見てください。
 
 ## 運用手順

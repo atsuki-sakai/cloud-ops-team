@@ -11,13 +11,21 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-from app.specialists import error_watch, pr_review, security_audit
+from app.specialists import (
+    access_watch,
+    error_watch,
+    infrastructure_review,
+    pr_review,
+    security_audit,
+)
 from app.specialists.base import Job, Specialist
 
 SPECIALISTS: list[Specialist] = [
     error_watch.SPECIALIST,
     security_audit.SPECIALIST,
     pr_review.SPECIALIST,
+    access_watch.SPECIALIST,
+    infrastructure_review.SPECIALIST,
 ]
 
 __all__ = ["SPECIALISTS", "Job", "Specialist", "all_jobs", "scheduled_jobs"]

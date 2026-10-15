@@ -50,6 +50,18 @@ AGENT_CARD_URL = A2A_RPC_URL + ".well-known/agent-card.json"
 HEADERS = {"Content-Type": "application/json"}
 
 
+def model_read_timeout() -> float:
+    """Bound the idle read wait for external-model functional tests, not a latency SLO."""
+    setting = "OPS_E2E_MODEL_TIMEOUT_SECONDS"
+    try:
+        seconds = int(os.environ.get(setting, "180"))
+    except ValueError as exc:
+        raise pytest.UsageError(f"{setting} must be an integer from 1 to 900") from exc
+    if not 1 <= seconds <= 900:
+        raise pytest.UsageError(f"{setting} must be an integer from 1 to 900")
+    return float(seconds)
+
+
 def log_output(pipe: Any, log_func: Any) -> None:
     """Log the output from the given pipe."""
     for line in iter(pipe.readline, ""):
@@ -130,6 +142,7 @@ def server_fixture(request: Any) -> Iterator[subprocess.Popen[str]]:
 def test_adk_run_sse(server_fixture: subprocess.Popen[str]) -> None:
     """Test the native ADK route (/run_sse) end to end."""
     logger.info("Starting ADK /run_sse test")
+    read_timeout = model_read_timeout()
     user_id = f"user_{uuid.uuid4()}"
     session_data = {"state": {"preferred_language": "English", "visit_count": 1}}
 
@@ -150,7 +163,11 @@ def test_adk_run_sse(server_fixture: subprocess.Popen[str]) -> None:
         "streaming": True,
     }
     response = requests.post(
-        RUN_SSE_URL, headers=HEADERS, json=data, stream=True, timeout=60
+        RUN_SSE_URL,
+        headers=HEADERS,
+        json=data,
+        stream=True,
+        timeout=(60, read_timeout),
     )
     assert response.status_code == 200
 
@@ -178,7 +195,9 @@ def test_a2a_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
     async def _stream() -> list[StreamResponse]:
         config = ClientConfig(
             streaming=True,
-            httpx_client=httpx.AsyncClient(timeout=60.0),
+            httpx_client=httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0, read=model_read_timeout())
+            ),
         )
         client = await create_client(A2A_RPC_URL.rstrip("/"), config)
         message = Message(
