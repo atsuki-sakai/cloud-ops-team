@@ -22,7 +22,7 @@ import socket
 import subprocess
 import sys
 import time
-import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, get_type_hints
 from urllib.parse import urlsplit
@@ -58,8 +58,83 @@ class ModelOnlyEgress:
     """Fail closed before DNS/HTTP for every host except model and ADC refresh."""
 
     def __init__(self):
+        self.origin = time.monotonic()
         self.allowed_addresses: set[str] = set()
         self.requests: list[dict[str, str]] = []
+        self.transport_events: list[dict[str, Any]] = []
+        self.on_update: Callable[[], None] | None = None
+        self._request_number = 0
+
+    def _transport_event(self, event: dict[str, Any]) -> None:
+        self.transport_events.append(event)
+        if self.on_update:
+            self.on_update()
+
+    def _begin_send(self, transport: str) -> tuple[int, float]:
+        self._request_number += 1
+        request_id = self._request_number
+        started = time.monotonic()
+        self._transport_event(
+            {
+                "request_id": request_id,
+                "transport": transport,
+                "event": "send_start",
+                "monotonic_seconds": round(started - self.origin, 6),
+                "elapsed_seconds": 0.0,
+            }
+        )
+        return request_id, started
+
+    def _finish_send(
+        self,
+        operation: tuple[int, float],
+        transport: str,
+        *,
+        response: Any = None,
+        error: BaseException | None = None,
+    ) -> None:
+        now = time.monotonic()
+        status = getattr(response, "status_code", None)
+        if type(status) is not int:
+            status = getattr(response, "status", None)
+        event: dict[str, Any] = {
+            "request_id": operation[0],
+            "transport": transport,
+            "event": "cancelled"
+            if isinstance(error, asyncio.CancelledError)
+            else "exception"
+            if error is not None
+            else "response_returned",
+            "monotonic_seconds": round(now - self.origin, 6),
+            "elapsed_seconds": round(now - operation[1], 6),
+        }
+        if type(status) is int:
+            event["http_status"] = status
+        if error is not None:
+            event["exception_class"] = type(error).__name__
+        self._transport_event(event)
+
+    def _send_sync(self, transport: str, url: Any, send: Callable[[], Any]) -> Any:
+        self.check_url(url)
+        operation = self._begin_send(transport)
+        try:
+            response = send()
+        except BaseException as error:
+            self._finish_send(operation, transport, error=error)
+            raise
+        self._finish_send(operation, transport, response=response)
+        return response
+
+    async def _send_async(self, transport: str, url: Any, send) -> Any:
+        self.check_url(url)
+        operation = self._begin_send(transport)
+        try:
+            response = await send()
+        except BaseException as error:
+            self._finish_send(operation, transport, error=error)
+            raise
+        self._finish_send(operation, transport, response=response)
+        return response
 
     def check_url(self, url: Any) -> None:
         parsed = urlsplit(str(url))
@@ -120,16 +195,25 @@ class ModelOnlyEgress:
         request = requests.Session.request
 
         def send(client, request, *args, **kwargs):
-            self.check_url(request.url)
-            return sync_send(client, request, *args, **kwargs)
+            return self._send_sync(
+                "httpx.sync",
+                request.url,
+                lambda: sync_send(client, request, *args, **kwargs),
+            )
 
         async def async_send_guard(client, request, *args, **kwargs):
-            self.check_url(request.url)
-            return await async_send(client, request, *args, **kwargs)
+            return await self._send_async(
+                "httpx.async",
+                request.url,
+                lambda: async_send(client, request, *args, **kwargs),
+            )
 
         def rrequest(session, method, url, *args, **kwargs):
-            self.check_url(url)
-            return request(session, method, url, *args, **kwargs)
+            return self._send_sync(
+                "requests",
+                url,
+                lambda: request(session, method, url, *args, **kwargs),
+            )
 
         httpx.Client.send = send
         httpx.AsyncClient.send = async_send_guard
@@ -139,10 +223,144 @@ class ModelOnlyEgress:
         arequest = aiohttp.ClientSession._request
 
         async def guarded_aiohttp(session, method, url, *args, **kwargs):
-            self.check_url(url)
-            return await arequest(session, method, url, *args, **kwargs)
+            return await self._send_async(
+                "aiohttp",
+                url,
+                lambda: arequest(session, method, url, *args, **kwargs),
+            )
 
         aiohttp.ClientSession._request = guarded_aiohttp
+
+
+class ModelTiming:
+    """Pair callbacks in the same task/agent without recording request content."""
+
+    def __init__(self, origin: float):
+        self.origin = origin
+        self.events: list[dict[str, Any]] = []
+        self._started: dict[tuple[Any, str], tuple[int, float]] = {}
+
+    def start(self, agent: str, invocation: int) -> None:
+        now = time.monotonic()
+        self._started[(asyncio.current_task(), agent)] = (invocation, now)
+        self.events.append(
+            {
+                "event": "model_start",
+                "agent": agent,
+                "model_invocation": invocation,
+                "monotonic_seconds": round(now - self.origin, 6),
+                "elapsed_seconds": 0.0,
+            }
+        )
+
+    def response(self, agent: str) -> None:
+        now = time.monotonic()
+        started = self._started.pop((asyncio.current_task(), agent), None)
+        event: dict[str, Any] = {
+            "event": "model_response",
+            "agent": agent,
+            "monotonic_seconds": round(now - self.origin, 6),
+        }
+        if started:
+            event["model_invocation"] = started[0]
+            event["elapsed_seconds"] = round(now - started[1], 6)
+        else:
+            event["unmatched_callback"] = True
+        self.events.append(event)
+
+
+def _safe_frame(frame: Any) -> dict[str, Any]:
+    module = frame.f_globals.get("__name__")
+    return {
+        "module": module if isinstance(module, str) else "<unknown>",
+        "file": Path(frame.f_code.co_filename).name,
+        "function": frame.f_code.co_name,
+        "line": frame.f_lineno,
+    }
+
+
+def pending_task_frames(task_limit: int = 16, depth_limit: int = 32) -> dict[str, Any]:
+    """Bounded await-chain locations only: never locals, arguments or reprs."""
+    task_limit, depth_limit = min(max(task_limit, 1), 32), min(max(depth_limit, 1), 64)
+    tasks = sorted((task for task in asyncio.all_tasks() if not task.done()), key=id)
+    inspected = []
+    for index, task in enumerate(tasks[:task_limit]):
+        current: Any = task.get_coro()
+        chain, seen, opaque = [], set(), False
+        for _depth in range(depth_limit):
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            frame = (
+                getattr(current, "cr_frame", None)
+                or getattr(current, "gi_frame", None)
+                or getattr(current, "ag_frame", None)
+            )
+            if frame is not None:
+                chain.append(_safe_frame(frame))
+            following = (
+                getattr(current, "cr_await", None)
+                or getattr(current, "gi_yieldfrom", None)
+                or getattr(current, "ag_await", None)
+            )
+            opaque = frame is None and following is None
+            current = following
+        inspected.append(
+            {
+                "task_index": index,
+                "current_task": task is asyncio.current_task(),
+                "frames": chain,
+                "depth_truncated": current is not None,
+                "opaque_awaitable_boundary": opaque,
+            }
+        )
+    return {
+        "active_task_count": len(tasks),
+        "tasks_truncated": len(tasks) > task_limit,
+        "task_limit": task_limit,
+        "depth_limit": depth_limit,
+        "tasks": inspected,
+    }
+
+
+class DeadlineTaskSnapshot:
+    """Capture before the subsequently registered asyncio timeout cancels ADK."""
+
+    def __init__(self, timeout: float, origin: float):
+        self.timeout = timeout
+        self.origin = origin
+        self.snapshot: dict[str, Any] | None = None
+        self.handle: asyncio.TimerHandle | None = None
+
+    def _capture(self) -> None:
+        captured: dict[str, Any] = {
+            "capture": "before_deadline_cancel",
+            "monotonic_seconds": round(time.monotonic() - self.origin, 6),
+        }
+        try:
+            captured.update(pending_task_frames())
+        except Exception as error:
+            captured["inspection_error_class"] = type(error).__name__
+        self.snapshot = captured
+
+    def __enter__(self):
+        self.handle = asyncio.get_running_loop().call_later(self.timeout, self._capture)
+        return self
+
+    def __exit__(self, *_error):
+        if self.handle:
+            self.handle.cancel()
+
+
+def _exception_frames(error: BaseException) -> list[dict[str, Any]]:
+    frames = []
+    current = error.__traceback__
+    while current is not None and len(frames) < 32:
+        frame = _safe_frame(current.tb_frame)
+        frame["line"] = current.tb_lineno
+        frames.append(frame)
+        current = current.tb_next
+    return frames
 
 
 def completion_assertions(
@@ -407,6 +625,7 @@ async def _sample(args) -> dict[str, Any]:
 
         google.auth.default = existing_cli_default
     egress = ModelOnlyEgress()
+    model_timing = ModelTiming(egress.origin)
     egress.install()
     # Load configuration after the explicit fixture overrides, before app.agent.
     config = importlib.import_module("app.config").CONFIG
@@ -452,6 +671,8 @@ async def _sample(args) -> dict[str, Any]:
                     "record": record,
                     "model_responses": recorder["model_responses"],
                     "network_hosts": sorted({item["host"] for item in egress.requests}),
+                    "transport_events": egress.transport_events,
+                    "model_events": model_timing.events,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -461,6 +682,7 @@ async def _sample(args) -> dict[str, Any]:
         )
         progress.chmod(0o600)
 
+    egress.on_update = checkpoint
     _patch_tools(fixture, case, recorder)
     try:
         workflows = importlib.import_module("app.workflows")
@@ -519,6 +741,7 @@ async def _sample(args) -> dict[str, Any]:
             ]
             names = list(llm_request.tools_dict)
             record["model_invocations"] += 1
+            model_timing.start(agent_name, record["model_invocations"])
             record["presentations"].append({"phase": phase, "tools": names})
             recorder["schemas"].append(
                 {"agent": agent_name, "phase": phase, "tools": declarations}
@@ -599,6 +822,7 @@ async def _sample(args) -> dict[str, Any]:
 
         async def after_model_callback(self, *, callback_context, llm_response):
             recorder["model_responses"] += 1
+            model_timing.response(callback_context.agent_name)
             checkpoint()
 
         async def before_tool_callback(self, *, tool, tool_args, tool_context):
@@ -640,6 +864,7 @@ async def _sample(args) -> dict[str, Any]:
             return None
 
     started = time.monotonic()
+    deadline_snapshot = DeadlineTaskSnapshot(args.timeout, egress.origin)
     try:
         # app.__init__ imports app.agent before configuration/tools can be
         # intercepted. Rebuild it only after all exported callables and lists
@@ -660,34 +885,41 @@ async def _sample(args) -> dict[str, Any]:
             if isinstance(case["input"], str)
             else json.dumps(case["input"], ensure_ascii=False)
         )
-        async with asyncio.timeout(args.timeout):
-            async for event in runner.run_async(
-                user_id="fixture-user",
-                session_id=session.id,
-                new_message=types.Content(
-                    role="user", parts=[types.Part.from_text(text=prompt)]
-                ),
-                run_config=RunConfig(max_llm_calls=12),
-            ):
-                recorder["events"].append(
-                    event.model_dump(mode="json", exclude_none=True)
-                )
-                if event.error_code:
-                    recorder["error_code"] = event.error_code
-                if event.is_final_response() and event.content:
-                    text = "".join(
-                        part.text
-                        for part in (event.content.parts or [])
-                        if part.text and not part.thought
+        # Register the same-deadline diagnostic before asyncio.timeout's cancel
+        # callback; ADK may remove the model task during cancellation cleanup.
+        with deadline_snapshot:
+            async with asyncio.timeout(args.timeout):
+                async for event in runner.run_async(
+                    user_id="fixture-user",
+                    session_id=session.id,
+                    new_message=types.Content(
+                        role="user", parts=[types.Part.from_text(text=prompt)]
+                    ),
+                    run_config=RunConfig(max_llm_calls=12),
+                ):
+                    recorder["events"].append(
+                        event.model_dump(mode="json", exclude_none=True)
                     )
-                    if text:
-                        recorder["final"] = text
+                    if event.error_code:
+                        recorder["error_code"] = event.error_code
+                    if event.is_final_response() and event.content:
+                        text = "".join(
+                            part.text
+                            for part in (event.content.parts or [])
+                            if part.text and not part.thought
+                        )
+                        if text:
+                            recorder["final"] = text
         record["trace_complete"] = not recorder["pending"]
     except Exception as exc:
         recorder["error"] = {
             "type": type(exc).__name__,
-            "message": str(exc)[:2000],
-            "traceback": traceback.format_exc()[-6000:],
+            "traceback_frames": _exception_frames(exc),
+        }
+        recorder["pending_tasks"] = deadline_snapshot.snapshot or {
+            "capture": "after_error",
+            "monotonic_seconds": round(time.monotonic() - egress.origin, 6),
+            **pending_task_frames(),
         }
     record["completion"] = completion_assertions(
         case, record["calls"], recorder["final"], error_code=recorder["error_code"]
@@ -711,6 +943,8 @@ async def _sample(args) -> dict[str, Any]:
             **recorder,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "network_requests": egress.requests,
+            "transport_events": egress.transport_events,
+            "model_events": model_timing.events,
         },
     }
     args.child_output.write_text(
