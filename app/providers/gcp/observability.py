@@ -11,7 +11,7 @@ from typing import Any
 
 from app.config import CONFIG
 from app.core.fingerprint import fingerprint, message_template, search_text_from
-from app.core.redact import redact
+from app.core.redact import is_safe_literal, redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
 from app.providers.gcp.client import gcp_get, gcp_list, gcp_post, project_path
 
@@ -377,7 +377,9 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         search_text: Literal text to search for across all log fields.
         since: ISO-8601 timestamp to count from.
     """
-    if not search_text.strip():
+    if not is_safe_literal(search_text) or (
+        service_name and not is_safe_literal(service_name)
+    ):
         return {
             "status": "error",
             "message": "A nonempty, safe search_text is required to check recurrence.",

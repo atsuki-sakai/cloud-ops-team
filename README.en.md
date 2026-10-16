@@ -24,7 +24,7 @@ comments when writes are enabled; inspect their evidence before accepting a fix 
 | `access_watch` | daily 08:30 | Access investigator | Reviews the last 24 hours of audit logs, HTTP 401/403 and probe paths, and Cloud Armor denials. Separates suspicious signals from confirmed compromise and reports evidence, confidence and coverage gaps |
 | `infrastructure_review` | Mondays 10:00 | Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits; proposes changes with impact, risk, validation and rollback steps |
 | `monthly_security_audit` | 1st of the month | Cloud security | Reviews IAM, long-lived credentials, compute, databases, network rules, security services, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel; files critical and high findings plus a monthly report |
-| `weekly_pr_review` | Mondays 09:00 | Release manager | For each open team issue: are linked PRs merged, is CI green, and did the error stop occurring? Marks `ops:verified` or `ops:stale` and publishes a weekly report |
+| `weekly_pr_review` | Mondays 09:00 | Release manager | Checks open issues and unverified issues closed within 30 days, including automatic closure by `closes #N`: linked PRs, CI and recurrence. Marks verified fixes or stale open issues and publishes a weekly report |
 
 Schedules default to `Asia/Tokyo`. You can also ask: *"investigate suspicious access"*, *"review infrastructure waste and permissions"*, *"what is the PR status?"*.
 

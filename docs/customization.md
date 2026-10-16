@@ -190,7 +190,7 @@ SPECIALIST = Specialist(
 
 ```python
 # collection_steps のsecurity_audit用returnに追加する例
-CollectionStep("check_tls_certificate", {"hostname": "api.example.com"}),
+CollectionStep("check_tls_certificate", {"hostname": "api.example.com"})
 ```
 
 これにより収集後は`check_tls_certificate`が分析ツールから除外されます。分析要件には証拠中の有効期限・閾値・対象を使う判定だけを追加します。

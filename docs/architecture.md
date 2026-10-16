@@ -139,7 +139,7 @@ cloud-ops-team/
 |---|---|---|---|
 | `error_watch` | context、エラー集約、エラー率、定期ジョブ、サービス、DB、監視設定 | 最大5群の追加調査、原因候補、重複確認・起票 | 15 → 9 |
 | `security_audit` | context、IAM・鍵・構成・DB・ネットワーク監査、CVE、検出、監視、リポジトリ、KEV | 最大6件のEOL確認、1回のWeb調査、根拠付きの起票・報告 | 19 → 8 |
-| `pr_review` | context、open案件、期間内PR、mainのCI | 案件ごとの紐付きPR・再発の確認、コメント・ラベル・週次報告 | 13 → 10 |
+| `pr_review` | context、open案件と直近30日以内の未検証closed案件、期間内PR、mainのCI | 案件ごとの紐付きPR・再発の確認、コメント・ラベル・週次報告 | 13 → 10 |
 | `access_watch` | context、不審アクセスの証拠と取得範囲 | 必要な追加確認、正当性未確認・調査不足を維持した起票・報告 | 8 → 7 |
 | `infrastructure_review` | context、推薦、権限・鍵・構成・DB・ネットワーク監査、監視、サービス・DB一覧 | 証拠の照合、変更影響・確認・復旧案、重複確認・報告 | 14 → 5 |
 
