@@ -201,7 +201,7 @@ def completion_assertions(
         facts.append("request_rejected")
     boundary = case.get("category") == "future_capability_boundary" and bool(
         re.search(
-            r"できません|できない|未対応|未実装|対象外|ありません|提供していません|cannot|not supported|not available",
+            r"できません|できない|未対応|未実装|対象外|ありません|提供(?:していません|されて(?:いません|おりません))|cannot|not supported|not available",
             final,
             re.I,
         )
@@ -245,6 +245,23 @@ def completion_assertions(
         else "complete"
     )
     return {"status": status, "facts": facts}
+
+
+def _scripted_job_request(payload: dict[str, Any] | str, requested: str) -> str:
+    """Give the offline model the explicit workflow request used by specialists."""
+    if isinstance(payload, dict):
+        request = dict(payload.get("data", payload))
+        request["job"] = requested
+    else:
+        request = {"job": requested}
+        if requested in {"error_watch", "access_watch"}:
+            period = re.search(r"(\d+)\s*(?:時間|hours)", payload)
+            request["hours"] = int(period.group(1)) if period else 24
+        elif requested == "pr_review":
+            request["days"] = 7
+        elif requested == "security_audit":
+            request["kev_days"] = 30
+    return json.dumps(request, ensure_ascii=False)
 
 
 def _fixture_response(
@@ -533,7 +550,7 @@ async def _sample(args) -> dict[str, Any]:
                     elif requested in KNOWN_ROUTES and requested in names:
                         call_name, call_args = (
                             requested,
-                            {"request": json.dumps(payload, ensure_ascii=False)},
+                            {"request": _scripted_job_request(payload, requested)},
                         )
                     else:
                         return LlmResponse(

@@ -13,6 +13,7 @@ import pytest
 from scripts.evaluate_routing import InvalidEvaluation, grade_record, load_suite
 from scripts.record_routing import (
     ModelOnlyEgress,
+    _scripted_job_request,
     completion_assertions,
     verify_recorder_source,
 )
@@ -114,6 +115,65 @@ def test_qualified_security_limit_is_not_an_assertion_of_safety():
         {}, [], "この結果に基づきシステム全体の安全性を保証します。"
     )
     assert "no_attack_proven" in unsafe["facts"]
+
+
+@pytest.mark.parametrize(
+    "final",
+    [
+        "バックアップの復旧検証機能は提供されておりません。",
+        "バックアップの復旧検証機能は提供されていません。",
+        "バックアップの復旧検証機能は提供していません。",
+    ],
+)
+def test_backup_capability_boundary_recognizes_negative_provision_forms(final):
+    result = completion_assertions(
+        {"category": "future_capability_boundary"}, [], final
+    )
+    assert result == {
+        "status": "unsupported",
+        "facts": ["capability_boundary_explained"],
+    }
+
+
+def test_positive_provision_is_not_a_backup_capability_boundary():
+    result = completion_assertions(
+        {"category": "future_capability_boundary"},
+        [],
+        "バックアップの復旧検証機能は提供されています。",
+    )
+    assert "capability_boundary_explained" not in result["facts"]
+    assert result["status"] == "complete"
+
+
+@pytest.mark.parametrize(
+    ("payload", "route", "expected"),
+    [
+        (
+            "過去72時間のエラーを調べてください。",
+            "error_watch",
+            {"job": "error_watch", "hours": 72},
+        ),
+        (
+            "過去24時間に不正アクセスがないか調べてください。",
+            "access_watch",
+            {"job": "access_watch", "hours": 24},
+        ),
+        (
+            {"data": {"job": "weekly_pr_review", "days": 7}, "attributes": {}},
+            "pr_review",
+            {"job": "pr_review", "days": 7},
+        ),
+        (
+            {"data": {"job": "access_watch", "hours": "yesterday"}},
+            "access_watch",
+            {"job": "access_watch", "hours": "yesterday"},
+        ),
+    ],
+)
+def test_offline_model_delegation_uses_explicit_job_without_repairing_bad_input(
+    payload, route, expected
+):
+    assert json.loads(_scripted_job_request(payload, route)) == expected
 
 
 def test_natural_language_cannot_regress_to_unrestricted_specialist_tools():
