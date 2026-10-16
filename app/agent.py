@@ -32,6 +32,7 @@ from google.genai import types
 
 from app import prompts
 from app.config import CONFIG
+from app.model import OpsGemini
 from app.providers import get_provider
 from app.routing import ScheduledJobAdapter, ScheduledRouter, conversation_tool_guard
 from app.specialists import SPECIALISTS
@@ -44,7 +45,7 @@ CLOUD = get_provider().profile.display_name
 
 
 def _model() -> Gemini:
-    return Gemini(
+    return OpsGemini(
         model=MODEL,
         # Vertex AI answers bursts with 429 RESOURCE_EXHAUSTED; back off instead of failing the run.
         retry_options=types.HttpRetryOptions(

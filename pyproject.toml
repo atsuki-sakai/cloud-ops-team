@@ -10,6 +10,7 @@ readme = "README.md"
 
 
 dependencies = [
+    "httpx>=0.28.1,<1.0.0",
     "google-adk[gcp,otel-gcp,bigquery-analytics]>=2.9.2,<3.0.0",
     "opentelemetry-resourcedetector-gcp<=1.14.0",
     "gcsfs>=2024.11.0",

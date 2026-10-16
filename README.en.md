@@ -169,6 +169,8 @@ Issues and pull requests are welcome — especially AWS and Azure capabilities. 
 security reports go through [SECURITY.md](SECURITY.md).
 Live-model checks (`uv run pytest tests/integration -q`) require cloud credentials. Adjust the HTTP/SSE and A2A model read wait with `OPS_E2E_MODEL_TIMEOUT_SECONDS` (default 180 seconds, range 1–900). This bounds idle read time; it is not a performance guarantee.
 
+Model HTTP calls use HTTPX with a 60-second idle timeout for each connection/read and other wait. The SDK retries timeouts, connection errors and retryable HTTP errors with the existing maximum of five attempts including the first. A healthy request with no response for 60 seconds can therefore be sent again. Reads after a stream starts and whole agent runs are not retried, preventing report tools from being replayed. This is not a 60-second job deadline: backoff and multiple model calls can make a job take longer.
+
 ## License
 
 [Apache License 2.0](LICENSE). Some files originate from the agents-cli scaffold (Copyright Google LLC, Apache-2.0).
