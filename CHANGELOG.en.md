@@ -8,6 +8,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Bound model HTTP idle waits to 60 seconds and use HTTPX so SDK timeout retries apply. Whole agent runs and streams that have begun returning a response are not retried.
 - Redact secret values in JSON/structured data and issue/report titles and metadata. Sensitive or masked search literals cannot establish zero recurring errors.
 - Weekly fix review now includes unverified issues closed within 30 days, including issues automatically closed when their fixing PR was merged.
 - Invalid dry-run values enabling GitHub writes, and secret backups being included in Git or deployment uploads.
