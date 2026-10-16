@@ -8,6 +8,7 @@ and reporting tools.  No workflow here changes a cloud resource.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -17,6 +18,7 @@ from typing import Any
 
 from app import tools
 from app.core.redact import redact_obj
+from app.core.timeutil import parse_time, utcnow
 from app.routing import normalize_job_params
 from app.specialists.base import Job, Specialist
 
@@ -71,7 +73,7 @@ def collection_steps(
     if job_name == "pr_review":
         return (
             context,
-            CollectionStep("list_ops_issues", {"state": "open", "kind": "all"}),
+            CollectionStep("list_ops_issues", {"state": "all", "kind": "all"}),
             CollectionStep("list_recent_pull_requests", {"days": params["days"]}),
             CollectionStep("get_recent_workflow_runs", {"branch": "main", "limit": 10}),
         )
@@ -94,6 +96,33 @@ def collection_steps(
             CollectionStep("list_databases", {}),
         )
     raise ValueError("No fixed collection workflow is registered for this job")
+
+
+def _pr_review_candidates(result: Any) -> Any:
+    """Keep open findings and recently closed findings not yet verified.
+
+    GitHub closes linked issues when their fixing PR is merged, before this
+    job can verify recurrence. Filter before bounding evidence so old reports
+    cannot crowd those issues out of the analysis snapshot.
+    """
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return result
+    if not isinstance(result.get("issues"), list):
+        return result
+    cutoff = utcnow() - dt.timedelta(days=30)
+    rows = []
+    for issue in result["issues"]:
+        if issue.get("kind") == "report":
+            continue
+        if issue.get("state") == "open":
+            rows.append(issue)
+        elif issue.get("state") == "closed" and "ops:verified" not in (
+            issue.get("labels") or []
+        ):
+            closed_at = parse_time(issue.get("closed_at") or "")
+            if closed_at is None or closed_at >= cutoff:
+                rows.append(issue)
+    return {**result, "issues": rows, "count": len(rows)}
 
 
 def _bounded_result(value: Any, limit: int = MAX_RESULT_CHARACTERS) -> dict[str, Any]:
@@ -185,6 +214,8 @@ def prepare_job(
                 "status": "error",
                 "message": "Collection skipped: target context is unavailable",
             }
+        if job.name == "pr_review" and step.name == "list_ops_issues":
+            raw = _pr_review_candidates(raw)
         value = _bounded_result(raw)
         if step.name == "get_run_context":
             context_valid = (

@@ -12,7 +12,7 @@ __PROVIDER__ の__TARGET_LABEL__「__TARGET__」のログで修正の効果も�
 
 ## 手順
 1. get_run_context（days の既定は 7）
-2. list_ops_issues("open", "all") でチームが起票した open ISSUE を取得する（kind が report のものは対象外）。
+2. list_ops_issues("all", "all") でチーム起票 ISSUE を取得する。open と、直近30日以内にclosedとなった未検証（ops:verifiedなし）の案件を確認する（kind が report のものは対象外）。closes指定のPRマージで自動クローズされても検証対象に含める。
 3. 各 ISSUE について get_issue_linked_prs を呼び、状態ごとに処理する。
    a. merged PR がある → 検証する
       - error 種別: count_matching_errors(service, search_text, since=<merged_at>)。count が 0 で、マージから 24 時間以上経過していれば「解消を確認」。
@@ -22,7 +22,7 @@ __PROVIDER__ の__TARGET_LABEL__「__TARGET__」のログで修正の効果も�
       - get_recent_workflow_runs("main", 10) で main の CI / デプロイが成功していることを確認する。
       - 問題なければ close_issue(number, <検証内容>) を呼ぶ。
    b. open PR がある → review_decision と checks を記録し「対応中」とする。CHANGES_REQUESTED や FAILURE は注意事項に挙げる。
-   c. PR がない → ISSUE 作成から 14 日以上経過していれば add_issue_labels(number, ["ops:stale"]) と comment_on_issue で状況確認を依頼する。
+   c. PR がない → open ISSUE 作成から 14 日以上経過していれば add_issue_labels(number, ["ops:stale"]) と comment_on_issue で状況確認を依頼する。closedなら未検証と報告し停滞ラベルを付けない。
       それ未満は「未着手」として記録する。
 4. list_recent_pull_requests(days) で期間内にマージされた PR 全体を確認し、closes_issues に含まれる ISSUE（人間が起票したものも含む）を一覧化する。
 5. publish_report(kind="weekly", title="週次運用レビュー YYYY-Www", body=...) でレポートを発行する。

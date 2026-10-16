@@ -381,7 +381,7 @@
       {
         "tool": "list_ops_issues",
         "arguments": {
-          "state": "open",
+          "state": "all",
           "kind": "all"
         }
       },

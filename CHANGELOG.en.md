@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Redact secret values in JSON/structured data and issue/report titles and metadata. Sensitive or masked search literals cannot establish zero recurring errors.
+- Weekly fix review now includes unverified issues closed within 30 days, including issues automatically closed when their fixing PR was merged.
 - Invalid dry-run values enabling GitHub writes, and secret backups being included in Git or deployment uploads.
 - Unredacted log grouping fields and unfinished searches being reported as zero recurring errors.
 - Issue target isolation, pagination beyond 100 issues, and closure after verification comment or label failures.

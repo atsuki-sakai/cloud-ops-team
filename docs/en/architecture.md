@@ -139,7 +139,7 @@ The issue-creation limit spans the whole invocation, including `full` and parall
 |---|---|---|---|
 | `error_watch` | Context, error groups/rates, scheduled jobs, services, DBs and alerting | Up to five follow-up investigations, hypotheses, duplicate checks and filing | 15 → 9 |
 | `security_audit` | Context, IAM/credential/configuration/DB/network audits, CVEs, findings, alerting, repository posture and KEV | Up to six EOL checks, one web research call, evidence-based filing and reporting | 19 → 8 |
-| `pr_review` | Context, open team issues, recent PRs and main CI | Linked PRs and recurrence per issue; comments, labels and weekly reporting | 13 → 10 |
+| `pr_review` | Context, open issues and unverified issues closed within 30 days, recent PRs and main CI | Linked PRs and recurrence per issue; comments, labels and weekly reporting | 13 → 10 |
 | `access_watch` | Context, suspicious-access evidence and coverage | Necessary follow-up, filing and reporting that preserve unverified legitimacy/coverage | 8 → 7 |
 | `infrastructure_review` | Context, recommendations, identity/configuration audits, alerting and service/DB inventory | Evidence correlation, change impact/validation/rollback proposals, duplicate checks and reporting | 14 → 5 |
 

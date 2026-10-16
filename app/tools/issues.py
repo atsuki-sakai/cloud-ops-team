@@ -9,6 +9,7 @@ issue the team creates carries the ``ops-agent`` label and a hidden
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -16,7 +17,7 @@ from google.adk.tools import ToolContext
 
 from app.config import CONFIG
 from app.core.fingerprint import build_meta_comment, parse_meta_comment
-from app.core.redact import redact
+from app.core.redact import is_safe_literal, redact, redact_obj
 from app.integrations.github import gh_graphql, gh_rest, repo_path
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
@@ -118,7 +119,7 @@ def _ensure_labels(labels: list[str]) -> tuple[bool, list[str] | dict[str, Any]]
 
 
 def _title(kind: str, title: str) -> str:
-    title = title.strip()
+    title = redact(title).strip()
     return title if title.startswith("[ops/") else f"[ops/{kind}] {title}"
 
 
@@ -126,7 +127,11 @@ def _footer(meta: dict[str, Any]) -> str:
     footer = _msg(
         "footer", when=_now_local(), provider=CONFIG.provider, target=CONFIG.target
     )
-    return f"\n\n---\n{footer}\n{build_meta_comment(meta)}"
+    safe_meta = redact_obj(meta)
+    # A numeric-looking 16-hex fingerprint is a digest, not a card number.
+    if re.fullmatch(r"[0-9a-f]{16}", meta.get("fingerprint", "")):
+        safe_meta["fingerprint"] = meta["fingerprint"]
+    return f"\n\n---\n{redact(footer)}\n{build_meta_comment(safe_meta)}"
 
 
 def _meta_target(meta: dict[str, Any]) -> str | None:
@@ -167,7 +172,7 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
     meta = parse_meta_comment(issue.get("body") or "")
     return {
         "number": issue.get("number"),
-        "title": issue.get("title"),
+        "title": redact(issue.get("title") or ""),
         "state": issue.get("state"),
         "labels": [lbl.get("name") for lbl in issue.get("labels") or []],
         "created_at": issue.get("created_at"),
@@ -179,7 +184,9 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "fingerprint": meta.get("fingerprint"),
         "kind": meta.get("kind"),
         "service": meta.get("service"),
-        "search_text": meta.get("search_text"),
+        "search_text": meta.get("search_text")
+        if is_safe_literal(meta.get("search_text") or "")
+        else "",
         "severity": meta.get("severity"),
         "provider": meta.get("provider"),
         "target": _meta_target(meta),
@@ -285,6 +292,16 @@ def create_ops_issue(
     severity = severity.strip().lower()
     if kind not in ("error", "security"):
         return {"status": "error", "message": "kind must be 'error' or 'security'"}
+    # Never replace resource identifiers with masks: later queries would target
+    # nonexistent resources and could falsely report zero recurring errors.
+    digest = re.fullmatch(r"[0-9a-f]{16}", fingerprint)
+    if (service and not is_safe_literal(service)) or (
+        not digest and redact(fingerprint) != fingerprint
+    ):
+        return {
+            "status": "invalid_input",
+            "message": "Issue identifiers contain sensitive data; use safe identifiers.",
+        }
     if severity not in SEVERITIES:
         severity = "medium"
     labels = [CONFIG.issue_label, *kind_labels(kind), *severity_labels(severity)]
@@ -292,7 +309,7 @@ def create_ops_issue(
         "fingerprint": fingerprint,
         "kind": kind,
         "service": service,
-        "search_text": search_text,
+        "search_text": search_text if is_safe_literal(search_text) else "",
         "severity": severity,
         "provider": CONFIG.provider,
         "target": CONFIG.target,
@@ -523,13 +540,16 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
         return {"status": issue.get("status", "error"), "error": issue}
+    already_closed = issue.get("state") == "closed"
     comment = f"{_msg('verified', when=_now_local())}\n\n{redact(reason_comment)}"
-    if not CONFIG.auto_close_issues:
+    if not CONFIG.auto_close_issues and not already_closed:
         comment += f"\n\n{_msg('auto_close_off')}"
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
-            "action": "close" if CONFIG.auto_close_issues else "verify",
+            "action": "close"
+            if CONFIG.auto_close_issues and not already_closed
+            else "verify",
             "number": issue_number,
             "comment_preview": comment[:600],
         }
@@ -567,6 +587,8 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
             "completed_steps": ["comment"],
             "error": payload,
         }
+    if already_closed:
+        return {"status": "verified_already_closed", "number": issue_number}
     if not CONFIG.auto_close_issues:
         return {
             "status": "verified_not_closed",
@@ -623,7 +645,7 @@ def get_issue(issue_number: int) -> dict:
     if not ok:
         return {"status": issue.get("status", "error"), "error": issue}
     compact = _compact_issue(issue)
-    compact["body"] = (issue.get("body") or "")[:3000]
+    compact["body"] = redact(issue.get("body") or "")[:3000]
     return {"status": "ok", **compact}
 
 
