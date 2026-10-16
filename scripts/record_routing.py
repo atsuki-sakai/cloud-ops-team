@@ -419,7 +419,7 @@ def completion_assertions(
         facts.append("request_rejected")
     boundary = case.get("category") == "future_capability_boundary" and bool(
         re.search(
-            r"できません|できない|未対応|未実装|対象外|ありません|提供(?:していません|されて(?:いません|おりません))|cannot|not supported|not available",
+            r"できません|できない|未対応|未実装|対象外|ありません|(?:提供|用意)(?:していません|されて(?:いません|おりません))|cannot|not supported|not available",
             final,
             re.I,
         )

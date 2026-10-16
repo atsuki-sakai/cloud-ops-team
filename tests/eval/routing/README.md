@@ -68,6 +68,10 @@ Exit codes: `0` passed, `1` evaluated but failed, `2` invalid or incomparable ev
 
 Record actual model tool presentations, every attempted call, final outcome and assertion evidence. A complete trace is mandatory. Facts must be verified by the recorder or reviewer; this CLI is a deterministic contract evaluator, not a truth judge for generated prose. Do not synthesize measured traces from expected answers.
 
+判定器の表現対応不足を修正して既存トレースを再判定する場合は、元の結果を上書きしません。同一の判定器で前後すべての記録を再判定し、元bundle・各トレースのSHA256、判定器のcommitとSHA256、変更された判定を別のprovenanceへ保存します。担当・ツール呼び出し・引数・提示・実行条件・実行版は変えず、実行時エラーや欠落トレースを再判定で正常化しません。これは追加のモデル実行や独立標本には数えません。
+
+When correcting an assessor's language coverage, retain original results and reassess every baseline and candidate record with the same assessor. Save original bundle/trace hashes, assessor commit/hash and changed assessments in separate provenance. Keep routes, calls, arguments, presentations, conditions and executed revisions unchanged. Never normalize runtime errors or missing traces into successes. Reassessment is not a new model execution or independent sample.
+
 ## 固定データで記録する / Recording against frozen tools
 
 `scripts/record_routing.py`は、実際のADK Runnerを対象チェックアウトで起動し、各ケースを独立した子プロセスで記録します。`frozen-tools-v1.json`は本番データを含まない固定API応答です。運用ツールを元の引数定義を保持した代替関数へ置換してからエージェントを再構築し、対象を`fixture-project`、GitHubリポジトリを`example/fixture`、`dry_run=true`に固定します。
