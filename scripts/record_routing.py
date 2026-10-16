@@ -39,6 +39,12 @@ KNOWN_ROUTES = {
 ALIASES = {"weekly_pr_review": "pr_review", "monthly_security_audit": "security_audit"}
 
 
+def verify_recorder_source(expected: str | None) -> None:
+    """Reject an edited recorder before tool/model execution, including mid-run."""
+    if expected and hashlib.sha256(Path(__file__).read_bytes()).hexdigest() != expected:
+        raise RuntimeError("Recorder source changed after the batch started")
+
+
 def _safe_host(host: str) -> bool:
     return bool(
         re.fullmatch(
@@ -326,6 +332,7 @@ def _patch_tools(
 
 
 async def _sample(args) -> dict[str, Any]:
+    verify_recorder_source(args.recorder_sha256)
     checkout = args.checkout.resolve()
     os.chdir(checkout)
     sys.path.insert(0, str(checkout))
@@ -344,11 +351,16 @@ async def _sample(args) -> dict[str, Any]:
             # hints identical to that baseline instead of loading local hints.
             "OPS_STACK_KEYWORDS": "",
             "GOOGLE_GENAI_USE_VERTEXAI": "true",
+            "PYTHON_DOTENV_DISABLED": "1",
             "GOOGLE_CLOUD_LOCATION": "global",
         }
     )
     os.environ.pop("GITHUB_TOKEN", None)
     os.environ.pop("GH_TOKEN", None)
+    # ADK gives this optional alias precedence over USE_VERTEXAI, so an explicit
+    # string 'false' would select the API-key backend. Match the archive's unset
+    # alias and prevent the candidate .env from reintroducing it.
+    os.environ.pop("GOOGLE_GENAI_USE_ENTERPRISE", None)
     if args.cli_credentials:
         # Read the existing CLI credential into memory only. Neither the user's
         # ADC file nor IAM is modified, and no access token enters the artifacts.
@@ -477,6 +489,7 @@ async def _sample(args) -> dict[str, Any]:
                 record["route"] = agent.name
 
         async def before_model_callback(self, *, callback_context, llm_request):
+            verify_recorder_source(args.recorder_sha256)
             agent_name = callback_context.agent_name
             phase = "analysis" if agent_name in KNOWN_ROUTES else "conversation"
             declarations = [
@@ -663,6 +676,14 @@ async def _sample(args) -> dict[str, Any]:
     result = {
         "record": record,
         "model": config.model,
+        "environment_assertions": {
+            "target": config.target,
+            "repository": config.github_repo,
+            "dry_run": config.dry_run,
+            "stack_keywords": list(config.stack_keywords),
+            "enterprise_backend": os.environ.get("GOOGLE_GENAI_USE_ENTERPRISE"),
+            "sample_timeout_seconds": args.timeout,
+        },
         "details": {
             **recorder,
             "elapsed_seconds": round(time.monotonic() - started, 3),
@@ -685,6 +706,7 @@ async def _record(args) -> int:
         if not os.environ.get(key) and local.get(key):
             os.environ[key] = str(local[key])
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    recorder_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     suite = json.loads(args.suite.read_text())
     fixture_bytes = args.fixture.read_bytes()
     fixture = json.loads(fixture_bytes)
@@ -726,6 +748,8 @@ async def _record(args) -> int:
                 str(sample),
                 "--child-output",
                 str(detail),
+                "--recorder-sha256",
+                recorder_sha256,
             ]
             if args.cli_credentials:
                 command.append("--cli-credentials")
@@ -785,6 +809,7 @@ async def _record(args) -> int:
             key=lambda r: (r["case_id"], r["sample"]),
         ),
         "recorder_errors": failures,
+        "instrumentation": {"recorder_sha256": recorder_sha256},
     }
     output.write_text(json.dumps(bundle, ensure_ascii=False, indent=2) + "\n")
     output.chmod(0o600)
@@ -817,6 +842,7 @@ def main() -> int:
     parser.add_argument("--child-case", help=argparse.SUPPRESS)
     parser.add_argument("--child-sample", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--child-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recorder-sha256", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.child_case:
         asyncio.run(_sample(args))

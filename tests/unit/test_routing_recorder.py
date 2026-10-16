@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from scripts.evaluate_routing import InvalidEvaluation, grade_record, load_suite
-from scripts.record_routing import ModelOnlyEgress, completion_assertions
+from scripts.record_routing import (
+    ModelOnlyEgress,
+    completion_assertions,
+    verify_recorder_source,
+)
 
 
 @pytest.mark.parametrize(
@@ -54,6 +58,11 @@ def test_model_saying_complete_without_reading_evidence_is_not_completion():
     )
     assert "report_ready" not in completion["facts"]
     assert "evidence_checked" not in completion["facts"]
+
+
+def test_edited_recorder_is_rejected_before_model_or_tool_execution():
+    with pytest.raises(RuntimeError, match="Recorder source changed"):
+        verify_recorder_source("not-the-loaded-recorder-hash")
 
 
 def test_fixed_collection_alone_does_not_prove_model_read_the_evidence():
@@ -149,6 +158,8 @@ def test_offline_recorder_captures_fixed_calls_schema_and_detects_missing_trace(
     detail = json.loads(Path(record["evidence"][0]).read_text())
     assert detail["details"]["network_requests"] == []
     assert len(detail["details"]["collections"]) == 1
+    assert detail["environment_assertions"]["enterprise_backend"] is None
+    assert detail["environment_assertions"]["stack_keywords"] == []
     suite = load_suite(checkout / "tests/eval/routing/cases.json")
     case = next(c for c in suite["cases"] if c["case_id"] == record["case_id"])
     assert all(grade_record(case, record)["metrics"].values())
