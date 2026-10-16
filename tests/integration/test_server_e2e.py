@@ -188,6 +188,54 @@ def test_adk_run_sse(server_fixture: subprocess.Popen[str]) -> None:
     assert has_text_content, "Expected at least one event with text content"
 
 
+@pytest.mark.parametrize(
+    "job_request",
+    [
+        {"job": "backup_create"},
+        {"job": "access_watch", "hours": "24"},
+    ],
+)
+def test_structured_request_rejected_at_http_entry(
+    server_fixture: subprocess.Popen[str], job_request: dict[str, Any]
+) -> None:
+    """The HTTP entry must reach the programmatic validation boundary first."""
+    user_id = f"routing_{uuid.uuid4()}"
+    session = requests.post(
+        f"{BASE_URL}/apps/app/users/{user_id}/sessions",
+        headers=HEADERS,
+        json={},
+        timeout=30,
+    )
+    assert session.status_code == 200
+    response = requests.post(
+        RUN_SSE_URL,
+        headers=HEADERS,
+        json={
+            "app_name": "app",
+            "user_id": user_id,
+            "session_id": session.json()["id"],
+            "new_message": {
+                "role": "user",
+                "parts": [{"text": json.dumps(job_request)}],
+            },
+            "streaming": True,
+        },
+        timeout=30,
+    )
+    assert response.status_code == 200
+    events = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert len(events) == 1
+    assert events[0]["author"] == "cloud_ops_team"
+    assert events[0]["errorCode"] == "invalid_job_request"
+    parts = events[0]["content"]["parts"]
+    assert all("functionCall" not in part for part in parts)
+    assert json.loads(parts[0]["text"])["status"] == "rejected"
+
+
 def test_a2a_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
     """Test the A2A route using the JSON-RPC streaming protocol."""
     logger.info("Starting A2A chat stream test")

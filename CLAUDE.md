@@ -2,9 +2,9 @@
 
 ## This project: cloud-ops-team
 
-- Agents: `app/agent.py` builds the leader `cloud_ops_team`; specialists are defined one per module in `app/specialists/`
-  (instruction, tools, jobs) and registered in `SPECIALISTS`. Shared prompt parts and rendering live in `app/prompts.py`.
-- Add a specialist: copy `app/specialists/_template.py`. Recipes: `docs/customization.md`.
+- Runtime: `app/agent.py` exports `cloud_ops_team`, a programmatic `ScheduledRouter` shared by HTTP/SSE, Pub/Sub-shaped and A2A requests. Registered JSON jobs bypass LLM routing; only natural-language requests enter `conversation_leader` and its five job adapters. Each adapter validates strict job JSON and uses the same fixed workflow.
+- Collection and analysis: `app/workflows.py` collects registered evidence once, then removes those collectors from the analysis tool list and adds `get_collected_evidence`. `app/tool_scope.py` enforces stage-specific names/arguments in callbacks and callable wrappers; `app/prompts.py` limits glossary/context and replaces collection instructions with analysis steps. Never expose the entire registry to a model.
+- Specialists are defined in `app/specialists/` and registered in `SPECIALISTS`. Adding a specialist or job also requires its `JOB_PARAMETER_BOUNDS` contract, fixed `collection_steps`, analysis scope/instructions and comparison cases. Undefined contracts fail closed. Recipes: `docs/customization.md`.
 - Agent-facing tools live in `app/tools/` and must stay cloud-neutral; cloud specifics belong in `app/providers/<cloud>/`
   behind the `CloudProvider` contract (`app/providers/base.py`). Read `docs/architecture.md` and `docs/providers.md` first.
 - Never add a tool that changes cloud resources. GitHub writes must honour `CONFIG.dry_run`.
@@ -34,6 +34,8 @@ Implement agent logic in `app/`. Use `agents-cli playground` for interactive tes
 
 ### Phase 3: The Evaluation Loop (Main Iteration Phase)
 Start with 1-2 eval cases, run `agents-cli eval run`, iterate by making changes and rerunning it until satisfied. Expect 5-10+ iterations. Once you have a baseline, reach for `agents-cli eval compare` (regression diffs), `agents-cli eval analyze` (cluster failure modes), and `agents-cli eval optimize` (auto-tune prompts). See the **Evaluation Guide** for metrics, dataset schema, LLM-as-judge config, and common gotchas.
+
+For routing/tool/prompt changes, additionally record baseline and candidate executions on the same suite and conditions, then run `scripts/evaluate_routing.py` following `tests/eval/routing/README.md`. At least three independent samples per case, complete traces and zero unauthorized presentation/attempt/execution are required. `runtime_stubbed` validates contracts but is never release-eligible; only comparable live-model evidence can satisfy this gate. Do not fabricate traces from expected answers or call a smoke test statistical accuracy evidence.
 
 ### Phase 4: Pre-Deployment Tests
 Run `uv run pytest tests/unit tests/integration`. Fix issues until all tests pass.
@@ -69,6 +71,8 @@ Ask the user: Option A (simple single-project) or Option B (full CI/CD pipeline 
 
 - **Code preservation**: Only modify code directly targeted by the user's request. Preserve all surrounding code, config values (e.g., `model`), comments, and formatting.
 - **NEVER change the model** unless explicitly asked.
+- **Preserve stage boundaries**: change routine collection in `workflows.py`, decision/report requirements in the specialist and analysis prompt, and argument limits in routing/tool scope. Do not route unknown structured input through a model fallback or add shell/SQL escape hatches.
+- **Feature status**: browser recording/replay, backup creation/restore and the other Issue #7 extensions are planned work. The scoped architecture and offline tests do not establish those features or a production deployment.
 - **Model 404 errors**: Fix `GOOGLE_CLOUD_LOCATION` (e.g., `global` instead of `asia-northeast1`), not the model name.
 - **ADK tool imports**: Import the tool instance, not the module: `from google.adk.tools.load_web_page import load_web_page`
 - **Run Python with `uv`**: `uv run python script.py`. Run `agents-cli install` first.

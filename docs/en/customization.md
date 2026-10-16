@@ -12,14 +12,13 @@ Folder structure: [architecture.md#folder-structure](architecture.md#folder-stru
 | Change when / how often jobs run | `.env` or variables of `make gcp-schedule` | No |
 | Use your repository's labels | `.env` (`OPS_*_LABELS`) | No |
 | Get reports in English | `.env` (`OPS_REPORT_LANGUAGE=en`) | No |
-| Change a specialist's procedure, thresholds or issue format | `INSTRUCTION` in `app/specialists/<name>.py` | Text only |
-| Add an investigation tool | `app/tools/` + the specialist's `tools` | Yes |
-| Add a job to an existing specialist | `jobs` in `app/specialists/<name>.py` | A little |
-| Add a specialist | copy `app/specialists/_template.py` | Yes |
+| Change decisions/reporting | Specialist instruction + analysis steps in `app/prompts.py` | Mostly text |
+| Add an investigation function | Tools/provider + fixed collection or analysis scope + runtime checks | Yes |
+| Add a job | Job definition + request schema + fixed collection + analysis scope + comparison cases | Yes |
+| Add a specialist | Definition, schema, fixed workflow, scoped analysis and comparison cases | Yes |
 | Implement AWS / Azure capabilities | `app/providers/aws/`, `azure/` | Yes ([providers.md](providers.md)) |
 
-After a change: `make test` (offline, seconds), `make run JOB=error_watch` (one real run in dry-run mode), optionally
-`make eval` (LLM-judged behaviour).
+Use fixed collection for routine fetching and expose only necessary follow-up tools to analysis. Do not append a new tool to every specialist. After changes, run `make test`, `make lint` and baseline/candidate comparisons under identical conditions. Use `OPS_DRY_RUN=true` for live data trials. Offline contracts, live-model accuracy and production validation are distinct evidence; see the [comparison guide](../../tests/eval/routing/README.md).
 
 ## 1. Teach the team about your project (no code)
 
@@ -64,12 +63,12 @@ Use `high=priority: high|urgent` for several labels per severity. Missing labels
 ## 4. Change a specialist's procedure
 
 Each specialist's instruction is plain text in `app/specialists/<name>.py` (`error_watch.py`, `security_audit.py`,
-`pr_review.py`, `access_watch.py`, `infrastructure_review.py`). Edit it directly — for example, file `medium` security findings too by changing the filing rule.
+`pr_review.py`, `access_watch.py`, `infrastructure_review.py`). Analysis removes the original collection procedure and inserts `_ANALYSIS_STEPS` from `app/prompts.py`, so keep decision rules consistent in both locations. Fixed collection order, arguments and targets are changed in `app/workflows.py`, not by adding prompt instructions.
 Keep evidence separate from hypotheses: denied requests and sensitive operations alone do not prove compromise.
 Infrastructure review must not invent savings or apply changes. Reuse `check_id:resource` and `kind="security"` for the same
 audit findings as the monthly review to avoid duplicate issues; include change risks, validation and rollback proposals.
 Placeholders: `__PROVIDER__`, `__TARGET__`, `__TARGET_LABEL__`, `__REGION__`, `__REPO__`, `__LOOKBACK__`, `__STACK__`, `__CLI__`,
-`__LANG__`. The tool glossary, output language and project context are appended automatically.
+`__LANG__`. Only the exposed stage capabilities appear in the glossary/context. Compare execution records to verify that collection is not repeated and missing permissions/partial evidence/rejections remain visible in the final report.
 
 ## 5. Add a tool
 
@@ -105,46 +104,51 @@ def check_tls_certificate(hostname: str) -> dict:
     }
 ```
 
-Give it to a specialist (`tools=[*SECURITY_AUDIT_TOOLS, check_tls_certificate]`) and add one line to its instruction saying
-when to use it. Rules, enforced by `make test`: type hints on every parameter and **no default values**; a docstring for the
+This is an extension example, not an implemented certificate-monitoring feature. Validate the hostname against an explicit allowlist; never accept arbitrary destinations from model output or evidence. Add the function to the specialist's tool superset and import it in `app/tools/__init__.py`, then register a fixed `CollectionStep("check_tls_certificate", {"hostname": "api.example.com"})` in `app/workflows.py`. The collector is removed from analysis tools; the model reads its evidence and applies the reporting threshold. Enforce argument, destination and query budgets in `ToolScope` or the function and test direct-call rejection.
+
+Rules, enforced by `make test`: type hints on every parameter and **no default values**; a docstring for the
 model; return a dict with `status` and never raise for API errors; read-only; GitHub writes honour `CONFIG.dry_run`; no
 secrets in results. Cloud-neutral tools live in `app/tools/`; cloud-specific fetching belongs in `app/providers/<cloud>/`.
 
 ## 6. Add a job to an existing specialist
 
-Append a `Job` — the leader's routing table and the scheduler pick it up.
+A `Job` declaration alone does not authorize execution. For a weekly error review, add all three contracts together:
 
 ```python
-# app/specialists/error_watch.py
-jobs=(
-    Job(name="error_watch", ...),
-    Job(
-        name="weekly_error_review",
-        params={"hours": "data.hours if given, else 168"},
-        schedule="0 10 * * 1",
-        schedule_key="weekly-error-review",       # scheduler job <prefix>-weekly-error-review, override WEEKLY_ERROR_REVIEW_CRON
-        scheduled_params={"hours": 168},
-    ),
-),
+# app/specialists/error_watch.py: illustrative addition to jobs
+Job(
+    name="weekly_error_review",
+    params={"hours": "data.hours if given, else 168"},
+    scheduled_params={"hours": 168},
+    schedule="0 10 * * 1",
+    schedule_key="weekly-error-review",
+)
 ```
 
-Then `make jobs`, `make test`, `make gcp-deploy` (so the leader knows the job) and `make gcp-schedule`.
+```python
+# app/routing.py: illustrative entry in JOB_PARAMETER_BOUNDS
+"weekly_error_review": {"hours": (1, 168)},
+```
+
+```python
+# app/workflows.py: illustrative addition to collection_steps
+if job_name == "weekly_error_review":
+    return collection_steps("error_watch", params)
+```
+
+This deliberately reuses the existing specialist, collection and analysis rules. Keep `Job.params`, defaults and schema consistent; unknown input must not silently fall back to another job. Add success, alias, similar-intent, invalid-type/range and unknown-field cases in `tests/eval/routing/cases.json`, then compare baseline and candidate on that exact updated suite. Validate schedules/offline tests and complete comparable live-model and dry-run trials before deployment.
 
 ## 7. Add a specialist
 
-```bash
-cp app/specialists/_template.py app/specialists/deploy_watch.py
-```
+Copy `app/specialists/_template.py` and register it in `SPECIALISTS`, then complete:
 
-Fill in `name`, `role`, `description`, `INSTRUCTION`, `tools` and `jobs`, then append `deploy_watch.SPECIALIST` to
-`SPECIALISTS` in `app/specialists/__init__.py`. The leader's team list and routing table are generated from the registry.
-A complete example (a specialist that detects error increases right after deployments) is in the
-[Japanese guide](../customization.md#7-新しい担当専門家を追加する); its code is language-independent.
+1. **Request contract:** canonical job/aliases, integer parameters, defaults and `JOB_PARAMETER_BOUNDS`.
+2. **Fixed collection:** ordered `collection_steps`, explicit functions/arguments, imports in `app/tools/__init__.py` and the specialist tool superset.
+3. **Analysis scope:** `get_collected_evidence` plus the minimum follow-up/reporting subset after collectors are removed.
+4. **Decision/report requirements:** evidence-reading instructions, gaps, duplicate handling and dry-run semantics.
+5. **Execution boundary and evaluation:** offline rejection tests for unauthorized tools, foreign scope, excessive queries and partial evidence, plus baseline/candidate confusion cases.
 
-```bash
-make test && make run JOB=deploy_watch ARGS="--hours 24"
-make gcp-deploy && make gcp-schedule
-```
+Schedules and conversation candidates derive from definitions, but undefined request schemas/workflows fail closed. Do not grow every tool list. Browser recording/replay and post-deploy verification specialists remain in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7).
 
 ## 8. Implement AWS / Azure capabilities
 
@@ -165,8 +169,11 @@ For non-Gemini models, wrap them with ADK's `LiteLlm` in `_model()` in `app/agen
 | Chat with the team | `make chat` |
 | List jobs and schedules | `make jobs` |
 | Offline tests / static checks | `make test` / `make lint` |
-| Behaviour evaluation | `make eval` (cases in `tests/eval/datasets/`) |
+| Report/content evaluation | `make eval` (`tests/eval/datasets/`) |
+| Routing/tool baseline comparison | `scripts/evaluate_routing.py` ([format and usage](../../tests/eval/routing/README.md)) |
 
 `permission_denied` / `api_disabled` → `make doctor` explains the fix. Unexpected behaviour → read the tool calls printed by
 `make run` and adjust the instruction. `agents-cli run` stops after 120 s of silence → use `make run`. Gemini 429s are retried
 five times with backoff. Ship changes with `make gcp-deploy`, starting with `OPS_DRY_RUN=true`.
+
+Comparisons require at least three independent samples per case, matching conditions, complete traces and zero unauthorized presentation/attempt/execution. Passing `runtime_stubbed` does not satisfy release eligibility; live-model comparison and report-content verification remain necessary.

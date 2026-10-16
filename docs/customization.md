@@ -9,35 +9,25 @@ English: [docs/en/customization.md](en/customization.md) ・ 全体の仕組み:
 
 ```mermaid
 flowchart LR
-    CTX["config/ops-context.md<br/>プロジェクトの事情"] --> P
-    ENV[".env<br/>対象・頻度・ラベル・言語"] --> P
-    subgraph P["プロンプト（app/prompts.py が組み立て）"]
-        R["リーダー"]
-        S["専門家<br/>app/specialists/*.py"]
-    end
-    S --> T["ツール<br/>app/tools/*.py"]
-    T --> PR["プロバイダー<br/>app/providers/&lt;cloud&gt;/"]
+    J["Job定義＋引数schema"] --> R["登録・検証・直接振り分け"]
+    R --> C["固定収集手順"]
+    C --> A["証拠＋限定した分析ツール"]
+    A --> G["根拠付きの調査・報告"]
+    E["旧構成との比較ケース"] -.-> R & A
 ```
 
 | やりたいこと | 触る場所 | コード変更 |
 |---|---|---|
-| サービスの役割や「無視してよいエラー」を教える | `config/ops-context.md` | 不要 |
-| 実行時間・頻度を変える | `.env` / `make gcp-schedule` の変数 | 不要 |
-| ISSUE のラベルを自分のリポジトリに合わせる | `.env`（`OPS_*_LABELS`） | 不要 |
-| レポートを英語にする | `.env`（`OPS_REPORT_LANGUAGE=en`） | 不要 |
-| 担当者の手順・判断基準・ISSUE の書式を変える | `app/specialists/<担当>.py` の `INSTRUCTION` | 文章の編集のみ |
-| 新しい調査ツールを追加する | `app/tools/` + 担当の `tools` | 必要 |
-| 既存の担当に新しいジョブを追加する | `app/specialists/<担当>.py` の `jobs` | 少し |
-| 新しい担当（専門家）を追加する | `app/specialists/_template.py` をコピー | 必要 |
-| AWS / Azure の機能を実装する | `app/providers/aws/`・`azure/` | 必要（[providers.md](providers.md)） |
+| サービスの役割や既知のノイズを教える | `config/ops-context.md` | 不要 |
+| 頻度・ラベル・言語を変える | `.env` | 不要 |
+| 判断・報告要件を変える | `app/specialists/<担当>.py`と`app/prompts.py`の分析手順 | 主に文章 |
+| 調査機能を追加する | `app/tools/`、必要なprovider、固定収集/分析scope、実行境界 | 必要 |
+| ジョブや担当を追加する | 定義＋`routing.py`の引数schema＋`workflows.py`＋比較ケース | 必要 |
+| AWS / Azureの機能を実装する | `app/providers/aws/`・`azure/` | 必要（[providers.md](providers.md)） |
 
-変更したら、次の 3 つで確認します。
-
-```bash
-make test                      # ルール違反がないか（オフライン・数秒）
-make run JOB=error_watch       # 実データで 1 回動かす（お試しモード）
-make eval                      # 振る舞いが悪くなっていないか（任意・数分）
-```
+定型的な取得は固定収集へ、対象に応じて必要になる深掘りだけを分析AIへ渡します。全担当のツール一覧へ追加しません。
+変更後は`make test`・`make lint`と、旧構成/候補の同条件での比較を行います。実データ試験は`OPS_DRY_RUN=true`で行います。
+オフライン契約試験と、実モデルの選択精度・本番確認は別の証拠です。[比較評価ガイド](../tests/eval/routing/README.md)を参照してください。
 
 ---
 
@@ -99,7 +89,9 @@ OPS_SEVERITY_LABELS=critical=priority: critical,high=priority: high,medium=prior
 
 ## 4. 担当者の手順・判断基準・ISSUE の書式を変える
 
-各担当の指示文は `app/specialists/<担当>.py` の `INSTRUCTION` にあります。普通の文章なので、そのまま編集できます。
+各担当の根拠・安全・報告要件は`app/specialists/<担当>.py`の`INSTRUCTION`にあります。
+分析時には元の収集手順を除き、`app/prompts.py`の`_ANALYSIS_STEPS`へ置き換えます。判定手順を変える場合は両方の整合も確認してください。
+固定収集の順序・引数・対象はプロンプトではなく`app/workflows.py`で変更します。
 
 - `app/specialists/error_watch.py`: エラー監視（起票する / 静観する基準、ISSUE の見出し）
 - `app/specialists/access_watch.py`: 不審アクセス調査（証拠・確度・取得範囲の扱い、調査の優先度）
@@ -129,8 +121,8 @@ OPS_SEVERITY_LABELS=critical=priority: critical,high=priority: high,medium=prior
 | `__CLI__` | クラウドの CLI（`gcloud` など） |
 | `__LANG__` | 出力言語 |
 
-ツールの意味の対応表、出力言語、プロジェクト固有の情報は自動で末尾に追加されます。
-手順を変えたら `make run` で動きを確かめ、可能なら `make eval` で点数が下がっていないか確認してください。
+その工程で公開するツールだけの用語集、出力言語、プロジェクト情報を自動で追加します。
+手順を変えたら、収集済み処理をモデルが再実行できないこと、権限・部分取得・拒否が最終報告へ残ることも比較評価で確認してください。
 
 ## 5. 調査ツールを追加する
 
@@ -173,7 +165,8 @@ def check_tls_certificate(hostname: str) -> dict:
     }
 ```
 
-使わせたい担当の `tools` に追加し、指示文に使いどころを 1 行書きます。
+担当の`tools`は使用可能な関数の母集団です。証明書の定型確認なら固定収集へ登録し、分析AIにはその結果だけを渡します。
+以下は追加方法の例で、証明書監視が既に実装されていることを示しません。hostnameは明示した許可リストで検証し、モデルや取得データから任意の接続先を選ばせないでください。
 
 ```python
 # app/specialists/security_audit.py
@@ -185,9 +178,15 @@ SPECIALIST = Specialist(
 )
 ```
 
-```text
-9. 証明書        : config/ops-context.md に書かれた公開ホストごとに check_tls_certificate。30 日未満なら high で起票
+`app/tools/__init__.py`にも関数をimportし、`app/workflows.py`の該当ジョブへ固定引数を追加します。
+
+```python
+# collection_steps のsecurity_audit用returnに追加する例
+CollectionStep("check_tls_certificate", {"hostname": "api.example.com"}),
 ```
+
+これにより収集後は`check_tls_certificate`が分析ツールから除外されます。分析要件には証拠中の有効期限・閾値・対象を使う判定だけを追加します。
+引数・取得量・接続先の制約を`ToolScope`または関数内で強制し、拒否を直接呼び出しても迂回できないテストを追加してください。
 
 ツールのルール（`make test` が自動で検査します）:
 
@@ -200,117 +199,48 @@ SPECIALIST = Specialist(
 
 ## 6. 既存の担当に新しいジョブを追加する
 
-担当の `jobs` に `Job` を足すだけで、リーダーの振り分け表とスケジューラの両方に反映されます。
-例: エラー監視に「毎週月曜に先週 1 週間をまとめて振り返る」ジョブを追加します。
+`Job`の登録だけでは実行を許可しません。例えば週次のエラー振り返りを追加する場合は、次を同時に定義します。
 
 ```python
-# app/specialists/error_watch.py
-jobs=(
-    Job(name="error_watch", ...),                      # 既存
-    Job(
-        name="weekly_error_review",
-        params={"hours": "data.hours があればそれ、無ければ 168"},
-        schedule="0 10 * * 1",                         # 月曜 10:00
-        schedule_key="weekly-error-review",            # スケジューラのジョブ名: <prefix>-weekly-error-review
-        scheduled_params={"hours": 168},
-    ),
-),
+# app/specialists/error_watch.py のjobsへ追加する例
+Job(
+    name="weekly_error_review",
+    params={"hours": "data.hours があればそれ、無ければ168"},
+    scheduled_params={"hours": 168},
+    schedule="0 10 * * 1",
+    schedule_key="weekly-error-review",
+)
 ```
 
-```bash
-make jobs           # 追加されたことを確認
-make test
-make gcp-deploy     # 本番に反映（リーダーが新しいジョブ名を知る）
-make gcp-schedule   # スケジューラにジョブを作成（WEEKLY_ERROR_REVIEW_CRON で時刻を変更可）
+```python
+# app/routing.py のJOB_PARAMETER_BOUNDSへ追加する例
+"weekly_error_review": {"hours": (1, 168)},
 ```
+
+```python
+# app/workflows.py のcollection_stepsへ追加する例
+if job_name == "weekly_error_review":
+    return collection_steps("error_watch", params)
+```
+
+この例では同じ担当・分析要件を使い、固定収集も既存のエラー監視へ明示的に対応付けます。
+新しい引数は`Job.params`・既定値・schemaを一致させます。未知引数や定義のないジョブを、既存のジョブへ黙って代替しません。
+
+`tests/eval/routing/cases.json`へ正常入力、別名、類似業務、不正な型/範囲、未知引数のケースを追加し、同じ更新済みスイートで旧構成と候補を比較します。
+`make jobs`とオフラインテストを確認し、同条件の実モデル比較・お試し実行を終えてからデプロイとスケジュール登録を行います。
 
 ## 7. 新しい担当（専門家）を追加する
 
-ひな形をコピーして中身を埋め、一覧に登録します。例として「デプロイ直後の悪化を見張る担当」を作ります。
+`app/specialists/_template.py`をコピーし、`SPECIALISTS`へ登録したうえで、次を揃えます。
 
-```bash
-cp app/specialists/_template.py app/specialists/deploy_watch.py
-```
+1. **受付契約**: canonicalなjob名・別名・整数パラメータ・既定値と、`JOB_PARAMETER_BOUNDS`の範囲。
+2. **固定収集**: `collection_steps`で順序・関数・固定引数を定義。関数を`app/tools/__init__.py`と担当の母集団へ登録。
+3. **分析範囲**: 固定収集を除外した`get_collected_evidence`＋追加調査・報告の最小subsetを確認。無関係な取得ツールを追加しない。
+4. **判断・報告**: 担当の指示文と分析手順を、収集済み証拠を読む形で記述。未確認・重複防止・dry_runを維持。
+5. **実行境界と評価**: 未許可ツール・対象の越境・取得量/期間の上限・部分取得をオフライン試験し、前後比較へ混同ケースも追加。
 
-```python
-# app/specialists/deploy_watch.py
-from app.specialists.base import Job, Specialist
-from app.tools import (
-    count_matching_errors,
-    create_ops_issue,
-    find_existing_ops_issue,
-    get_request_error_rates,
-    get_run_context,
-    list_deployments,
-    list_services,
-    search_issues,
-    summarize_error_groups,
-)
-
-INSTRUCTION = """
-あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」で、デプロイ直後の品質悪化を見張る担当です。
-1. list_services で直近 hours 時間以内にデプロイされたサービスを探す。
-2. それぞれ list_deployments でデプロイ時刻を確認し、summarize_error_groups と get_request_error_rates で
-   デプロイ後に新しく現れた / 増えたエラーを探す。
-3. 悪化があれば重複を確認してから create_ops_issue(kind="error", ...) で起票し、どのリビジョンからかを書く。
-"""
-
-SPECIALIST = Specialist(
-    name="deploy_watch",
-    role="デプロイ直後のエラー増加の検知",
-    description="デプロイ後に増えたエラーを見つけて起票する。request には対象の時間（hours）を書く。",
-    instruction=INSTRUCTION,
-    tools=[
-        get_run_context,
-        list_services,
-        list_deployments,
-        summarize_error_groups,
-        get_request_error_rates,
-        count_matching_errors,
-        find_existing_ops_issue,
-        search_issues,
-        create_ops_issue,
-    ],
-    jobs=(
-        Job(
-            name="deploy_watch",
-            params={"hours": "data.hours があればそれ、無ければ 6"},
-            schedule="0 */6 * * *",
-            schedule_key="deploy-watch",
-            scheduled_params={"hours": 6},
-        ),
-    ),
-)
-```
-
-```python
-# app/specialists/__init__.py
-from app.specialists import (
-    access_watch,
-    deploy_watch,
-    error_watch,
-    infrastructure_review,
-    pr_review,
-    security_audit,
-)
-
-SPECIALISTS = [
-    error_watch.SPECIALIST,
-    access_watch.SPECIALIST,
-    infrastructure_review.SPECIALIST,
-    security_audit.SPECIALIST,
-    pr_review.SPECIALIST,
-    deploy_watch.SPECIALIST,  # 追加
-]
-```
-
-```bash
-make test                               # 名前の重複・ツールのルールなどを検査
-make run JOB=deploy_watch ARGS="--hours 24"
-make gcp-deploy && make gcp-schedule    # 本番に反映
-```
-
-リーダーの指示文（担当の一覧とジョブの振り分け表）は登録内容から自動で作られるので、編集は不要です。
+定義からスケジュールや対話受付の候補は生成されますが、受付契約や固定収集が未定義なら実行を拒否します。
+単にツール一覧を増やす追加方法は使いません。ブラウザ記録・再生やデプロイ後検証等の新担当は[拡張計画 #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7)で管理しています。
 
 ## 8. AWS / Azure の機能を実装する
 
@@ -333,7 +263,8 @@ Gemini 以外を使う場合は、`app/agent.py` の `_model()` で ADK の `Lit
 | 話しかけて試す | `make chat` |
 | ジョブと予定の一覧 | `make jobs` |
 | オフラインのテスト / 静的チェック | `make test` / `make lint` |
-| 振る舞いの評価（LLM 採点） | `make eval`（ケースは `tests/eval/datasets/`） |
+| 報告内容の評価（LLM 採点） | `make eval`（`tests/eval/datasets/`） |
+| 担当・ツール選択の前後比較 | `scripts/evaluate_routing.py`（[記録形式と実行例](../tests/eval/routing/README.md)） |
 
 困ったとき:
 
@@ -343,3 +274,5 @@ Gemini 以外を使う場合は、`app/agent.py` の `_model()` で ADK の `Lit
 - **Gemini が 429 を返す** → 自動で 5 回まで再試行します。並列で大量に実行しているときに起きやすくなります
 
 変更を本番に反映するときは `make gcp-deploy` を実行します。安全のため、まずは `.env` の `OPS_DRY_RUN=true` のまま動かしてください。
+
+比較評価は全ケースで最低3試行、条件一致、トレースの完全性、未許可の提示/試行/実行0件を要求します。`runtime_stubbed`の合格は公開条件を満たさず、`live_model`の結果と報告内容の検証が必要です。

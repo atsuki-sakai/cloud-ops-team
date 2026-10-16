@@ -33,8 +33,8 @@ make eval                                # behaviour eval (LLM-as-judge)
 | Change | Where | Read first |
 |---|---|---|
 | Support a cloud capability | `app/providers/<cloud>/` | [docs/en/providers.md](docs/en/providers.md) |
-| New specialist or job | `app/specialists/` (copy `_template.py`) | [docs/en/customization.md](docs/en/customization.md) |
-| New agent-facing tool | `app/tools/` + the specialist's `tools` | [docs/en/customization.md §5](docs/en/customization.md#5-add-a-tool) |
+| New specialist or job | `app/specialists/`, `app/routing.py`, `app/workflows.py` | [docs/en/customization.md](docs/en/customization.md) |
+| New investigation tool | `app/tools/`, the specialist's catalog, fixed collection or stage allowlist | [docs/en/customization.md §5](docs/en/customization.md#5-add-a-tool) |
 | Agent behaviour | `INSTRUCTION` in `app/specialists/<name>.py`, shared parts in `app/prompts.py` | the eval cases in `tests/eval/` |
 | Deployment | `scripts/<cloud>/` and `docs/deployment-<cloud>.md` + `docs/en/deployment-<cloud>.md` | [docs/en/deployment-gcp.md](docs/en/deployment-gcp.md) |
 
@@ -42,6 +42,7 @@ make eval                                # behaviour eval (LLM-as-judge)
 
 - **Read-only towards clouds.** A tool or provider must never change cloud resources. PRs that add mutating calls will be declined.
 - **Respect dry-run.** Anything that writes to GitHub must honour `CONFIG.dry_run`.
+- **Registration is not execution permission.** A job needs a strict parameter schema and fixed collection plan. Limit model exposure in `app/tool_scope.py` and update the comparison cases in `tests/eval/routing/` when extending it.
 - **Tool conventions** (enforced by `tests/unit/test_providers.py`): type hints on every parameter, no default values,
   a docstring written for the model, a JSON-serializable `dict` with a `status` key, and no exceptions for API errors.
 - **No secrets or personal data** in tool results: redact free text with `app.core.redact.redact`, return environment variable
@@ -51,6 +52,7 @@ make eval                                # behaviour eval (LLM-as-judge)
 - **Unit tests stay offline.** Stub SDK responses; integration and eval tests may call the model.
 - **Prompt changes need evidence.** Run `agents-cli eval run` before and after and include the scores in the PR
   (`agents-cli eval compare old.json new.json`).
+  Changes to routing, tools, arguments or stages also require [recorded-run comparison](tests/eval/routing/README.md); report missing evidence and failures explicitly.
 
 ## Pull requests
 

@@ -43,54 +43,31 @@ GitHub に対しても、行うのは ISSUE の作成・コメント・ラベル
 
 ```mermaid
 flowchart TB
-    subgraph Agents["エージェント（app/agent.py, app/prompts.py, app/specialists/）"]
-        ROOT["cloud_ops_team（リーダー）"]
-        EW["error_watch"]
-        SA["security_audit"]
-        PR["pr_review"]
-        AW["access_watch"]
-        IR["infrastructure_review"]
-        ROOT --> EW & SA & PR & AW & IR
-    end
-    subgraph Tools["エージェントが使うツール（app/tools）— どのクラウドでも同じ"]
-        CLOUD["cloud.py<br/>20 の共通機能"]
-        TI["threat_intel.py<br/>CISA KEV・EOL・Web 調査"]
-        REPO["repo.py<br/>リポジトリ診断"]
-        ISS["issues.py<br/>ISSUE・PR・CI"]
-        CTX["context.py<br/>実行コンテキスト"]
-    end
-    subgraph Providers["プロバイダー（app/providers）"]
-        BASE["CloudProvider 契約<br/>base.py"]
-        GCP["gcp — 実装済み"]
-        AWS["aws — 雛形"]
-        AZ["azure — 雛形"]
-        EXT["外部パッケージ（entry points）"]
-        BASE --- GCP & AWS & AZ & EXT
-    end
-    subgraph Core["コア（app/core）— クラウド非依存"]
-        FP["fingerprint"]
-        RD["redact"]
-        FD["findings"]
-        TU["timeutil"]
-    end
-    GH["GitHub REST / GraphQL<br/>app/integrations/github.py"]
-    EW & SA & PR & AW & IR --> Tools
-    CLOUD --> BASE
-    ISS & REPO --> GH
-    Providers --> Core
-    ISS --> Core
+    JSON["定期JSON・run_sse・A2A"] --> R["ScheduledRouter<br/>登録ジョブと引数を検証"]
+    NL["自然言語"] --> R
+    R -->|"自然言語のみ"| L["conversation_leader<br/>5担当の受付から選択"]
+    L --> D["担当別adapter<br/>厳密なjob JSONを再検証"]
+    R -->|"登録済みjob"| W["固定収集<br/>app/workflows.py"]
+    D --> W
+    W --> P["共通取得関数 → クラウド別provider"]
+    W --> E["実行単位の証拠スナップショット<br/>取得不足・省略・指紋を保持"]
+    E --> A["分析Agent<br/>証拠参照＋追加調査・報告のみ"]
+    B["ToolScope<br/>工程ごとの実ツール・引数を検証"] -.-> A
+    A --> G["GitHub ISSUE・コメント・レポート"]
 ```
 
 | パッケージ | 責務 |
 |---|---|
-| `app/agent.py`, `app/prompts.py` | リーダーの組み立てと、全指示文の生成（クラウド名・言語・プロジェクト情報の差し込み） |
-| `app/specialists/` | 担当ごとのモジュール（役割・指示文・ツール・ジョブ）。登録一覧から振り分けとスケジュールを自動生成 |
-| `app/tools/` | モデルが呼ぶ関数。名前と docstring はクラウド非依存 |
-| `app/providers/` | クラウドごとのアダプター（`CloudProvider` 契約の実装） |
-| `app/core/` | フィンガープリント、マスキング、監査結果の共通形式、時刻ヘルパー |
-| `app/integrations/github.py` | 最小限の GitHub クライアント（REST と GraphQL） |
-| `app/config.py` | 環境変数から読み込む全設定 |
-| `app/fast_api_app.py` | Pub/Sub 形式のトリガーを有効にした ADK サーバー |
+| `app/agent.py` | 全入口で共通のルーター、対話受付、ジョブごとの分析Agentを組み立てる |
+| `app/routing.py` | 登録ジョブ・別名と引数の厳密な検証、直接振り分け、実行ごとの文脈分離 |
+| `app/workflows.py` | 固定収集、伏せ字・サイズ制限付きの証拠、分析工程から収集用ツールを除外 |
+| `app/tool_scope.py` | 工程別ツールの実体・引数の実行境界、限定したcontextとクラウド用語集の対象 |
+| `app/prompts.py` | 収集指示を分析手順へ置換し、公開ツールだけの説明・用語集と報告要件を生成 |
+| `app/specialists/` | 担当の役割・分析要件・ツールの母集団・ジョブ・定期実行の定義 |
+| `app/tools/`, `app/providers/` | クラウド共通の取得関数とクラウド別アダプター。全関数をモデルへ公開するものではない |
+| `app/core/`, `app/integrations/github.py` | 指紋・伏せ字・共通結果形式・時刻と、GitHub REST/GraphQL |
+| `scripts/evaluate_routing.py`, `tests/eval/routing/` | 旧構成と候補の実行記録を同条件で比較し、欠落や権限違反を不合格にする |
+| `app/fast_api_app.py`, `app/app_utils/a2a.py` | HTTP/SSE・Pub/Sub形式・A2Aのサーバー入口。いずれも同じrootを使用 |
 
 ## フォルダ構成
 
@@ -99,7 +76,10 @@ flowchart TB
 ```
 cloud-ops-team/
 ├── app/                          エージェント本体（Cloud Run にデプロイされる）
-│   ├── agent.py                  リーダーを組み立てる（専門家は app/specialists から自動で読み込む）
+│   ├── agent.py                  ルーター・対話窓口・分析担当を組み立てる
+│   ├── routing.py                登録ジョブ・引数の検証と直接振り分け
+│   ├── workflows.py              固定収集、証拠、分析用ツールの切り分け
+│   ├── tool_scope.py             工程別ツールと引数の実行境界
 │   ├── prompts.py                指示文の組み立て（クラウド名・言語・プロジェクト情報の差し込み）
 │   ├── config.py                 .env / 環境変数から設定を読む
 │   ├── fast_api_app.py           HTTP サーバー（スケジューラが呼ぶ /apps/app/trigger/pubsub）
@@ -147,34 +127,36 @@ cloud-ops-team/
 └── Dockerfile                    Cloud Run 用イメージ（app/ と config/ を含む）
 ```
 
-## 3. エージェント
+## 3. 受付・固定収集・分析の分担
 
-| エージェント | 役割 | ツール | 出力 |
+`cloud_ops_team`はLLMではなく`ScheduledRouter`です。定期JSONから登録済みの担当へ直接進み、`full`は登録順に逐次実行します。
+過去の対話やツール結果に含まれるジョブ指定は使いません。各ジョブの分析には、その実行の要求と証拠だけを渡します。
+自然言語の場合だけ`conversation_leader`が5個の担当受付から選びます。受付は紐づいた担当の厳密なJSONだけを受け付け、同じ固定収集へ接続します。
+`full`や自然言語で複数担当を実行する場合も、起票上限は1回の実行全体で共有します。起票カウンターだけを排他制御し、担当の履歴やその他の状態は共有しません。
+
+| 担当 | プログラムが固定収集する情報 | 分析AIに残す主な仕事 | 従来→分析時のツール数 |
 |---|---|---|---|
-| `cloud_ops_team`（リーダー） | ジョブ（スケジューラの JSON か自然言語）を解釈して担当を呼び、統合レポートを書く | `get_run_context` ＋ 担当 5 人 | レポート |
-| `error_watch` | エラーをフィンガープリント単位に集約し、5xx 率・失敗ジョブ・直近デプロイと突き合わせ、確度付きの原因仮説を立てて起票 | 15 個 | `[ops/error]` ISSUE |
-| `access_watch` | 監査ログ・HTTP 認証拒否と探索パス・Cloud Armor 拒否を確認し、疑いと確証・取得範囲を区別 | 8 個 | `[ops/security]` ISSUE ＋ 調査レポート |
-| `infrastructure_review` | Recommender の費用・IAM 推奨事項と既存監査を統合。変更リスク・実施・検証・ロールバック案を提示 | 14 個 | `[ops/security]` ISSUE ＋ 改善レポート |
-| `security_audit` | IAM・認証情報・コンピュート・DB・ネットワーク・セキュリティサービス・検出結果・イメージ CVE・EOL・CISA KEV・Web 脅威調査を確認し、critical / high を起票 | 19 個 | `[ops/security]` ISSUE ＋ 月次レポート |
-| `pr_review` | チームが起票した open ISSUE ごとに、紐づく PR・マージ状態・CI・マージ後の再発を検証 | 13 個 | `ops:verified` / `ops:stale` ＋ 週次レポート |
+| `error_watch` | context、エラー集約、エラー率、定期ジョブ、サービス、DB、監視設定 | 最大5群の追加調査、原因候補、重複確認・起票 | 15 → 9 |
+| `security_audit` | context、IAM・鍵・構成・DB・ネットワーク監査、CVE、検出、監視、リポジトリ、KEV | 最大6件のEOL確認、1回のWeb調査、根拠付きの起票・報告 | 19 → 8 |
+| `pr_review` | context、open案件、期間内PR、mainのCI | 案件ごとの紐付きPR・再発の確認、コメント・ラベル・週次報告 | 13 → 10 |
+| `access_watch` | context、不審アクセスの証拠と取得範囲 | 必要な追加確認、正当性未確認・調査不足を維持した起票・報告 | 8 → 7 |
+| `infrastructure_review` | context、推薦、権限・鍵・構成・DB・ネットワーク監査、監視、サービス・DB一覧 | 証拠の照合、変更影響・確認・復旧案、重複確認・報告 | 14 → 5 |
 
-- **担当はコードではなく「定義」**です。各担当は `app/specialists/<名前>.py` の `Specialist`（役割・指示文・ツール・ジョブ）で、
-  `app/specialists/__init__.py` に登録します。`app/agent.py` が登録された担当をサブエージェントに変換し、リーダーの担当一覧とジョブの振り分け表、
-  Cloud Scheduler のジョブ（`scripts/jobs.py`）も同じ定義から作られます。担当やジョブの追加は 1 ファイルの変更で済みます。
-- **プロジェクト固有の情報**: `config/ops-context.md`（任意、`OPS_CONTEXT_FILE`）の内容がすべての指示文に追加されます。
-  サービス構成・重要度の考え方・既知のノイズを、プロンプトを編集せずに伝えられます。安全ルールより優先されることはありません。
-- **担当は `mode="single_turn"` のサブエージェント**です。ADK がリーダーのツールとして公開し、リーダーと同じセッション内でインライン実行します。
-  `AgentTool` で包む方式と比べて、担当のツール呼び出しが 1 件ずつイベントとしてストリームされます。そのため HTTP/SSE のクライアントや
-  スケジューラで途中の進捗を観測できます。ただしモデル応答中はイベントが届かない時間があり、クライアントの読み取り待ち時間には調整が必要です。
-  すべての呼び出しはトレースとセッション履歴に残ります。
-- **指示文は文字列ではなく関数（InstructionProvider）**で渡します。文字列だと ADK が指示文中の JSON 例の `{...}` を変数展開しようとして壊れるためです。
-  プロバイダーのプロファイル（表示名・対象の種別・CLI・用語集）、`CONFIG`、出力言語から組み立てます。
-- **呼び出し予算をプロンプトに明記**しています。担当ごとにツール・検索回数を制限します。
-  所要時間はモデル・API の応答に依存します。実環境試験では新しいアクセス調査が約10分、インフラ見直しが約15分となった例があり、5〜8分での完了は保証しません。定期実行の既定期限は30分です。
+数には`get_collected_evidence`を含みます。担当定義の`tools`は母集団であり、そのままモデルへ渡す一覧ではありません。
+固定収集は各APIを所定の引数で一度ずつ呼び、例外や未対応を取得不足として保存します。収集結果は伏せ字・サイズ制限・SHA-256付きのスナップショットで、分析中に取得不足を正常へ書き換えません。
+このスナップショットは実行内の証拠であり、永続的な実行履歴基盤の完成を意味しません。
+
+分析Agentの実ツール・schema・docstring・用語集・contextのcapabilitiesを工程に限定します。
+`ToolScope`のcallbackと公開関数wrapperが、未許可ツール、未知引数、不正な型、過大な取得量・期間、別対象のリソースや別リポジトリ検索を実行前に拒否します。
+分析工程では`get_collected_evidence`の実際の読取が正常に返るまで、追加調査・起票・報告も実行側で拒否します。部分取得・失敗を含む証拠の読取後は、その不足を報告できます。
+指示文は関数（InstructionProvider）として生成し、収集済み手順を分析用手順に置き換えたうえで、担当の根拠・安全・報告要件を維持します。
+
+`config/ops-context.md`の前提知識は指示文に追加できますが、実行権限や対象・引数の検証を変更しません。
+モデル・API待ち時間は残るため、ツール削減だけで完了時間を保証しません。定期実行の既定期限は30分です。
 
 ## 4. プロバイダー抽象
 
-担当が見るのは `app/tools/cloud.py` の 20 個の共通ツールだけです。各ツールは `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
+固定収集と必要な追加調査は `app/tools/cloud.py` の20個の共通機能から選びます。各担当のモデルには工程で必要なものだけを公開します。各関数は `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
 
 | 共通機能 | 正規化された意味 | Google Cloud | AWS（予定） | Azure（予定） |
 |---|---|---|---|---|
@@ -201,7 +183,7 @@ cloud-ops-team/
 - **未実装は `not_supported` で、エラーではありません**。基底クラス `CloudProvider` が全機能を `{"status": "not_supported", ...}` で実装しているため、
   新しいプロバイダーは初日から使えます。PR レビュー・リポジトリ診断・CISA KEV・EOL・Web 調査はクラウドに依存せず動き、
   クラウドの機能は 1 つずつ実装できます。
-- **エージェントは使える機能を知っています**。`get_run_context` が `capabilities` / `unsupported_capabilities` を返し、
+- **エージェントは使える機能を知っています**。実行contextの `capabilities` / `unsupported_capabilities` は担当・工程に絞られ、
   プロンプトの用語集にも未対応のツールが示されます。レポートには推測ではなく「確認できなかった項目」として書かれます。
 - **結果の形を統一しています**。監査は `app.core.findings.result(...)` を返し、観測系は [providers.md](providers.md#共通形式の結果) に書かれたフィールドを使います。
 - **プロバイダーは必要になってから読み込みます**。組み込みはキーで import し、外部パッケージは `cloud_ops_team.providers` の entry point で登録し、
@@ -219,7 +201,7 @@ POST /apps/app/trigger/pubsub      Authorization: Bearer <呼び出し用 SA の
 ```
 
 ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセッションで
-`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` をリーダーに渡して実行します。`subscription` はセッションの `user_id` になります。
+`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` を`ScheduledRouter`に渡して実行します。`subscription` はセッションの `user_id` になります。
 
 | `job` | パラメータ | 既定の周期（変更可） | 担当 |
 |---|---|---|---|
@@ -237,7 +219,8 @@ Pub/Sub push は配信の上限が 10 分で、応答がないと再配送され
 （[configuration.md](configuration.md#定期実行の設定make-gcp-schedule)）。
 AWS では EventBridge Scheduler がサービスの URL を呼ぶ形、Azure では Container Apps のジョブか Logic App が同じ役割を担います。
 
-自然言語の依頼も同じエンドポイントと `/run_sse` で受け付けます（例:「直近 24 時間のエラーを確認して」）。
+直接JSON・Pub/Sub形式・`/run_sse`・A2Aは共通rootを通ります。未知job、重複JSONフィールド、未知パラメータ、数値文字列・bool、範囲外の値、別target/repoの指定を拒否します。
+`hours`は1〜168、`days`は1〜90、`kev_days`は1〜365の整数です。自然言語では対話窓口が担当の受付へ厳密JSONを送り、その後は同じ検証・固定収集・分析を実行します。
 
 ### 不審アクセス調査とインフラ見直しの判断境界
 
@@ -251,7 +234,7 @@ HTTP応答コードだけで遮断成功・安全性を判定せず、IAM変更�
 可用性・ピーク時の性能・待機系の用途を考慮し、提案ごとに根拠・期待効果・変更リスク・実施手順・確認方法・ロールバック案を記載します。
 手順は変更対象と設定値を文章で示し、未検証のコマンドやTerraformコードは生成しません。推薦0件を最適構成や削減額0円と解釈せず、変更影響は依存関係の確認まで未確認とします。
 修正案の必須要件や付与範囲も検証対象です。上位フォルダ・組織への権限移動を縮小案にせず、接続方式などの未検証の詳細は公式仕様と現行構成を照合して選定する確認事項として記録します。
-定期実行では担当のレポートを正本とし、リーダーは実行結果・レポート参照・未確認項目を短く返します。
+定期実行では担当のレポートを正本とし、ルーターがその結果を返します。別のLLMによる再評価・再要約を挟みません。
 
 両担当は既存の dry-run・伏せ字・ISSUE 上限を使います。critical / high のセキュリティ検出には `kind="security"` と
 `check_id:resource` を使い、月次診断と同じ問題を二重起票しません。費用改善はレポートにまとめます。
@@ -262,24 +245,25 @@ HTTP応答コードだけで遮断成功・安全性を判定せず、IAM変更�
 ```mermaid
 sequenceDiagram
     participant S as スケジューラ
-    participant R as cloud_ops_team
-    participant E as error_watch
-    participant C as プロバイダー（クラウド API）
+    participant R as ScheduledRouter
+    participant W as 固定収集
+    participant E as error_watch分析
+    participant C as クラウドAPI
     participant G as GitHub
-    S->>R: {"data": {"job": "error_watch", "hours": 24}}
-    R->>R: get_run_context（時刻・dry_run・使える機能）
-    R->>E: request（ジョブ・パラメータ・制約）
-    E->>C: summarize_error_groups(hours)
-    E->>C: get_request_error_rates / list_scheduled_jobs / list_services
-    loop 重要なグループ（最大 5）
-        E->>C: get_log_context（トレース、またはサービスと時刻）/ list_deployments
+    S->>R: job=error_watch, hours=24
+    R->>R: 登録・型・範囲を検証
+    R->>W: 検証済みパラメータ
+    W->>C: エラー集約・エラー率・ジョブ・サービス・DB・監視
+    W-->>E: get_collected_evidence（context・結果・欠落）
+    loop 重要なグループ（最大5）
+        E->>C: 許可されたログ・デプロイの追加調査
     end
-    E->>G: search_issues（人間の既存 ISSUE）
-    E->>G: create_ops_issue(kind="error", fingerprint, ...)
-    Note over G: 同じ fingerprint の open ISSUE があれば<br/>再発コメント（24h クールダウン）
-    E-->>R: 実行レポート（起票・見送り・推奨事項）
-    R-->>S: 統合レポート（HTTP 200）
+    E->>G: 既存案件検索・重複防止付き起票
+    E-->>R: 根拠・起票・見送り・未確認を含むレポート
+    R-->>S: 担当の結果
 ```
+
+担当を選ぶモデル呼び出しと、収集済みの一覧取得ツールは定期実行の分析工程にありません。
 
 ## 7. ISSUE のライフサイクル
 
@@ -327,6 +311,7 @@ GitHub の ISSUE そのものを台帳として使います。
 | 層 | 仕組み |
 |---|---|
 | 権限 | 監視対象のクラウドには閲覧系・レビュー系のロールだけを付けます（`scripts/gcp/grant_target_roles.sh`）。変更系の API を呼ぶツールは存在しません |
+| ジョブ・ツール境界 | 全入口で登録ジョブと引数を検証し、工程外ツール・別対象・過大取得をcallbackと関数wrapperで拒否します |
 | 入口 | サービスは未認証のリクエストを拒否します。スケジューラは専用サービスアカウントの OIDC トークンで呼び出します |
 | 書き込み | `OPS_DRY_RUN=true`（既定、お試しモード）では GitHub に書き込まずプレビューだけを返します。クローズは `OPS_AUTO_CLOSE_ISSUES=true` のときだけ |
 | 影響範囲 | 1 回の実行で新しく起票するのは `OPS_MAX_ISSUES_PER_RUN`（既定 10）件まで。再発コメントはクールダウン期間ごとに 1 ISSUE 1 回まで |
@@ -370,6 +355,7 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 - **エージェントが何をしたか**: OpenTelemetry 経由の Cloud Trace（`otel_to_cloud=True`、メッセージ本文は記録しません）、
   インスタンスが生きている間は ADK のセッション API、ローカルでは `scripts/run_job.py`（すべてのツール呼び出しを時刻付きで表示）で確認します。
 - **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。週次・月次のレポートもここに残ります。
+- **モデルへの提示範囲**: 分析呼び出しごとの`model_tool_presentation`構造化ログに、実際のツール名・件数・schemaと説明の文字数を記録します。この記録にプロンプト・schema本文・引数・結果本文は含めません。
 
 ## 14. テストと評価
 
@@ -377,17 +363,24 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 |---|---|---|
 | ユニット | `tests/unit/` | フィンガープリントの基準値、マスキング、メタデータの往復、ラベル、設定、プロバイダーの登録と契約、雛形プロバイダー、ツールの規約（docstring・型ヒント・既定値なし）、プロバイダーごとのプロンプト生成、監視対象単位の重複排除、多言語対応 |
 | 結合 | `tests/integration/` | ストリーミング応答と A2A サーバー（モデルを呼びます） |
-| 評価 | `tests/eval/` | 基本の 5 ケースと、調整に使わない検証用（ホールドアウト）の 2 ケースを運用向けの LLM 採点基準（正しい担当を呼んだか、根拠、レポートの構成、お試しモードでの正直さ、安全性）で採点します |
+| 内容評価 | `tests/eval/datasets/`, `tests/eval/holdout/` | 既存の基本5件・holdout2件で根拠・報告内容・dry_run・安全性を評価 |
+| 構成比較 | `tests/eval/routing/`, `scripts/evaluate_routing.py` | 15ケースの担当・必須ツール・引数・前提・業務完了、未許可提示/試行/実行を同条件の旧構成と比較 |
 
 CI（`.github/workflows/ci.yml`）は、プルリクエストごとに lint・型チェック・ユニットテストを実行します。
+
+
+[比較評価ガイド](../tests/eval/routing/README.md)の形式で、旧構成と候補を同じモデル・設定・データ・時刻・対象・権限で実行します。
+各ケース最低3回が必要で、欠落・条件不一致・不完全なトレースは不合格です。未許可の提示・試行・実行は平均で相殺せず0件が条件です。
+`runtime_stubbed`は実経路を代替モデルで試す契約試験で、合格しても`release_eligible=false`です。`live_model`の比較合格はこのゲートの公開条件であり、3回の反復だけで統計的精度や本番品質を保証しません。
+比較CLIは記録を検証するもので、実行トレースや内容判定の証拠を自動生成しません。この変更の実機検証・デプロイは別途行います。
 
 ## 15. 拡張ポイント
 
 コード付きの手順は [カスタマイズガイド](customization.md) にあります。要点は次のとおりです。
 
 - **プロジェクトの事情を教える**: `config/ops-context.md`（コード変更なし）
-- **担当を追加**: `app/specialists/_template.py` をコピーして役割・指示文・ツール・ジョブを書き、`SPECIALISTS` に登録。リーダーの振り分けとスケジュールは自動で追従
-- **ジョブを追加**: 担当に `Job` を追加（`schedule`・`schedule_key`・`scheduled_params`）。時刻は `<キー>_CRON` で上書き可能
+- **担当を追加**: 定義を`SPECIALISTS`へ登録し、引数schema・固定収集・分析scopeと手順・比較ケースを追加。登録だけでは未定義workflowの実行を許可しない
+- **ジョブを追加**: `Job`と`JOB_PARAMETER_BOUNDS`を一致させ、`collection_steps`と分析用subsetを定義し、正常/拒否/混同ケースを比較評価へ追加
 - **ツールを追加**: `app/tools/` に関数（型ヒント・既定値なし・モデルが判断に使える docstring・`status` 付き dict を返す・API エラーで例外を投げない）を作り、担当の `tools` に追加。GitHub への書き込みは `CONFIG.dry_run` を尊重
 - **共通機能を追加**: `CloudProvider` にメソッド（`not_supported` を返す）、`app/tools/cloud.py` にラッパー、各プロファイルに用語を追加し、実装できるクラウドから実装。契約テストが 3 点がそろっているかを検査
 - **クラウドを追加**: `CloudProvider` を継承して機能を 1 つずつ実装（[providers.md](providers.md)）
@@ -401,3 +394,5 @@ CI（`.github/workflows/ci.yml`）は、プルリクエストごとに lint・�
 - セッションはメモリ内にあります。インスタンスが複数あると、セッション API で実行履歴を引けないことがあります。
 - AWS / Azure のプロバイダーは雛形です。実装されるまで、クラウドの機能はすべて `not_supported` になります。
 - プロンプトは日本語で書かれています。出力言語は `OPS_REPORT_LANGUAGE` で選べます。
+
+ブラウザ座標記録・再生、バックアップ作成・復元、DB性能・保守・費用急増・設定履歴等は[拡張計画 #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7)の予定です。本変更はそれらの完成や、本番デプロイ済みを示しません。

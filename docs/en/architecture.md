@@ -44,54 +44,31 @@ comment and add labels; closing an issue requires `OPS_AUTO_CLOSE_ISSUES=true`.
 
 ```mermaid
 flowchart TB
-    subgraph Agents["Agents (app/agent.py, app/prompts.py, app/specialists/)"]
-        ROOT["cloud_ops_team (leader)"]
-        EW["error_watch"]
-        SA["security_audit"]
-        PR["pr_review"]
-        AW["access_watch"]
-        IR["infrastructure_review"]
-        ROOT --> EW & SA & PR & AW & IR
-    end
-    subgraph Tools["Agent-facing tools (app/tools) — identical on every cloud"]
-        CLOUD["cloud.py<br/>20 capabilities"]
-        TI["threat_intel.py<br/>CISA KEV · EOL · web research"]
-        REPO["repo.py<br/>repository posture"]
-        ISS["issues.py<br/>issues · PRs · CI"]
-        CTX["context.py<br/>run context"]
-    end
-    subgraph Providers["Providers (app/providers)"]
-        BASE["CloudProvider contract<br/>base.py"]
-        GCP["gcp — implemented"]
-        AWS["aws — skeleton"]
-        AZ["azure — skeleton"]
-        EXT["third-party via entry points"]
-        BASE --- GCP & AWS & AZ & EXT
-    end
-    subgraph Core["Core (app/core) — cloud-neutral"]
-        FP["fingerprint"]
-        RD["redact"]
-        FD["findings"]
-        TU["timeutil"]
-    end
-    GH["GitHub REST / GraphQL<br/>app/integrations/github.py"]
-    EW & SA & PR & AW & IR --> Tools
-    CLOUD --> BASE
-    ISS & REPO --> GH
-    Providers --> Core
-    ISS --> Core
+    JSON["Scheduled JSON · run_sse · A2A"] --> R["ScheduledRouter<br/>validate registered job and arguments"]
+    NL["Natural language"] --> R
+    R -->|"natural language only"| L["conversation_leader<br/>select one of 5 specialist adapters"]
+    L --> D["Specialist adapter<br/>revalidate strict job JSON"]
+    R -->|"registered job"| W["Fixed collection<br/>app/workflows.py"]
+    D --> W
+    W --> P["Cloud-neutral functions → provider"]
+    W --> E["Per-run evidence snapshot<br/>coverage, truncation and digest"]
+    E --> A["Analysis agent<br/>evidence + follow-up/report tools"]
+    B["ToolScope<br/>runtime tool and argument checks"] -.-> A
+    A --> G["GitHub issues, comments and reports"]
 ```
 
 | Package | Responsibility |
 |---|---|
-| `app/agent.py`, `app/prompts.py` | Builds the leader and renders every instruction (cloud, language, project context) |
-| `app/specialists/` | One module per specialist: role, instruction, tools and jobs; the registry drives routing and schedules |
-| `app/tools/` | Functions the model calls. Names and docstrings are cloud-neutral |
-| `app/providers/` | One adapter per cloud implementing the `CloudProvider` contract |
-| `app/core/` | Fingerprints, redaction, the shared audit result shape, time helpers |
-| `app/integrations/github.py` | Minimal GitHub REST + GraphQL client |
-| `app/config.py` | Everything configurable, from environment variables |
-| `app/fast_api_app.py` | ADK server with the Pub/Sub-style trigger endpoint enabled |
+| `app/agent.py` | Builds the shared root router, conversation adapters and per-job analysis agents |
+| `app/routing.py` | Strict job/alias and argument validation, direct dispatch and isolated invocation context |
+| `app/workflows.py` | Fixed collection, redacted/size-bounded evidence and removal of collectors from analysis tools |
+| `app/tool_scope.py` | Runtime checks for the actual stage tools and arguments; scoped context and capability names |
+| `app/prompts.py` | Replaces collection procedures with analysis steps and renders only the exposed glossary and reporting requirements |
+| `app/specialists/` | Roles, analysis requirements, tool superset, jobs and schedules |
+| `app/tools/`, `app/providers/` | Cloud-neutral functions and cloud-specific adapters; the whole registry is never a model's tool list |
+| `app/core/`, `app/integrations/github.py` | Fingerprints, redaction, normalized findings, time and GitHub REST/GraphQL |
+| `scripts/evaluate_routing.py`, `tests/eval/routing/` | Comparable baseline/candidate execution records; missing evidence and authorization violations fail closed |
+| `app/fast_api_app.py`, `app/app_utils/a2a.py` | HTTP/SSE, Pub/Sub-shaped and A2A entry points using the same root |
 
 ## Folder structure
 
@@ -101,7 +78,10 @@ flowchart TB
 ```
 cloud-ops-team/
 ├── app/                          the agent service (deployed to Cloud Run)
-│   ├── agent.py                  builds the leader; specialists are loaded from app/specialists
+│   ├── agent.py                  builds the router, conversation and analysis agents
+│   ├── routing.py                registered job/argument validation and direct dispatch
+│   ├── workflows.py              fixed collection, evidence and analysis scope
+│   ├── tool_scope.py             per-stage runtime tool and argument checks
 │   ├── prompts.py                renders instructions (cloud, language, project context)
 │   ├── config.py                 settings from .env / environment variables
 │   ├── fast_api_app.py           HTTP server (scheduler endpoint /apps/app/trigger/pubsub)
@@ -149,40 +129,31 @@ cloud-ops-team/
 └── Dockerfile                    image for Cloud Run (app/ and config/)
 ```
 
-## 3. Agents
+## 3. Dispatch, fixed collection and analysis
 
-| Agent | Role | Tools | Output |
+`cloud_ops_team` is a `ScheduledRouter`, not an LLM. Registered JSON jobs go directly to their workflow; `full` runs in registry order. Routing never uses job-like text from previous conversation or tool results. Each analysis receives the current request and its own evidence.
+Only natural language enters `conversation_leader`, which selects one of five adapters. Each adapter accepts strict JSON for its own specialist and enters the same fixed collection pipeline.
+The issue-creation limit spans the whole invocation, including `full` and parallel conversation adapters. Only the trusted counter is shared under a lock; specialist history and other state remain isolated.
+
+| Specialist | Fixed collection performed by code | Remaining model work | Previous → analysis tool count |
 |---|---|---|---|
-| `cloud_ops_team` (root) | Reads the job (JSON from the scheduler or natural language), calls the right specialist, writes the consolidated report | `get_run_context` + 5 specialists | Report |
-| `error_watch` | Groups error logs by fingerprint, correlates with 5xx rates, failing jobs and recent deployments, writes a root-cause hypothesis with confidence, files issues | 15 | `[ops/error]` issues |
-| `access_watch` | Reviews audit logs, HTTP denials/probe paths and Cloud Armor denials; distinguishes suspicion, confirmation and coverage | 8 | `[ops/security]` issues + investigation report |
-| `infrastructure_review` | Combines cost/IAM recommendations with existing audits; proposes risk, implementation, validation and rollback steps | 14 | `[ops/security]` issues + improvement report |
-| `security_audit` | IAM, credentials, compute, databases, network, security services, posture findings, image CVEs, EOL, CISA KEV, web threat research; files critical/high findings | 19 | `[ops/security]` issues + monthly report |
-| `pr_review` | For every open team issue: linked PRs, merge state, CI, and whether the error recurred after the merge | 13 | `ops:verified` / `ops:stale` + weekly report |
+| `error_watch` | Context, error groups/rates, scheduled jobs, services, DBs and alerting | Up to five follow-up investigations, hypotheses, duplicate checks and filing | 15 → 9 |
+| `security_audit` | Context, IAM/credential/configuration/DB/network audits, CVEs, findings, alerting, repository posture and KEV | Up to six EOL checks, one web research call, evidence-based filing and reporting | 19 → 8 |
+| `pr_review` | Context, open team issues, recent PRs and main CI | Linked PRs and recurrence per issue; comments, labels and weekly reporting | 13 → 10 |
+| `access_watch` | Context, suspicious-access evidence and coverage | Necessary follow-up, filing and reporting that preserve unverified legitimacy/coverage | 8 → 7 |
+| `infrastructure_review` | Context, recommendations, identity/configuration audits, alerting and service/DB inventory | Evidence correlation, change impact/validation/rollback proposals, duplicate checks and reporting | 14 → 5 |
 
-**Specialists are data, not code paths.** Each one is a `Specialist` in `app/specialists/<name>.py` (role, instruction, tools,
-jobs) registered in `app/specialists/__init__.py`. `app/agent.py` turns every registered specialist into a sub-agent, the
-leader's team list and job routing table are rendered from the registry, and `scripts/jobs.py` derives the Cloud Scheduler jobs
-from the same definitions — adding a specialist or a job touches one module.
+Counts include `get_collected_evidence`. A specialist's declared `tools` is a superset, not the list passed unchanged to a model. Fixed collectors run once with defined arguments; exceptions and unsupported sources remain missing evidence. Results form a redacted, size-bounded snapshot with SHA-256. This per-run snapshot is not a completed durable execution-history service.
 
-**Project context.** `config/ops-context.md` (optional, `OPS_CONTEXT_FILE`) is appended to every instruction, so operators can
-describe their services, severity policy and known noise without editing prompts. It never overrides the safety rules.
+The actual tool list, schema, docstrings, cloud glossary and context capabilities use the same stage scope. Both the `ToolScope` callback and exposed wrappers reject unauthorized names, unknown arguments, invalid types, excessive query size/time ranges, foreign target resources and repository search overrides before execution.
+Analysis also rejects follow-up, issue creation and reporting until the actual `get_collected_evidence` read returns successfully. A snapshot containing partial/error sources still permits reporting those gaps after it has been read.
+Instructions are callable providers: collection procedures are replaced with analysis steps while evidence, safety and reporting requirements are preserved.
 
-**Specialists are `mode="single_turn"` sub-agents.** ADK exposes each as a tool of the leader and runs it inline in the leader's
-session. Compared with wrapping them in `AgentTool`, every tool call streams as an event (HTTP/SSE clients and the scheduler
-connection can expose progress). Model calls can still leave gaps between events, so clients may need a longer read timeout. Every call is
-recorded in traces and session history.
-
-**Instructions are providers (callables)**, not strings: ADK would otherwise try to template the `{...}` JSON examples they contain.
-They are rendered from the provider profile (display name, target type, CLI, glossary), `CONFIG` and the report language.
-
-**Call budgets are part of the prompts**, with tool and search limits for each specialist. Runtime depends on model and API latency.
-Real-environment trials of the new access and infrastructure reviews took about 10 and 15 minutes respectively; completion within 5–8 minutes is not guaranteed. The default scheduled request deadline is 30 minutes.
+Project knowledge in `config/ops-context.md` does not change runtime permissions, scope or validation. Model/API latency remains; fewer tools do not guarantee completion time. Scheduled requests retain a 30-minute default deadline.
 
 ## 4. Provider abstraction
 
-The specialists only ever see the 20 capability tools in `app/tools/cloud.py`. Each tool calls the method of the same name on
-the provider selected by `OPS_CLOUD_PROVIDER`:
+Fixed collectors and scoped follow-up tools select from the 20 capabilities in `app/tools/cloud.py`; models receive only the subset needed by their stage. Each function calls the same-named method on the provider selected by `OPS_CLOUD_PROVIDER`:
 
 | Capability | Normalized meaning | Google Cloud | AWS (planned) | Azure (planned) |
 |---|---|---|---|---|
@@ -209,7 +180,7 @@ Design rules:
 - **Unimplemented means `not_supported`, not an error.** `CloudProvider` implements every capability as
   `{"status": "not_supported", ...}`. A new provider is therefore usable from day one: the PR review, repository posture,
   CISA KEV, EOL checks and web research work on any cloud, and each capability can be implemented separately.
-- **The agents know what is available.** `get_run_context` returns `capabilities` and `unsupported_capabilities`, and the
+- **The agents know what is available.** Run context limits `capabilities` and `unsupported_capabilities` to the current workflow/stage, and the
   prompt glossary marks unsupported tools so reports list them as "not checked" instead of guessing.
 - **Results share one shape.** Audits return `app.core.findings.result(...)`; observability results use the fields documented
   in [providers.md](providers.md#normalized-results).
@@ -227,7 +198,7 @@ POST /apps/app/trigger/pubsub      Authorization: Bearer <OIDC token of the invo
  "subscription": "projects/<project>/subscriptions/cloud-ops-error-watch"}
 ```
 
-ADK (`trigger_sources=["pubsub"]`) decodes it and runs the leader with
+ADK (`trigger_sources=["pubsub"]`) decodes it and runs `ScheduledRouter` with
 `{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
 `user_id`.
 
@@ -246,7 +217,7 @@ zero retries, so a long audit never runs twice. Schedules, look-back windows, ti
 re-running the script updates jobs in place. On AWS the equivalent is EventBridge Scheduler calling the service URL; on Azure,
 a Container Apps job or Logic App.
 
-Natural language works through the same endpoint and through `/run_sse` ("check the errors of the last 24 hours").
+Direct JSON, Pub/Sub-shaped requests, `/run_sse` and A2A share the same root. Unknown jobs/arguments, duplicate JSON keys, numeric strings/bools, out-of-range values and target/repository overrides are rejected. `hours` is an integer in 1–168, `days` in 1–90 and `kev_days` in 1–365. Natural language selects a specialist adapter, which forwards strict JSON through the same validation, fixed collection and analysis.
 
 ### Access and infrastructure review boundaries
 
@@ -262,7 +233,7 @@ Only API-provided savings are quoted, with units and duration. Each proposal con
 requirements and includes evidence, expected benefit, change risk, implementation, verification and rollback steps.
 Steps describe the target and intended setting in prose; unverified commands or Terraform code are not generated. Zero recommendations do not establish optimal configuration or zero savings. Change impact remains unverified until dependencies are checked.
 Recommendation prerequisites and grant scope also require verification. Moving grants to a parent folder or organization is not presented as a reduction. Unverified implementation details, such as connection methods, remain checks for the operator to resolve against official specifications and the current configuration.
-For scheduled runs, the specialist's report is authoritative; the leader returns a short execution receipt, report references and remaining unknowns.
+For scheduled runs, the specialist's report is authoritative and the router returns it without a second LLM re-evaluation or summary.
 
 Both specialists use existing dry-run, redaction and issue caps. Critical/high security findings use `kind="security"` and
 `check_id:resource`, matching the monthly audit so that the same finding is not filed twice. Cost proposals belong in the report.
@@ -273,24 +244,25 @@ Cloud permissions, log collection and scheduled execution must be verified on th
 ```mermaid
 sequenceDiagram
     participant S as Scheduler
-    participant R as cloud_ops_team
-    participant E as error_watch
-    participant C as Provider (cloud APIs)
+    participant R as ScheduledRouter
+    participant W as Fixed collection
+    participant E as error_watch analysis
+    participant C as Cloud APIs
     participant G as GitHub
-    S->>R: {"data": {"job": "error_watch", "hours": 24}}
-    R->>R: get_run_context (time, dry_run, capabilities)
-    R->>E: request (job, parameters, constraints)
-    E->>C: summarize_error_groups(hours)
-    E->>C: get_request_error_rates / list_scheduled_jobs / list_services
-    loop up to 5 important groups
-        E->>C: get_log_context (trace or service + time) / list_deployments
+    S->>R: job=error_watch, hours=24
+    R->>R: Validate registry, types and ranges
+    R->>W: Validated parameters
+    W->>C: Error groups/rates, jobs, services, DBs, alerts
+    W-->>E: get_collected_evidence (context, results, gaps)
+    loop Up to five important groups
+        E->>C: Allowed log/deployment follow-up
     end
-    E->>G: search_issues (existing human issues)
-    E->>G: create_ops_issue(kind="error", fingerprint, ...)
-    Note over G: open issue with the same fingerprint →<br/>recurrence comment (24 h cooldown)
-    E-->>R: report (filed, deferred, recommendations)
-    R-->>S: consolidated report (HTTP 200)
+    E->>G: Duplicate checks and scoped issue filing
+    E-->>R: Evidence, filed/deferred issues and unknowns
+    R-->>S: Specialist result
 ```
+
+Scheduled analysis does not need an LLM routing call or the already-completed inventory tools.
 
 ## 7. Issue lifecycle
 
@@ -340,6 +312,7 @@ GitHub issues are the ledger.
 | Layer | Mechanism |
 |---|---|
 | Permissions | Viewer / reviewer roles only on the monitored cloud (`scripts/gcp/grant_target_roles.sh`). No tool calls a mutating API |
+| Job/tool boundary | The shared root validates jobs/arguments; callbacks and wrappers reject out-of-stage tools, foreign scope and excessive queries |
 | Entry point | The service rejects unauthenticated requests; the scheduler authenticates with an OIDC token of a dedicated service account |
 | Writes | `OPS_DRY_RUN=true` (default) returns previews instead of writing to GitHub; closing needs `OPS_AUTO_CLOSE_ISSUES=true` |
 | Blast radius | `OPS_MAX_ISSUES_PER_RUN` (10) caps new issues per run; one recurrence comment per issue per cooldown |
@@ -382,6 +355,7 @@ Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 - What the agents did: Cloud Trace via OpenTelemetry (`otel_to_cloud=True`, message content not captured), ADK session API while
   the instance is alive, or `scripts/run_job.py` locally (prints every tool call with timestamps)
 - Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports
+- Model exposure: `model_tool_presentation` JSON logs record each analysis call's actual tool names/count and schema/description character counts. Prompts, schema text, arguments and results are not written into these records.
 
 ## 14. Tests and evaluation
 
@@ -389,18 +363,22 @@ Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 |---|---|---|
 | Unit | `tests/unit/` | Fingerprint golden values, redaction, metadata round trip, labels, configuration, provider registry and contract, skeleton providers, tool conventions (docstrings, type hints, no defaults), prompt rendering per provider, target-scoped de-duplication, i18n |
 | Integration | `tests/integration/` | Streaming responses and the A2A server (calls the model) |
-| Evaluation | `tests/eval/` | 5 core cases and 2 hold-out cases graded by an ops-specific LLM-as-judge rubric (right specialist, evidence, report structure, dry-run honesty, safety) |
+| Content evaluation | `tests/eval/datasets/`, `tests/eval/holdout/` | Existing 5 core + 2 hold-out cases for evidence, reports, dry-run honesty and safety |
+| Architecture comparison | `tests/eval/routing/`, `scripts/evaluate_routing.py` | 15 cases comparing routes, required tools, arguments, preconditions, completion and unauthorized presentation/attempt/execution |
 
 CI (`.github/workflows/ci.yml`) runs lint, type checks and unit tests on every pull request.
+
+
+Use the [comparison guide](../../tests/eval/routing/README.md) to record baseline and candidate with the same model, configuration, data, clock, target and permissions. Every case needs at least three independent samples; missing cases, incomparable conditions or incomplete traces fail closed. Unauthorized presentation, attempt and execution must each remain zero.
+`runtime_stubbed` exercises contracts with a substitute model and remains `release_eligible=false` even when it passes. A successful `live_model` comparison satisfies this gate only; three repeats do not establish statistical accuracy or production readiness. The CLI validates supplied records, not the truth of generated prose, and never manufactures traces. Target validation and deployment of this change remain separate.
 
 ## 15. Extending
 
 Step-by-step recipes with code are in [customization.md](customization.md). In short:
 
 - **Project knowledge**: `config/ops-context.md` — no code.
-- **A specialist**: copy `app/specialists/_template.py`, fill in role / instruction / tools / jobs, append it to `SPECIALISTS`.
-  The leader's routing and the scheduler follow.
-- **A job**: add a `Job` to a specialist (`schedule`, `schedule_key`, `scheduled_params`); override its cron with `<KEY>_CRON`.
+- **A specialist**: register its definition, parameter schema, fixed collection, analysis scope/instructions and comparison cases. Registration alone does not authorize an undefined workflow.
+- **A job**: keep `Job` and `JOB_PARAMETER_BOUNDS` consistent, define `collection_steps` and the analysis subset, then add success/rejection/confusion comparison cases.
 - **A tool**: add a function to `app/tools/` (type hints, no defaults, a docstring the model can act on, return a dict with
   `status`, never raise for API errors) and add it to a specialist's `tools`. GitHub writes must honour `CONFIG.dry_run`.
 - **A capability**: add the method to `CloudProvider` (returning `not_supported`), a wrapper to `app/tools/cloud.py`, a glossary
@@ -416,3 +394,5 @@ Step-by-step recipes with code are in [customization.md](customization.md). In s
 - Sessions are in memory; with more than one instance the session API may not find a run's history.
 - AWS and Azure providers are skeletons; every cloud capability reports `not_supported` there until implemented.
 - Prompts are written in Japanese; output language is selectable with `OPS_REPORT_LANGUAGE`.
+
+Browser coordinate recording/replay, backup creation/restore, DB performance, maintenance, cost spikes and configuration history remain planned in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7). This architecture change does not implement those features or establish that it has been deployed.

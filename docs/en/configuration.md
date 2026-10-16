@@ -87,6 +87,8 @@ Every issue also gets `ops-agent` and `ops:error` / `ops:security` / `ops:report
 Scheduler jobs are generated from the jobs declared by the specialists in `app/specialists/` — `make jobs` lists them.
 Every value can be overridden; re-run `make gcp-schedule` to apply (existing jobs are updated in place).
 
+All server entry points enforce the same registered job contract. `hours` must be an integer in 1–168, weekly review `days` in 1–90, and monthly audit `kev_days` in 1–365. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
+
 | Variable | Default | Description |
 |---|---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * *` / `24` | Error watch (daily at 08:00) and its look-back window — keep the window equal to the interval |

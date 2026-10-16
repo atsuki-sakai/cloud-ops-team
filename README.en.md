@@ -7,6 +7,7 @@
 
 **An AI operations team for your cloud.** Five specialist agents watch production errors and suspicious access daily,
 review infrastructure weekly, audit security monthly and verify merged fixes weekly. They report through GitHub issues.
+Programs validate registered jobs and gather evidence through fixed procedures before a scoped AI analysis stage runs.
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
 [Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md)
@@ -28,25 +29,31 @@ an estimate. Optimization covers Cloud Run and Cloud SQL in the target region an
 ## How it works
 
 ```mermaid
-flowchart LR
-    SCH["Scheduler"] --> ROOT["cloud_ops_team<br/>leader"]
-    ROOT --> EW["error_watch"] & SA["security_audit"] & PR["pr_review"] & AW["access_watch"] & IR["infrastructure_review"]
-    EW & SA & PR & AW & IR --> TOOLS["cloud-neutral tools"]
-    TOOLS --> PROV["provider<br/>GCP · AWS · Azure"]
-    EW & SA & PR & AW & IR --> GH["GitHub issues"]
-    GH --> HUMAN["you + your AI coding tools"]
-    HUMAN -- "PR: closes #N" --> GH
+flowchart TB
+    SCH["Scheduled job JSON"] --> R["Validate registered job and arguments"]
+    Q["Your request"] --> L["Conversation leader<br/>choose from 5 specialists"]
+    L --> R
+    R --> C["Fixed evidence collection"]
+    C --> A["Scoped analysis AI<br/>evidence + follow-up/report tools only"]
+    C --> P["Cloud-specific provider"]
+    A --> G["GitHub issues and reports"]
+    S["Runtime tool/argument checks"] -.-> A
 ```
 
 - **Read-only by design.** No tool can change your cloud. GitHub writes are limited to issues, comments and labels, and are
   off (`OPS_DRY_RUN=true`) until you enable them.
-- **Cloud-neutral agents, pluggable clouds.** The agents use 20 capability tools (`list_services`, `audit_network`, ...);
+- **Deterministic scheduled work.** Code selects the registered job and performs its fixed collection steps. Unknown jobs and invalid arguments are rejected before collection or a model call. Natural-language requests select a specialist adapter and enter the same validated workflow.
+- **Scoped model context.** Analysis agents receive evidence plus only the follow-up and reporting tools for their stage: currently 5–10 tools per specialist. Tool descriptions and cloud glossary entries use the same scope. Runtime checks also reject unauthorized calls and excessive query arguments.
+- **Cloud-neutral collection, pluggable clouds.** Twenty capability functions (`list_services`, `audit_network`, ...) are available to workflows;
   a provider maps them to a cloud. Google Cloud implements these capabilities for the services listed below; AWS and Azure ship as skeletons that the agents already
   understand — capabilities can be added one at a time.
 - **No database.** Issues are the ledger: a log fingerprint stored in each issue de-duplicates findings and lets the weekly
   review count recurrences after a fix is merged.
-- **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli); specialists run as
-  `single_turn` sub-agents so every tool call is streamed and traced.
+- **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli). A programmatic root serves HTTP/SSE and A2A; scheduled calls bypass LLM routing, and specialist adapters preserve streamed tool events for conversations.
+
+Routing/tool changes have a [baseline/candidate comparison gate](tests/eval/routing/README.md) for route, tools, arguments, preconditions and task completion. Unauthorized tool presentation, attempt or execution must remain zero; missing or incomparable evidence fails closed. Stubbed-model tests validate contracts and cannot establish live-model accuracy or release eligibility. This architecture change still needs target-environment validation and deployment.
+
+Browser coordinate recording/replay, backup creation/restore and the other operations extensions remain planned in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7); they are not implemented by this architecture change.
 
 ## Supported clouds
 
@@ -97,8 +104,8 @@ error watch (`make jobs` shows the current ones). Full guide and runbook: [docs/
 | Tell the team what your services do and which errors are noise | `config/ops-context.md` (no code) |
 | Use your repository's labels, another language, other schedules | `.env` (no code) |
 | Change a specialist's procedure or issue format | edit `INSTRUCTION` in `app/specialists/<name>.py` |
-| Add a tool | a function in `app/tools/`, added to a specialist's `tools` |
-| Add a job or a whole specialist | add a `Job`, or copy `app/specialists/_template.py` and register it — routing and schedules follow |
+| Add a tool | add a function in `app/tools/`, choose its collection/analysis stage, scope and tests |
+| Add a job or a whole specialist | add the definition, request schema, fixed collection plan, analysis scope and comparison cases |
 | Support another cloud capability | implement it in `app/providers/<cloud>/` |
 
 Recipes with code: [docs/customization.md](docs/en/customization.md) (日本語: [docs/customization.md](docs/en/customization.md)).
@@ -127,7 +134,10 @@ cloud-ops-team/
 │   ├── specialists/        ★ team members: instruction, tools and jobs (copy _template.py to add one)
 │   ├── tools/              ★ tools the model calls (cloud-neutral)
 │   ├── providers/          ★ one adapter per cloud: gcp (implemented), aws and azure (skeletons)
-│   ├── agent.py            builds the leader; specialists are loaded from the registry
+│   ├── agent.py            builds the router, conversation leader and analysis agents
+│   ├── routing.py          validates registered jobs and routes them directly
+│   ├── workflows.py        fixed collection, evidence and analysis tool selection
+│   ├── tool_scope.py       per-stage tool and argument execution boundary
 │   ├── prompts.py          renders instructions (cloud, language, project context)
 │   ├── config.py           settings from .env
 │   └── core/ integrations/ fingerprints and redaction; GitHub client

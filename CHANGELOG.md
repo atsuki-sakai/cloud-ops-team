@@ -16,11 +16,14 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 - 複数ラベルを含むデプロイ設定が引数の区切りと衝突する問題を修正し、オフラインの回帰テストを追加しました。
 
 ### 変更
+- 定期ジョブを厳密なJSON検証と固定収集で直接実行し、自然言語の依頼も担当別の受付から同じ経路へ接続します。分析AIに渡すツール・説明・履歴を工程ごとに限定しました。
+- 期間・件数・対象・リポジトリの制約を実行時に検証し、収集不足や省略を実行単位の証拠に残します。取得関数・モデル・指紋の既存契約は維持します。
 - ドキュメントを **日本語メイン** に切り替えました。`README.md`、`docs/*.md`、`CONTRIBUTING.md`、`CHANGELOG.md` が日本語で、
   英語版は `README.en.md`、`docs/en/*.md`、`CONTRIBUTING.en.md`、`CHANGELOG.en.md` です。
   `SECURITY.md` と ISSUE・PR のテンプレートは日英併記にし、`CODE_OF_CONDUCT.md` には日本語の要約を加えました。
 
 ### 追加
+- 担当・ツール・引数・前提条件・業務完了を旧構成と比較する評価CLIとケースを追加しました。証拠不足や未許可ツールの提示・呼び出しは公開判定を不合格にします。
 - 毎日 08:30 に直近 24 時間を調べる `access_watch` を追加しました。監査ログ、HTTP 認証拒否・探索パス、Cloud Armor の拒否から、証拠・確度・未確認範囲付きで不審な兆候を報告します。
 - 毎週月曜 10:00 の `infrastructure_review` を追加しました。GCP Recommender の費用・IAM 推奨事項と既存の構成監査をまとめ、影響・リスク・実施・確認・ロールバック案を提案します。クラウドの自動変更は行いません。
 - 共通機能 `investigate_access(hours)` / `list_optimization_recommendations()`、定期実行の設定、導入先でのログ収集・追加閲覧権限の案内を追加しました。AWS / Azure はこの 2 機能も `not_supported` を返します。
