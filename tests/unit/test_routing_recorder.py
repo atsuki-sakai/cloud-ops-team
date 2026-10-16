@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from scripts.evaluate_routing import InvalidEvaluation, grade_record, load_suite
 from scripts.record_routing import (
+    DeadlineTaskSnapshot,
     ModelOnlyEgress,
+    ModelTiming,
+    _exception_frames,
     _scripted_job_request,
     completion_assertions,
+    pending_task_frames,
     verify_recorder_source,
 )
 
@@ -49,6 +55,294 @@ def test_only_model_and_required_adc_authentication_hosts_are_allowed(url):
     guard = ModelOnlyEgress()
     guard.check_url(url)
     assert len(guard.requests) == 1
+
+
+@pytest.mark.parametrize("status", [200, 429])
+def test_transport_records_safe_timing_and_status_without_response_content(
+    monkeypatch, status
+):
+    ticks = iter([100.0, 101.0, 104.25])
+    monkeypatch.setattr("scripts.record_routing.time.monotonic", lambda: next(ticks))
+    guard = ModelOnlyEgress()
+    checkpoints = []
+    guard.on_update = lambda: checkpoints.append(copy.deepcopy(guard.transport_events))
+
+    class Response:
+        def __init__(self):
+            self.status_code = status
+            self.headers = {"Authorization": "secret-header"}
+            self.text = "secret-body"
+
+    response = Response()
+    assert (
+        guard._send_sync(
+            "fake.sync",
+            "https://aiplatform.googleapis.com/model?token=secret-query",
+            lambda: response,
+        )
+        is response
+    )
+    assert [event["event"] for event in guard.transport_events] == [
+        "send_start",
+        "response_returned",
+    ]
+    assert [event["monotonic_seconds"] for event in guard.transport_events] == [
+        1.0,
+        4.25,
+    ]
+    assert guard.transport_events[-1]["elapsed_seconds"] == 3.25
+    assert guard.transport_events[-1]["http_status"] == status
+    assert len(checkpoints) == 2
+    assert "secret" not in json.dumps([guard.transport_events, guard.requests])
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_transport_exceptions_keep_class_without_exception_text(asynchronous):
+    guard = ModelOnlyEgress()
+
+    def fail():
+        raise ValueError("secret-exception-message")
+
+    async def async_fail():
+        return fail()
+
+    with pytest.raises(ValueError):
+        if asynchronous:
+            asyncio.run(
+                guard._send_async(
+                    "fake.async", "https://aiplatform.googleapis.com/model", async_fail
+                )
+            )
+        else:
+            guard._send_sync(
+                "fake.sync", "https://aiplatform.googleapis.com/model", fail
+            )
+    assert guard.transport_events[-1]["event"] == "exception"
+    assert guard.transport_events[-1]["exception_class"] == "ValueError"
+    assert "secret" not in json.dumps(guard.transport_events)
+
+
+def test_async_transport_cancellation_is_saved_in_progress_before_propagating():
+    guard = ModelOnlyEgress()
+    checkpoints = []
+    hosts = []
+
+    def checkpoint():
+        checkpoints.append(copy.deepcopy(guard.transport_events))
+        hosts.append([request["host"] for request in guard.requests])
+
+    guard.on_update = checkpoint
+
+    async def exercise():
+        entered = asyncio.Event()
+
+        async def blocked():
+            entered.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(
+            guard._send_async(
+                "fake.async", "https://aiplatform.googleapis.com/model", blocked
+            )
+        )
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+    assert [event["event"] for event in guard.transport_events] == [
+        "send_start",
+        "cancelled",
+    ]
+    assert checkpoints[-1][-1]["exception_class"] == "CancelledError"
+    assert hosts[0] == ["aiplatform.googleapis.com"]
+
+
+def test_async_transport_records_aiohttp_style_status_without_reading_body():
+    guard = ModelOnlyEgress()
+
+    class Response:
+        status = 200
+
+        async def text(self):
+            raise AssertionError("The timing recorder must not read the body")
+
+    async def response():
+        return Response()
+
+    asyncio.run(
+        guard._send_async(
+            "aiohttp", "https://aiplatform.googleapis.com/model", response
+        )
+    )
+    assert guard.transport_events[-1]["event"] == "response_returned"
+    assert guard.transport_events[-1]["http_status"] == 200
+
+
+def test_model_callback_timing_pairs_concurrent_calls_by_task_and_agent():
+    async def exercise():
+        timing = ModelTiming(0)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def first():
+            timing.start("error_watch", 1)
+            entered.set()
+            await release.wait()
+            timing.response("error_watch")
+
+        task = asyncio.create_task(first())
+        await entered.wait()
+        timing.start("error_watch", 2)
+        timing.response("error_watch")
+        release.set()
+        await task
+        assert [
+            event["model_invocation"]
+            for event in timing.events
+            if event["event"] == "model_response"
+        ] == [2, 1]
+        assert all(event["elapsed_seconds"] >= 0 for event in timing.events)
+        timing.response("other_agent")
+        assert timing.events[-1]["unmatched_callback"]
+
+    asyncio.run(exercise())
+
+
+def test_error_task_snapshot_is_bounded_and_does_not_include_local_values():
+    async def exercise():
+        entered = asyncio.Event()
+
+        async def waiting(secret_argument):
+            entered.set()
+            await asyncio.Event().wait()
+
+        tasks = [
+            asyncio.create_task(waiting("secret-local-value"), name="secret-task-name")
+            for _ in range(3)
+        ]
+        await entered.wait()
+        snapshot = pending_task_frames(task_limit=2, depth_limit=1)
+        assert snapshot["active_task_count"] >= 4
+        assert snapshot["tasks_truncated"]
+        assert len(snapshot["tasks"]) == 2
+        assert all(len(task["frames"]) <= 1 for task in snapshot["tasks"])
+        assert "secret" not in json.dumps(snapshot)
+        for task in snapshot["tasks"]:
+            for frame in task["frames"]:
+                assert set(frame) == {"module", "file", "function", "line"}
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(exercise())
+    try:
+        raise ValueError("secret-error-message")
+    except ValueError as error:
+        frames = _exception_frames(error)
+    assert frames
+    assert "secret" not in json.dumps(frames)
+
+
+def test_timeout_snapshot_keeps_background_transport_wait_before_cleanup():
+    async def exercise():
+        guard = ModelOnlyEgress()
+        entered = asyncio.Event()
+
+        async def blocked_transport():
+            entered.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(
+            guard._send_async(
+                "fake.async",
+                "https://aiplatform.googleapis.com/model",
+                blocked_transport,
+            )
+        )
+        await entered.wait()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.001):
+                await asyncio.Queue().get()
+        assert not task.done()
+        snapshot = pending_task_frames()
+        functions = {
+            frame["function"] for item in snapshot["tasks"] for frame in item["frames"]
+        }
+        assert {"_send_async", "blocked_transport"} <= functions
+        assert guard.transport_events[-1]["event"] == "send_start"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert guard.transport_events[-1]["event"] == "cancelled"
+
+    asyncio.run(exercise())
+
+
+def test_deadline_snapshot_sees_adk_model_task_before_timeout_cleanup():
+    from google.adk.agents import Agent
+    from google.adk.models.base_llm import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+
+    async def exercise():
+        entered, cancelled = asyncio.Event(), asyncio.Event()
+
+        class BlockedLlm(BaseLlm):
+            async def generate_content_async(self, llm_request, stream=False):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                    yield LlmResponse()
+                finally:
+                    cancelled.set()
+
+        sessions = InMemorySessionService()
+        session = await sessions.create_session(app_name="fixture", user_id="fixture")
+        runner = Runner(
+            agent=Agent(name="blocked_agent", model=BlockedLlm(model="fixture-model")),
+            app_name="fixture",
+            session_service=sessions,
+        )
+        snapshot = DeadlineTaskSnapshot(0.05, time.monotonic())
+        with pytest.raises(TimeoutError):
+            with snapshot:
+                async with asyncio.timeout(0.05):
+                    async for _event in runner.run_async(
+                        user_id="fixture",
+                        session_id=session.id,
+                        new_message=types.Content(
+                            role="user", parts=[types.Part.from_text(text="fixture")]
+                        ),
+                    ):
+                        pass
+        assert entered.is_set()
+        assert cancelled.is_set()
+        assert snapshot.handle is not None and snapshot.handle.cancelled()
+        assert snapshot.snapshot is not None
+        assert snapshot.snapshot["capture"] == "before_deadline_cancel"
+        assert snapshot.snapshot["active_task_count"] > len(asyncio.all_tasks())
+        assert any(
+            frame["module"].startswith("google.adk")
+            for task in snapshot.snapshot["tasks"]
+            for frame in task["frames"]
+        )
+
+    asyncio.run(exercise())
+
+
+def test_success_cancels_deadline_snapshot_callback():
+    async def exercise():
+        snapshot = DeadlineTaskSnapshot(0.01, time.monotonic())
+        with snapshot:
+            await asyncio.sleep(0)
+        assert snapshot.handle is not None and snapshot.handle.cancelled()
+        await asyncio.sleep(0.02)
+        assert snapshot.snapshot is None
+
+    asyncio.run(exercise())
 
 
 def test_model_saying_complete_without_reading_evidence_is_not_completion():
@@ -251,6 +545,26 @@ def test_offline_recorder_captures_fixed_calls_schema_and_detects_missing_trace(
     assert record["model_invocations"] == len(record["presentations"]) > 0
     detail = json.loads(Path(record["evidence"][0]).read_text())
     assert detail["details"]["network_requests"] == []
+    assert detail["details"]["transport_events"] == []
+    assert "pending_tasks" not in detail["details"]
+    assert (
+        sum(
+            event["event"] == "model_start"
+            for event in detail["details"]["model_events"]
+        )
+        == record["model_invocations"]
+    )
+    assert (
+        sum(
+            event["event"] == "model_response"
+            for event in detail["details"]["model_events"]
+        )
+        == detail["details"]["model_responses"]
+    )
+    assert all(
+        not event.get("unmatched_callback")
+        for event in detail["details"]["model_events"]
+    )
     assert len(detail["details"]["collections"]) == 1
     assert detail["environment_assertions"]["enterprise_backend"] is None
     assert detail["environment_assertions"]["stack_keywords"] == []
