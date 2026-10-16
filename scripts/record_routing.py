@@ -186,11 +186,15 @@ def completion_assertions(
         and re.search(r"fixture|対象|取得|確認|所見|レポート|報告", report, re.I)
     ):
         facts.append("report_ready")
-    rejected = error_code == "invalid_job_request" or bool(
-        re.search(
-            r"未登録|未対応|無効|不正な(?:引数|型|ジョブ)|拒否|not registered|unsupported|invalid.*(?:job|parameter)",
-            final,
-            re.I,
+    rejected = error_code == "invalid_job_request" or (
+        case.get("category") == "rejection"
+        and not evidence_read
+        and bool(
+            re.search(
+                r"未登録|未対応|無効|不正な(?:引数|型|ジョブ)|拒否|not registered|unsupported|invalid.*(?:job|parameter)",
+                final,
+                re.I,
+            )
         )
     )
     if rejected:
@@ -222,7 +226,7 @@ def completion_assertions(
     ):
         facts.append("permission_gap_reported")
     if re.search(
-        r"不正アクセス(?:は|が)存在しないと証明|安全性を保証|no attacks occurred|fully secure",
+        r"不正アクセス(?:は|が)存在しないと証明しました|安全性を保証します|no attacks occurred|fully secure",
         report,
         re.I,
     ):
@@ -682,6 +686,8 @@ async def _sample(args) -> dict[str, Any]:
             "dry_run": config.dry_run,
             "stack_keywords": list(config.stack_keywords),
             "enterprise_backend": os.environ.get("GOOGLE_GENAI_USE_ENTERPRISE"),
+            "vertex_backend": os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"),
+            "dotenv_disabled": os.environ.get("PYTHON_DOTENV_DISABLED") == "1",
             "sample_timeout_seconds": args.timeout,
         },
         "details": {
@@ -786,6 +792,9 @@ async def _record(args) -> int:
     )
     failures = [str(error) for error in errors if isinstance(error, BaseException)]
     models = {item["model"] for item in results}
+    environments = {
+        json.dumps(item["environment_assertions"], sort_keys=True) for item in results
+    }
     bundle = {
         "schema_version": 1,
         "run_id": output.stem,
@@ -798,7 +807,11 @@ async def _record(args) -> int:
                 "temperature": 0.2,
                 "max_llm_calls": 12,
                 "context_cache": False,
+                "sample_timeout_seconds": args.timeout,
             },
+            "runtime_environment": json.loads(next(iter(environments)))
+            if len(environments) == 1
+            else "inconsistent",
             "snapshot_id": hashlib.sha256(fixture_bytes).hexdigest(),
             "clock": fixture["clock"],
             "target": fixture["target"],

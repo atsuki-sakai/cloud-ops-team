@@ -82,6 +82,40 @@ def test_fixed_collection_alone_does_not_prove_model_read_the_evidence():
     assert not completion["facts"]
 
 
+def test_normal_audit_discussing_disabled_logging_is_not_request_refusal():
+    calls = [
+        {
+            "tool": "get_collected_evidence",
+            "phase": "analysis",
+            "arguments": {},
+            "outcome": "ok",
+            "facts": [],
+        }
+    ]
+    result = completion_assertions(
+        {"category": "scheduled"},
+        calls,
+        "対象ログの取得結果を確認しました。ログ設定の無効化・未設定により観測が減る可能性があります。"
+        * 4,
+    )
+    assert result["status"] == "complete"
+    assert "request_rejected" not in result["facts"]
+    assert "report_ready" in result["facts"]
+
+
+def test_qualified_security_limit_is_not_an_assertion_of_safety():
+    result = completion_assertions(
+        {},
+        [],
+        "この結果はシステム全体の安全性を保証するものではありません。",
+    )
+    assert "no_attack_proven" not in result["facts"]
+    unsafe = completion_assertions(
+        {}, [], "この結果に基づきシステム全体の安全性を保証します。"
+    )
+    assert "no_attack_proven" in unsafe["facts"]
+
+
 def test_natural_language_cannot_regress_to_unrestricted_specialist_tools():
     suite = load_suite(Path("tests/eval/routing/cases.json"))
     cases = {case["case_id"]: case for case in suite["cases"]}
