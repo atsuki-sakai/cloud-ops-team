@@ -6,13 +6,15 @@ This page records the additional review of `main` at `629abaf27b610b9c3a8d1c850c
 The review inspected source and pinned SDK dependencies and reproduced cases with synthetic responses and mocks.
 It did not confirm incidents in production or inspect users' cloud permissions or deployed services.
 
-These are 11 unresolved defects and two conditional risks, separate from the 14 fixes in [PR #4](https://github.com/atsuki-sakai/cloud-ops-team/pull/4).
-Adding this document does not fix them. The proposed fixes below have not been implemented.
+The findings were checked again against `main` at `a2635e7986fceccf72c66b93a97299ee714d3630` on 2026-10-16.
+Of the 11 additional defects, separate from the 14 fixes in [PR #4](https://github.com/atsuki-sakai/cloud-ops-team/pull/4),
+A03 was resolved in [PR #6](https://github.com/atsuki-sakai/cloud-ops-team/pull/6). Ten defects and two conditional risks remain.
+Adding this document does not itself fix defects. Proposed fixes remain unimplemented unless an item is explicitly marked resolved.
 P1 items directly affect operational decisions and should be addressed first. P2 items produce incorrect results or behavior under the stated conditions.
 
 See [Configuration](configuration.md) for settings and [Deploying to Google Cloud](deployment-gcp.md) for deployment instructions.
 
-## Confirmed defects
+## Additional review findings and resolution status
 
 ### A01 — P1: A reference PR from another repository becomes fix evidence
 
@@ -27,19 +29,18 @@ Source: [Issue and PR tools](../../app/tools/issues.py#L819)
 
 Source: [Issue creation and recurrence reporting](../../app/tools/issues.py#L304)
 
-- **Current behavior:** There is no shared exclusion between searching and creating an Issue, or between checking the cooldown and posting a comment.
+- **Current behavior:** The standard entry point serializes ordinary Issue creation within one invocation. There is no exclusion shared across invocations between searching and creating an Issue, or between checking the cooldown and posting a comment.
 - **Impact:** Separate instances, for example, can read the same result before writing and create duplicate Issues or comments within the same period. This is not a claim that synchronous tools run in parallel within one ADK invocation.
 - **Temporary measure:** Avoid overlapping runs across all services and manual callers writing for the same target, and check for duplicates. Reducing the instance count to one does not guarantee exclusion across other writers.
 - **Proposed fix:** Add shared exclusion and operation records keyed by repository, provider, target, and fingerprint. Handle retries after a write succeeds but its response is lost without writing twice.
 
-### A03 — P2: The per-run Issue limit carries over to the next request
+### A03 — Resolved: The per-run Issue limit carries over to the next request
 
-Source: [Issue counter](../../app/tools/issues.py#L86)
+Source: [Invocation budget](../../app/core/run_budget.py#L35), [Analysis tool boundary](../../app/tool_scope.py), [Regression tests](../../tests/unit/test_routing.py)
 
-- **Current behavior:** The creation counter is stored in session state and remains for the next request in that session.
-- **Impact:** After reaching `OPS_MAX_ISSUES_PER_RUN`, new findings in later requests can also be skipped. Runs that create a fresh session each time have different exposure.
-- **Temporary measure:** Start a new investigation in a new session.
-- **Proposed fix:** Store the counter in invocation state or a budget keyed by invocation ID. [ADK state scopes](https://github.com/google/adk-docs/blob/main/docs/sessions/state.md)
+- **Previous behavior:** The session counter carried over into later requests, so reaching the cap could suppress Issues in a new investigation.
+- **Resolved:** PR #6 creates an invocation budget at the standard `ScheduledRouter` entry point and shares it across specialists. The next request starts at zero even in the same session. Ordinary Issue creation is serialized within that invocation.
+- **Validation scope:** Regression tests cover resetting the budget for the next invocation in the same session. Cross-invocation deduplication (A02) and sharing this budget with report creation (A04) remain separate unresolved items.
 
 ### A04 — P2: Report creation bypasses the cap and within-run deduplication
 
@@ -120,7 +121,8 @@ Source: [Deployment environment variables](../../scripts/gcp/deploy_env.py#L39)
 Source: [Trigger handling](../../app/fast_api_app.py#L87), [Session storage](../../app/app_utils/services.py#L57)
 
 The pinned SDK returns HTTP success when execution finishes without an exception. Its response does not include the final explanation that investigation was blocked by missing permissions or similar problems, and sessions are in memory by default.
-If no Issue was created and the instance terminates, that explanation may no longer be available. HTTP success is not evidence of audit completion. The SDK's success response itself is expected behavior.
+PR #6 adds structured logs for stages, incomplete collection, and evidence hashes, but there is no persistent ledger of final results and reasons.
+If no Issue was created and the instance terminates, that final explanation may no longer be available. HTTP success is not evidence of audit completion. The SDK's success response itself is expected behavior.
 
 **Temporary measure:** Provide a way for operators to inspect and save the final result. **Proposed improvement:** Persist the run ID, coverage, unknown items, errors, and a redacted final result. Distinguish a run being executed from an audit being completed.
 
@@ -138,7 +140,7 @@ The current setup does not propagate the caller authenticated by Cloud Run into 
 | Order | Items | Direction |
 |---|---|---|
 | 1 | A01, A05, A06 | Correct PR identity and coverage; report insufficient evidence as unknown |
-| 2 | A02, A03, A04 | Share write budgets, exclusion, and retry handling across GitHub operations |
+| 2 | A02, A04 | Share write budgets, exclusion, and retry handling across GitHub operations |
 | 3 | A07, A08, A09 | Retain engine differences, expiry, and conditions in retrieved results |
 | 4 | A10, A11 | Share configuration definitions across local execution, deployment, and doctor |
 | 5 | R01, R02, permission scope | Match persistent results and caller boundaries to the operating model; allow access only to needed secrets |
@@ -146,9 +148,9 @@ The current setup does not propagate the caller authenticated by Cloud Run into 
 The proposed split for [GCP auditing](../../app/providers/gcp/security.py) is IAM, keys, Cloud Run, and Cloud SQL, separating retrieval from checks.
 Retrieved results should retain coverage, read errors, timestamps, and conditions. [GitHub tools](../../app/tools/issues.py) should separate Issue operations, PR evidence, and report publishing while sharing write controls.
 Consider checking PR, SHA, CI, deployment, and observation-period evidence in code for verified verdicts, with the model gathering evidence and explaining results.
-Tool-call and runtime guidelines in prompts also need code-enforced budgets.
+`ToolScope` validates collection sizes, targets, and arguments. Enforcing prompt guidelines for call counts and elapsed time as invocation-wide budgets remains separate work.
 
-[Bootstrap](../../scripts/gcp/bootstrap.sh#L28) grants secret read access at project scope.
+[Bootstrap](../../scripts/gcp/bootstrap.sh#L33) grants secret read access at project scope.
 If only the GitHub token is required, narrow access to that secret. This is a recommendation about the script, not a confirmation of current production grants. [Secret Manager least privilege](https://docs.cloud.google.com/secret-manager/docs/access-control)
 
 Changes should add regression cases for the conditions above and verify concurrency, read failures, unknown reporting, and persistent results across complete workflows.

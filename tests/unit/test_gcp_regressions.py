@@ -79,6 +79,40 @@ def test_unfinished_pagination_is_not_success_or_raw_partial_data(monkeypatch):
     assert "SyntheticPrivateValue" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize(
+    "invalid_page",
+    [
+        {"raw": "password=SyntheticPrivateValue"},
+        [],
+        None,
+        {"entries": "SyntheticPrivateValue"},
+        {"entries": {"secret": "SyntheticPrivateValue"}},
+        {"entries": None},
+        {"nextPageToken": 123},
+        {"nextPageToken": False},
+    ],
+)
+def test_malformed_list_response_is_not_success_or_raw_partial_data(
+    monkeypatch, invalid_page
+):
+    pages = iter(
+        [
+            {
+                "entries": [{"message": "password=SyntheticPrivateValue"}],
+                "nextPageToken": "page-2",
+            },
+            invalid_page,
+        ]
+    )
+    monkeypatch.setattr(
+        client, "gcp_request", lambda *args, **kwargs: (True, next(pages))
+    )
+    ok, payload = client.gcp_list("https://example.invalid", "entries")
+    assert not ok and payload["status"] == "error"
+    assert payload["complete"] is False and payload["count"] == 1
+    assert "SyntheticPrivateValue" not in json.dumps(payload)
+
+
 def test_unfinished_empty_log_search_does_not_report_resolved(monkeypatch):
     monkeypatch.setattr(
         client, "gcp_request", lambda *args, **kwargs: (True, {"nextPageToken": "more"})

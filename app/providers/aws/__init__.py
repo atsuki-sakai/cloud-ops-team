@@ -54,6 +54,8 @@ PROFILE = ProviderProfile(
         "audit_security_services": "GuardDuty / Security Hub / Inspector / Config / CloudTrail の有効化",
         "list_security_findings": "Security Hub",
         "scan_deployed_images": "Amazon Inspector（ECR イメージ）",
+        "investigate_access": "CloudTrail・アクセスログ・AWS WAF の不審な兆候（未実装）",
+        "list_optimization_recommendations": "Compute Optimizer / Cost Optimization Hub / IAM Access Analyzer（未実装）",
     },
 )
 

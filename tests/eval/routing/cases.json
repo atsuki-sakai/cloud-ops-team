@@ -1,0 +1,1140 @@
+{
+  "schema_version": 1,
+  "description": "Incremental routing gate; new capabilities remain unsupported until implemented. Fixture facts must be verified by the trace adapter.",
+  "cases": [
+    {
+      "case_id": "scheduled_error_watch",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "error_watch",
+          "hours": 72
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "error_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "summarize_error_groups",
+          "get_request_error_rates",
+          "list_scheduled_jobs",
+          "list_services",
+          "list_databases",
+          "get_alerting_setup"
+        ],
+        "analysis": [
+          "list_error_logs",
+          "get_log_context",
+          "count_matching_errors",
+          "list_deployments",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "comment_on_issue",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "summarize_error_groups",
+          "arguments": {
+            "hours": 72
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "scheduled_security_audit",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "security_audit",
+          "kev_days": 30
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "security_audit"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "audit_iam",
+          "audit_credentials",
+          "audit_compute",
+          "scan_deployed_images",
+          "audit_databases",
+          "audit_network",
+          "audit_security_services",
+          "list_security_findings",
+          "get_alerting_setup",
+          "get_repo_security_posture",
+          "fetch_cisa_kev"
+        ],
+        "analysis": [
+          "check_eol_status",
+          "web_threat_research",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "comment_on_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_iam",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_databases",
+          "arguments": {}
+        },
+        {
+          "tool": "fetch_cisa_kev",
+          "arguments": {
+            "days": 30
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "scheduled_pr_review",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "pr_review",
+          "days": 7
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "pr_review"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "list_ops_issues",
+          "list_recent_pull_requests",
+          "get_recent_workflow_runs"
+        ],
+        "analysis": [
+          "get_issue",
+          "get_issue_linked_prs",
+          "get_pull_request",
+          "count_matching_errors",
+          "search_issues",
+          "comment_on_issue",
+          "add_issue_labels",
+          "close_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "list_ops_issues",
+          "arguments": {
+            "state": "open",
+            "kind": "all"
+          }
+        },
+        {
+          "tool": "list_recent_pull_requests",
+          "arguments": {
+            "days": 7
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "scheduled_access_watch",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "access_watch",
+          "hours": 24
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "access_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "investigate_access"
+        ],
+        "analysis": [
+          "list_security_findings",
+          "audit_iam",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "investigate_access",
+          "arguments": {
+            "hours": 24
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "scheduled_infrastructure_review",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "infrastructure_review"
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "infrastructure_review"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "list_optimization_recommendations",
+          "audit_iam",
+          "audit_credentials",
+          "audit_compute",
+          "audit_databases",
+          "audit_network",
+          "get_alerting_setup",
+          "list_services",
+          "list_databases"
+        ],
+        "analysis": [
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "list_optimization_recommendations",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_iam",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_databases",
+          "arguments": {}
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "alias_weekly_pr_review",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "weekly_pr_review",
+          "days": 7
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "pr_review"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "list_ops_issues",
+          "list_recent_pull_requests",
+          "get_recent_workflow_runs"
+        ],
+        "analysis": [
+          "get_issue",
+          "get_issue_linked_prs",
+          "get_pull_request",
+          "count_matching_errors",
+          "search_issues",
+          "comment_on_issue",
+          "add_issue_labels",
+          "close_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "list_ops_issues",
+          "arguments": {
+            "state": "open",
+            "kind": "all"
+          }
+        },
+        {
+          "tool": "list_recent_pull_requests",
+          "arguments": {
+            "days": 7
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "alias_monthly_security_audit",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "monthly_security_audit",
+          "kev_days": 30
+        },
+        "attributes": {}
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "security_audit"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "audit_iam",
+          "audit_credentials",
+          "audit_compute",
+          "scan_deployed_images",
+          "audit_databases",
+          "audit_network",
+          "audit_security_services",
+          "list_security_findings",
+          "get_alerting_setup",
+          "get_repo_security_posture",
+          "fetch_cisa_kev"
+        ],
+        "analysis": [
+          "check_eol_status",
+          "web_threat_research",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "comment_on_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_iam",
+          "arguments": {}
+        },
+        {
+          "tool": "audit_databases",
+          "arguments": {}
+        },
+        {
+          "tool": "fetch_cisa_kev",
+          "arguments": {
+            "days": 30
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "unknown_job",
+      "category": "rejection",
+      "input": {
+        "data": {
+          "job": "backup_create"
+        }
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        null
+      ],
+      "allowed_tools": {
+        "collect": [],
+        "analysis": [],
+        "conversation": []
+      },
+      "required_calls": [],
+      "completion_statuses": [
+        "refused",
+        "clarification",
+        "unsupported"
+      ],
+      "completion_facts": [
+        "request_rejected"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "report_ready"
+      ],
+      "preconditions": []
+    },
+    {
+      "case_id": "invalid_hours",
+      "category": "rejection",
+      "input": {
+        "data": {
+          "job": "access_watch",
+          "hours": "yesterday"
+        }
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        null
+      ],
+      "allowed_tools": {
+        "collect": [],
+        "analysis": [],
+        "conversation": []
+      },
+      "required_calls": [],
+      "completion_statuses": [
+        "refused",
+        "clarification",
+        "unsupported"
+      ],
+      "completion_facts": [
+        "request_rejected"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "report_ready"
+      ],
+      "preconditions": []
+    },
+    {
+      "case_id": "backup_inspection_not_creation",
+      "category": "future_capability_boundary",
+      "input": "バックアップの復旧可否を確認する機能はありますか。バックアップ作成は依頼していません。",
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        null
+      ],
+      "allowed_tools": {
+        "collect": [],
+        "analysis": [],
+        "conversation": [
+          "error_watch",
+          "security_audit",
+          "pr_review",
+          "access_watch",
+          "infrastructure_review",
+          "get_run_context"
+        ]
+      },
+      "required_calls": [],
+      "completion_statuses": [
+        "refused",
+        "clarification",
+        "unsupported"
+      ],
+      "completion_facts": [
+        "capability_boundary_explained"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "backup_created"
+      ],
+      "preconditions": []
+    },
+    {
+      "case_id": "backup_creation_not_inspection",
+      "category": "future_capability_boundary",
+      "input": "今すぐ本番の新しいバックアップを作成してください。設定確認だけではありません。",
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        null
+      ],
+      "allowed_tools": {
+        "collect": [],
+        "analysis": [],
+        "conversation": [
+          "error_watch",
+          "security_audit",
+          "pr_review",
+          "access_watch",
+          "infrastructure_review",
+          "get_run_context"
+        ]
+      },
+      "required_calls": [],
+      "completion_statuses": [
+        "refused",
+        "clarification",
+        "unsupported"
+      ],
+      "completion_facts": [
+        "capability_boundary_explained"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "backup_created"
+      ],
+      "preconditions": []
+    },
+    {
+      "case_id": "natural_error_similar",
+      "category": "conversation",
+      "input": "過去72時間のエラーを調べて、対応の必要があるものを整理してください。",
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "error_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "summarize_error_groups",
+          "get_request_error_rates",
+          "list_scheduled_jobs",
+          "list_services",
+          "list_databases",
+          "get_alerting_setup"
+        ],
+        "analysis": [
+          "list_error_logs",
+          "get_log_context",
+          "count_matching_errors",
+          "list_deployments",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "comment_on_issue",
+          "get_collected_evidence"
+        ],
+        "conversation": [
+          "error_watch",
+          "security_audit",
+          "pr_review",
+          "access_watch",
+          "infrastructure_review",
+          "get_run_context"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "summarize_error_groups",
+          "arguments": {
+            "hours": 72
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "natural_access_similar",
+      "category": "conversation",
+      "input": "過去24時間に不正アクセスの兆候がないか、ログから調査してください。",
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        "access_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "investigate_access"
+        ],
+        "analysis": [
+          "list_security_findings",
+          "audit_iam",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ],
+        "conversation": [
+          "error_watch",
+          "security_audit",
+          "pr_review",
+          "access_watch",
+          "infrastructure_review",
+          "get_run_context"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "investigate_access",
+          "arguments": {
+            "hours": 24
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "access_partial",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "access_watch",
+          "hours": 24
+        },
+        "attributes": {}
+      },
+      "fixture": "access-partial-v1",
+      "routes": [
+        "access_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "investigate_access"
+        ],
+        "analysis": [
+          "list_security_findings",
+          "audit_iam",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "investigate_access",
+          "arguments": {
+            "hours": 24
+          }
+        }
+      ],
+      "completion_statuses": [
+        "partial"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready",
+        "coverage_incomplete_reported"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "no_attack_proven",
+        "coverage_complete"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "access_permission_denied",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "access_watch",
+          "hours": 24
+        },
+        "attributes": {}
+      },
+      "fixture": "access-permission-denied-v1",
+      "routes": [
+        "access_watch"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "investigate_access"
+        ],
+        "analysis": [
+          "list_security_findings",
+          "audit_iam",
+          "find_existing_ops_issue",
+          "search_issues",
+          "create_ops_issue",
+          "publish_report",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "investigate_access",
+          "arguments": {
+            "hours": 24
+          }
+        }
+      ],
+      "completion_statuses": [
+        "partial"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready",
+        "permission_gap_reported"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "no_attack_proven",
+        "coverage_complete"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    }
+  ]
+}

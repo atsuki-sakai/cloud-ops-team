@@ -45,8 +45,12 @@ SECURITY_CAPABILITIES: tuple[str, ...] = (
     "audit_security_services",
     "list_security_findings",
     "scan_deployed_images",
+    "investigate_access",
 )
-CAPABILITIES: tuple[str, ...] = OBSERVABILITY_CAPABILITIES + SECURITY_CAPABILITIES
+OPTIMIZATION_CAPABILITIES: tuple[str, ...] = ("list_optimization_recommendations",)
+CAPABILITIES: tuple[str, ...] = (
+    OBSERVABILITY_CAPABILITIES + SECURITY_CAPABILITIES + OPTIMIZATION_CAPABILITIES
+)
 
 
 @dataclass(frozen=True)
@@ -164,3 +168,9 @@ class CloudProvider:
 
     def scan_deployed_images(self) -> dict[str, Any]:
         return self._not_supported("scan_deployed_images")
+
+    def investigate_access(self, hours: int) -> dict[str, Any]:
+        return self._not_supported("investigate_access")
+
+    def list_optimization_recommendations(self) -> dict[str, Any]:
+        return self._not_supported("list_optimization_recommendations")

@@ -3,15 +3,16 @@
 English: [docs/en/deployment-gcp.md](en/deployment-gcp.md)
 
 チームは 1 つの Cloud Run サービスとして動きます。Cloud Scheduler が、OIDC で認証した HTTP リクエストでこのサービスを呼び出します。
-既定の予定では、毎日のエラー監視、週次レビュー、月次診断で 1 か月に数十回呼び出します。
+主な費用はモデルのトークン代です。既定では毎日のエラー監視と不審アクセス調査、週次の修正確認とインフラ見直し、月次診断を実行します。
 費用と実行時間はログ量、モデル、再試行、手動実行などに左右されます。既定の最小インスタンス数は 0 です。
-配置前に [既知の制限](known-limitations.md) を確認してください。以下の手順だけで監査の完全性や重複起票の防止を保証するものではありません。
+ログの収集量や保持設定に応じた費用も導入先で確認してください。
+配置前に [既知の制約](known-limitations.md) を確認してください。以下の手順だけで監査の完全性や重複起票の防止を保証するものではありません。
 
 ```mermaid
 flowchart LR
-    SCH["Cloud Scheduler<br/>3 つの HTTP ジョブ"] -- "OIDC 認証（呼び出し用 SA）" --> RUN["Cloud Run<br/>cloud-ops-team"]
+    SCH["Cloud Scheduler<br/>5 つの HTTP ジョブ"] -- "OIDC 認証（呼び出し用 SA）" --> RUN["Cloud Run<br/>cloud-ops-team"]
     RUN -- "実行用 SA" --> VTX["Vertex AI（Gemini）"]
-    RUN -- "閲覧専用のロール" --> TGT["監視対象のプロジェクト<br/>Logging · Monitoring · Run · SQL · IAM · SCC"]
+    RUN -- "閲覧専用のロール" --> TGT["監視対象のプロジェクト<br/>Logging · Monitoring · Run · SQL · IAM · SCC · Recommender"]
     RUN -- "Secret Manager のトークン" --> GH["GitHub の ISSUE / PR"]
 ```
 
@@ -43,6 +44,28 @@ make gcp-bootstrap          # または: PROJECT_ID=my-project TARGET_PROJECT=my
 GitHub トークン以外のシークレットにもアクセスできる範囲です。権限縮小はスクリプトに未実装なので、運用者が
 トークンのシークレット単位のアクセス付与を確認したうえで、不要なプロジェクト単位の付与を見直してください。
 bootstrap の再実行ではプロジェクト単位の付与が戻るため、再確認が必要です（[Secret Manager のアクセス制御](https://docs.cloud.google.com/secret-manager/docs/access-control)）。
+
+### アクセス調査とインフラ見直しの取得条件
+
+- 監視対象で `logging.googleapis.com` と `recommender.googleapis.com` を有効にします。初期設定スクリプトにも含まれます。
+- `grant_target_roles.sh` は既存の閲覧ロールに加え、Data Access 監査ログを読む `roles/logging.privateLogViewer` と
+  IAM 推奨事項を読む `roles/recommender.iamViewer` を付与します。既存環境は `make gcp-grant` で権限を更新してください。
+- Data Access 監査ログは多くのサービスで既定では無効です。監視したいサービスの収集設定、除外、保存先、保持期間を管理者が確認します。
+  初期設定スクリプトは Data Access の収集設定を変更しません。[監査ログと必要権限](https://docs.cloud.google.com/logging/docs/audit)
+- HTTP 調査には `httpRequest` を含むアクセスログが必要です。Cloud Armor の拒否は、そのログが収集されている場合に調べられます。
+  Cloud Armor の導入やログ有効化は自動で行いません。ログが 0 件でも、未収集と攻撃なしを区別できない場合があります。
+- Recommender は対象リージョンの Cloud Run・Cloud SQL と `global` のプロジェクト IAM を調べます。
+  未生成の推奨事項、API 未有効化、権限不足、部分取得を「改善余地なし」と扱いません。
+  推奨事項の閲覧権限は [Recommender のロール一覧](https://docs.cloud.google.com/iam/docs/roles-permissions/recommender) で確認できます。
+
+導入先で `make doctor` に続けて次を実行し、取得範囲・未確認項目・提案内容を確認します。
+
+```bash
+OPS_DRY_RUN=true make run JOB=access_watch ARGS="--hours 24"
+OPS_DRY_RUN=true make run JOB=infrastructure_review
+```
+
+ローカルのテスト成功は、導入先のログ収集・API 権限・定期実行が動く証拠にはなりません。デプロイ後は実行履歴とレポートを確認してください。
 
 ## 2. デプロイ
 
@@ -94,10 +117,11 @@ gcloud run services update "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region 
 ```bash
 make jobs                    # 登録される予定を確認
 make gcp-schedule            # ジョブを作成または更新（サービスの URL は自動で見つけます）
-gcloud scheduler jobs run cloud-ops-error-watch --location asia-northeast1   # 今すぐ 1 回実行
+gcloud scheduler jobs run cloud-ops-error-watch --project "$DEPLOY_PROJECT" --location "$DEPLOY_REGION"   # 今すぐ 1 回実行
 ```
 
-既定の予定は、エラー監視が毎日 8:00、週次レビューが毎週月曜 9:00、月次診断が毎月 1 日 9:00 です（いずれも Asia/Tokyo）。
+既定の予定は、エラー監視が毎日 8:00、不審アクセス調査が毎日 8:30、修正確認が毎週月曜 9:00、
+インフラ見直しが毎週月曜 10:00、月次診断が毎月 1 日 9:00 です（いずれも Asia/Tokyo）。
 どれも環境変数で変えられます。詳しくは [設定一覧](configuration.md#定期実行の設定make-gcp-schedule) を見てください。
 
 ## 運用手順
@@ -105,15 +129,15 @@ gcloud scheduler jobs run cloud-ops-error-watch --location asia-northeast1   # �
 | やりたいこと | コマンド |
 |---|---|
 | 設定とアクセス権を点検する | `make doctor` |
-| 最近の実行を確認する | `make gcp-logs`、または `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cloud-ops-team" AND httpRequest.requestUrl:"trigger/pubsub"' --limit 10 --format="value(timestamp,httpRequest.status,httpRequest.latency)"` |
+| 最近の実行を確認する | `make gcp-logs`、または `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cloud-ops-team" AND httpRequest.requestUrl:"trigger/pubsub"' --project "$DEPLOY_PROJECT" --limit 10 --format="value(timestamp,httpRequest.status,httpRequest.latency)"` |
 | チームが作った ISSUE を見る | `gh issue list -R owner/repo --label ops-agent --state all` |
-| GitHub への書き込みを止める・再開する | `gcloud run services update cloud-ops-team --region asia-northeast1 --update-env-vars OPS_DRY_RUN=true`（再開は `false`） |
-| ジョブを一時停止する | `gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1`（再開は `resume`） |
+| GitHub への書き込みを止める・再開する | `gcloud run services update "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region "$DEPLOY_REGION" --update-env-vars OPS_DRY_RUN=true`（再開は `false`） |
+| ジョブを一時停止する | `gcloud scheduler jobs pause cloud-ops-error-watch --project "$DEPLOY_PROJECT" --location "$DEPLOY_REGION"`（再開は `resume`） |
 | 予定を変える | `ERROR_WATCH_CRON=... ONLY_JOBS=error-watch make gcp-schedule` |
 | コードや設定の変更を反映する | `make test && make gcp-deploy` |
-| GitHub トークンを更新する | `printf '%s' "$TOKEN" \| gcloud secrets versions add cloud-ops-team-github-token --data-file=-`（新しく起動したインスタンスから反映されます） |
-| ロールバックする | `gcloud run services update-traffic cloud-ops-team --region asia-northeast1 --to-revisions=<以前のリビジョン>=100` |
-| サービス自体のエラーを見る | `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cloud-ops-team" AND severity>=ERROR' --limit 20` |
+| GitHub トークンを更新する | `printf '%s' "$TOKEN" \| gcloud secrets versions add cloud-ops-team-github-token --project "$DEPLOY_PROJECT" --data-file=-`（新しく起動したインスタンスから反映されます） |
+| ロールバックする | `gcloud run services update-traffic "$SERVICE_NAME" --project "$DEPLOY_PROJECT" --region "$DEPLOY_REGION" --to-revisions=<以前のリビジョン>=100` |
+| サービス自体のエラーを見る | `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cloud-ops-team" AND severity>=ERROR' --project "$DEPLOY_PROJECT" --limit 20` |
 
 Scheduler や HTTP の成功だけでは、監査が完了したとは判断できません。既定のセッション保存はメモリ内で、
 ISSUE が作られなかった調査不能の説明はインスタンス終了後に残らない場合があります。

@@ -52,6 +52,8 @@ PROFILE = ProviderProfile(
         "audit_security_services": "Defender for Cloud プランの有効化",
         "list_security_findings": "Defender for Cloud の推奨事項・アラート",
         "scan_deployed_images": "Defender for Containers（ACR イメージ評価）",
+        "investigate_access": "Activity Logs・アクセスログ・WAF の不審な兆候（未実装）",
+        "list_optimization_recommendations": "Azure Advisor のコスト・構成・権限推奨（未実装）",
     },
 )
 

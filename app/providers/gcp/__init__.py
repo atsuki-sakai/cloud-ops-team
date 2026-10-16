@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.providers.base import CloudProvider, ProviderProfile
+from app.providers.gcp import access, optimization
 from app.providers.gcp import observability as obs
 from app.providers.gcp import security as sec
 
@@ -38,6 +39,8 @@ PROFILE = ProviderProfile(
         "audit_security_services": "セキュリティ系 API（SCC・コンテナスキャン・Asset Inventory など）の有効化",
         "list_security_findings": "Security Command Center",
         "scan_deployed_images": "Artifact Analysis（稼働中コンテナイメージの脆弱性）",
+        "investigate_access": "Cloud Audit Logs・HTTP アクセスログ・Cloud Armor の不審な兆候と取得範囲",
+        "list_optimization_recommendations": "Recommender（指定リージョンの Cloud Run / Cloud SQL、global の IAM）の改善提案",
     },
 )
 
@@ -106,3 +109,9 @@ class GcpProvider(CloudProvider):
 
     def scan_deployed_images(self) -> dict[str, Any]:
         return sec.scan_deployed_images()
+
+    def investigate_access(self, hours: int) -> dict[str, Any]:
+        return access.investigate_access(hours)
+
+    def list_optimization_recommendations(self) -> dict[str, Any]:
+        return optimization.list_optimization_recommendations()

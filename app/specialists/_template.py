@@ -3,10 +3,16 @@
 1. ``cp app/specialists/_template.py app/specialists/cost_watch.py``
 2. Edit the name, role, description, instruction, tools and jobs below.
 3. Add ``cost_watch.SPECIALIST`` to ``SPECIALISTS`` in ``app/specialists/__init__.py``.
-4. ``make test`` (conventions are checked), then ``make run JOB=cost_watch``.
-5. Re-run ``make gcp-schedule`` to create its Cloud Scheduler job (if it has a schedule).
+4. Register its strict parameter schema in ``app/routing.py`` and its fixed
+   collectors in ``app/workflows.py``. Add stage-specific argument restrictions
+   in ``app/tool_scope.py`` and comparison cases in ``tests/eval/routing/``.
+5. ``make test``, then ``make run JOB=<registered job>`` in dry-run mode.
+   Pass the live-model comparison before enabling it in production.
+6. Re-run ``make gcp-schedule`` to create its Cloud Scheduler job (if scheduled).
 
-This module is not registered, so it has no effect until you do step 3.
+This module is not registered. Registration alone does not authorize execution:
+a job without a parameter schema or a fixed collection plan is rejected.
+See ``docs/customization.md`` and ``docs/en/customization.md`` for the full recipe.
 """
 
 from __future__ import annotations
@@ -25,12 +31,12 @@ INSTRUCTION = """
 あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の <役割> を担当します。
 調査はすべて読み取り専用で行い、結果を GitHub「__REPO__」に記録します。
 
-## 手順
-1. get_run_context で時刻・dry_run・使える機能を確認する。
-2. <調べること>（例: list_services でサービス一覧を取得する）
-3. <判定基準>
-4. 対応が必要なものは find_existing_ops_issue / search_issues で重複を確認してから create_ops_issue で起票する。
-5. 最後に publish_report でレポートを発行し、要約を返す。
+## 分析要件
+get_collected_evidence で今回の対象・期間・dry_run・固定収集の結果と取得不足を確認する。
+<判定基準: どの証拠を使い、何を要対応と判断するかを記入する>
+取得失敗・未対応・部分取得を安全と判定しない。追加調査が必要なら、この工程に公開された関数だけを使う。
+対応が必要なものは find_existing_ops_issue / search_issues で重複を確認してから create_ops_issue で起票する。
+最後に publish_report でレポートを発行し、根拠・未確認事項・実行結果の要約を返す。
 
 時間とツール呼び出しの予算: ツール呼び出しは合計 20 回以内、全体で 5 分以内を目安にする。
 
@@ -42,11 +48,11 @@ INSTRUCTION = """
 """
 
 SPECIALIST = Specialist(
-    name="my_specialist",  # snake_case; also the tool name the leader calls
+    name="my_specialist",  # snake_case; also the conversation adapter's tool name
     role="<一行で役割>",
-    description="<リーダーが読む説明: 何をする担当か、request に何を書けばよいか>",
+    description="<何をする担当か。受付は登録ジョブと整数パラメーターのJSONのみ>",
     instruction=INSTRUCTION,
-    tools=[
+    tools=[  # Trusted catalog; fixed collectors are removed from model exposure.
         get_run_context,
         list_services,
         find_existing_ops_issue,

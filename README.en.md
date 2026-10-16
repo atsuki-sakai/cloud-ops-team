@@ -5,57 +5,71 @@
 ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue)
 ![Built with Google ADK](https://img.shields.io/badge/built%20with-Google%20ADK-4285F4)
 
-**An AI operations team for your cloud.** Three specialist agents watch production errors, audit security every month and
-review every week whether merged pull requests fixed what they found, and report through GitHub issues.
+**An AI operations team for your cloud.** Five specialist agents watch production errors and suspicious access daily,
+review infrastructure weekly, audit security monthly and verify merged fixes weekly. They report through GitHub issues.
+Programs validate registered jobs and gather evidence through fixed procedures before a scoped AI analysis stage runs.
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
 [Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md) ·
 [Known limitations and improvement plan](docs/en/known-limitations.md) · [Changelog](CHANGELOG.en.md)
 
-The current version provides evidence for human review. PR identity, audit coverage and concurrent issue writes have
-unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with
+The current version provides evidence for human review. PR identity, audit coverage and issue writes across separate runs
+have unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with
 `OPS_DRY_RUN=true` and `OPS_AUTO_CLOSE_ISSUES=false`. Disabling automatic closure still allows verification labels and
 comments when writes are enabled; inspect their evidence before accepting a fix as complete.
 
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
 | `error_watch` | daily 08:00 | SRE | Groups error logs by fingerprint, correlates them with 5xx rates, failing scheduled jobs and recent deployments, and files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate |
+| `access_watch` | daily 08:30 | Access investigator | Reviews the last 24 hours of audit logs, HTTP 401/403 and probe paths, and Cloud Armor denials. Separates suspicious signals from confirmed compromise and reports evidence, confidence and coverage gaps |
+| `infrastructure_review` | Mondays 10:00 | Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits; proposes changes with impact, risk, validation and rollback steps |
 | `monthly_security_audit` | 1st of the month | Cloud security | Reviews IAM, long-lived credentials, compute, databases, network rules, security services, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel; files critical and high findings plus a monthly report |
 | `weekly_pr_review` | Mondays 09:00 | Release manager | For each open team issue: are linked PRs merged, is CI green, and did the error stop occurring? Marks `ops:verified` or `ops:stale` and publishes a weekly report |
 
-You can also just talk to it: *"check the errors of the last 24 hours"*, *"run a security audit"*, *"what is the PR status?"*.
+Schedules default to `Asia/Tokyo`. You can also ask: *"investigate suspicious access"*, *"review infrastructure waste and permissions"*, *"what is the PR status?"*.
+
+Access investigation is a scheduled log review, with no real-time protection or blocking. Missing, inaccessible or truncated
+logs and zero detections do not establish that no unauthorized access occurred. Savings are quoted only when the API returns
+an estimate. Optimization covers Cloud Run and Cloud SQL in the target region and project IAM, not every cloud resource.
 
 ## How it works
 
 ```mermaid
-flowchart LR
-    SCH["Scheduler"] --> ROOT["cloud_ops_team<br/>leader"]
-    ROOT --> EW["error_watch"] & SA["security_audit"] & PR["pr_review"]
-    EW & SA & PR --> TOOLS["cloud-neutral tools"]
-    TOOLS --> PROV["provider<br/>GCP · AWS · Azure"]
-    EW & SA & PR --> GH["GitHub issues"]
-    GH --> HUMAN["you + your AI coding tools"]
-    HUMAN -- "PR: closes #N" --> GH
+flowchart TB
+    SCH["Scheduled job JSON"] --> R["Validate registered job and arguments"]
+    Q["Your request"] --> L["Conversation leader<br/>choose from 5 specialists"]
+    L --> R
+    R --> C["Fixed evidence collection"]
+    C --> A["Scoped analysis AI<br/>evidence + follow-up/report tools only"]
+    C --> P["Cloud-specific provider"]
+    A --> G["GitHub issues and reports"]
+    S["Runtime tool/argument checks"] -.-> A
 ```
 
 - **Read-only by design.** No tool can change your cloud. GitHub writes are limited to issues, comments and labels, and are
   off (`OPS_DRY_RUN=true`) until you enable them.
-- **Cloud-neutral agents, pluggable clouds.** The agents use 18 capability tools (`list_services`, `audit_network`, ...);
-  a provider maps them to a cloud. Google Cloud implements all 18 capabilities, with known audit limitations; AWS and Azure ship as skeletons that the agents already
+- **Deterministic scheduled work.** Code selects the registered job and performs its fixed collection steps. Unknown jobs and invalid arguments are rejected before collection or a model call. Natural-language requests select a specialist adapter and enter the same validated workflow.
+- **Scoped model context.** Analysis agents receive evidence plus only the follow-up and reporting tools for their stage: currently 5–10 tools per specialist. Tool descriptions and cloud glossary entries use the same scope. Runtime checks also reject unauthorized calls and excessive query arguments.
+- **Cloud-neutral collection, pluggable clouds.** Twenty capability functions (`list_services`, `audit_network`, ...) are available to workflows;
+  a provider maps them to a cloud. Google Cloud implements these capabilities for the services listed below; AWS and Azure ship as skeletons that the agents already
   understand — capabilities can be added one at a time.
 - **Issues are the ledger.** A stored fingerprint helps find existing issues and count recurrences after a merge.
-  There is no shared lock or database to prevent duplicate writes across concurrent runs.
-- **Issue limits have gaps.** The default counter of ten applies to normal issue creation, persists across requests in the
-  same session, and excludes reports. Recurrence cooldown uses the issue's update time. These controls do not guarantee a
-  total issue limit or one comment under concurrent execution; see [known limitations](docs/en/known-limitations.md).
-- **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli); specialists run as
-  `single_turn` sub-agents so every tool call is streamed and traced.
+  Normal issue creation is serialized within one invocation, but there is no shared lock across separate runs or instances.
+- **Issue budgets have a defined scope.** `OPS_MAX_ISSUES_PER_RUN` limits normal issue creation across one invocation,
+  including `full`, and resets on the next request through the standard router. `publish_report` is outside that shared
+  budget and has no enforced call-count cap. Recurrence cooldown uses the issue's update time; overlapping runs can still
+  create duplicates. See [known limitations](docs/en/known-limitations.md).
+- **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli). A programmatic root serves HTTP/SSE and A2A; scheduled calls bypass LLM routing, and specialist adapters preserve streamed tool events for conversations.
+
+Routing/tool changes have a [baseline/candidate comparison gate](tests/eval/routing/README.md) for route, tools, arguments, preconditions and task completion. Unauthorized tool presentation, attempt or execution must remain zero; missing or incomparable evidence fails closed. Stubbed-model tests validate contracts and cannot establish live-model accuracy or release eligibility. This architecture change still needs target-environment validation and deployment.
+
+Browser coordinate recording/replay, backup creation/restore and the other operations extensions remain planned in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7); they are not implemented by this architecture change.
 
 ## Supported clouds
 
 | Cloud | Status | Logs · services · jobs · DBs · metrics | Security checks |
 |---|---|---|---|
-| Google Cloud | ✅ 18 capabilities implemented; known coverage and classification gaps | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring | IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
+| Google Cloud | ✅ 20 capabilities implemented; known coverage and classification gaps | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, Recommender | Audit/access logs, Cloud Armor denials, IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
 | AWS | 🚧 Skeleton — contributions welcome | CloudWatch Logs, ECS / Lambda, EventBridge, RDS (planned) | IAM, Security Hub, Inspector, security groups (planned) |
 | Azure | 🚧 Skeleton — contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
 
@@ -77,6 +91,8 @@ git clone https://github.com/<you>/cloud-ops-team && cd cloud-ops-team
 make setup                       # install, then answer a few questions to create .env
 make doctor                      # check configuration, Gemini, GitHub and cloud access — prints a fix for every gap
 make run JOB=error_watch         # run one job locally and watch every tool call (dry-run: nothing is written)
+make run JOB=access_watch ARGS="--hours 24"   # investigate suspicious access
+make run JOB=infrastructure_review          # review cost, permissions and configuration
 cp config/ops-context.example.md config/ops-context.md   # optional: describe your services, severity policy, known noise
 ```
 
@@ -99,8 +115,8 @@ error watch (`make jobs` shows the current ones). Full guide and runbook: [docs/
 | Tell the team what your services do and which errors are noise | `config/ops-context.md` (no code) |
 | Use your repository's labels, another language, other schedules | `.env` (no code) |
 | Change a specialist's procedure or issue format | edit `INSTRUCTION` in `app/specialists/<name>.py` |
-| Add a tool | a function in `app/tools/`, added to a specialist's `tools` |
-| Add a job or a whole specialist | add a `Job`, or copy `app/specialists/_template.py` and register it — routing and schedules follow |
+| Add a tool | add a function in `app/tools/`, choose its collection/analysis stage, scope and tests |
+| Add a job or a whole specialist | add the definition, request schema, fixed collection plan, analysis scope and comparison cases |
 | Support another cloud capability | implement it in `app/providers/<cloud>/` |
 
 Recipes with code: [Customization](docs/en/customization.md) (日本語: [カスタマイズ](docs/customization.md)).
@@ -114,7 +130,7 @@ Recipes with code: [Customization](docs/en/customization.md) (日本語: [カス
 | `GITHUB_REPO` | — | `owner/repo` |
 | `OPS_DRY_RUN` | `true` | Preview instead of writing to GitHub |
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
-| `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue counter; persists within a session and excludes reports |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue cap shared within one invocation; resets on the next request and excludes reports |
 | `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
 | `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels to match your repository |
@@ -130,7 +146,10 @@ cloud-ops-team/
 │   ├── specialists/        ★ team members: instruction, tools and jobs (copy _template.py to add one)
 │   ├── tools/              ★ tools the model calls (cloud-neutral)
 │   ├── providers/          ★ one adapter per cloud: gcp (implemented), aws and azure (skeletons)
-│   ├── agent.py            builds the leader; specialists are loaded from the registry
+│   ├── agent.py            builds the router, conversation leader and analysis agents
+│   ├── routing.py          validates registered jobs and routes them directly
+│   ├── workflows.py        fixed collection, evidence and analysis tool selection
+│   ├── tool_scope.py       per-stage tool and argument execution boundary
 │   ├── prompts.py          renders instructions (cloud, language, project context)
 │   ├── config.py           settings from .env
 │   └── core/ integrations/ fingerprints and redaction; GitHub client
@@ -148,6 +167,7 @@ cloud-ops-team/
 Issues and pull requests are welcome — especially AWS and Azure capabilities. Use `make test`, `make lint`, `make run` and
 `make eval` while developing, and start with [CONTRIBUTING.en.md](CONTRIBUTING.en.md);
 security reports go through [SECURITY.md](SECURITY.md).
+Live-model checks (`uv run pytest tests/integration -q`) require cloud credentials. Adjust the HTTP/SSE and A2A model read wait with `OPS_E2E_MODEL_TIMEOUT_SECONDS` (default 180 seconds, range 1–900). This bounds idle read time; it is not a performance guarantee.
 
 ## License
 

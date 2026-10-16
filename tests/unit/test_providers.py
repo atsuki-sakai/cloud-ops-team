@@ -154,9 +154,9 @@ def test_tool_wrapper_delegates_and_tags_provider(monkeypatch) -> None:
 
 
 def test_agent_tools_follow_adk_conventions() -> None:
-    from app.tools import ERROR_WATCH_TOOLS, PR_REVIEW_TOOLS, SECURITY_AUDIT_TOOLS
+    from app.specialists import SPECIALISTS
 
-    for fn in {*ERROR_WATCH_TOOLS, *SECURITY_AUDIT_TOOLS, *PR_REVIEW_TOOLS}:
+    for fn in {tool for specialist in SPECIALISTS for tool in specialist.tools}:
         assert inspect.getdoc(fn), (
             f"{fn.__name__} needs a docstring (the model reads it)"
         )

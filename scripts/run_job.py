@@ -7,6 +7,8 @@ not hit client read timeouts, and a tracing plugin shows what the specialists
     uv run python scripts/run_job.py error_watch --hours 72
     uv run python scripts/run_job.py weekly_pr_review --days 7
     uv run python scripts/run_job.py monthly_security_audit --kev-days 30
+    uv run python scripts/run_job.py access_watch --hours 24
+    uv run python scripts/run_job.py infrastructure_review
     uv run python scripts/run_job.py --text "直近のエラーを見て"
 """
 
@@ -80,7 +82,7 @@ async def main() -> None:
         "job",
         nargs="?",
         default="error_watch",
-        help="error_watch | weekly_pr_review | monthly_security_audit | full",
+        help="error_watch | access_watch | infrastructure_review | weekly_pr_review | monthly_security_audit | full",
     )
     parser.add_argument("--hours", type=int)
     parser.add_argument("--days", type=int)
