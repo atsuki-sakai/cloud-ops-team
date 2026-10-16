@@ -417,6 +417,9 @@ def test_qualified_security_limit_is_not_an_assertion_of_safety():
         "バックアップの復旧検証機能は提供されておりません。",
         "バックアップの復旧検証機能は提供されていません。",
         "バックアップの復旧検証機能は提供していません。",
+        "バックアップの復旧検証機能は用意されておりません。",
+        "バックアップの復旧検証機能は用意されていません。",
+        "バックアップの復旧検証機能は用意していません。",
     ],
 )
 def test_backup_capability_boundary_recognizes_negative_provision_forms(final):
@@ -429,11 +432,12 @@ def test_backup_capability_boundary_recognizes_negative_provision_forms(final):
     }
 
 
-def test_positive_provision_is_not_a_backup_capability_boundary():
+@pytest.mark.parametrize("verb", ["提供", "用意"])
+def test_positive_provision_is_not_a_backup_capability_boundary(verb):
     result = completion_assertions(
         {"category": "future_capability_boundary"},
         [],
-        "バックアップの復旧検証機能は提供されています。",
+        f"バックアップの復旧検証機能は{verb}されています。",
     )
     assert "capability_boundary_explained" not in result["facts"]
     assert result["status"] == "complete"
