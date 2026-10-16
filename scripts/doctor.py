@@ -33,6 +33,8 @@ AUDITS = {
     "audit_security_services",
     "list_security_findings",
     "scan_deployed_images",
+    "investigate_access",
+    "list_optimization_recommendations",
 }
 
 
@@ -55,6 +57,16 @@ def classify(capability: str, result: Any, target: str) -> Check:
     message = str(error.get("message") or result.get("message") or "")[:220]
     if status == "ok":
         return Check(OK, capability)
+    if status == "partial":
+        return Check(
+            FAIL,
+            capability,
+            "only part of the required evidence was retrieved; review source coverage",
+            str(
+                result.get("hint")
+                or "check the source errors, API enablement and read permissions"
+            ),
+        )
     if status == "not_supported":
         return Check(
             INFO,
@@ -295,6 +307,7 @@ def check_cloud(quick: bool) -> list[Check]:
         },
         "get_request_error_rates": {"hours": 1},
         "list_security_findings": {"max_findings": 1},
+        "investigate_access": {"hours": 1},
     }
     names = [
         c

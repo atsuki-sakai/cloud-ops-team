@@ -87,9 +87,13 @@ Every issue also gets `ops-agent` and `ops:error` / `ops:security` / `ops:report
 Scheduler jobs are generated from the jobs declared by the specialists in `app/specialists/` — `make jobs` lists them.
 Every value can be overridden; re-run `make gcp-schedule` to apply (existing jobs are updated in place).
 
+All server entry points enforce the same registered job contract. `hours` must be an integer in 1–168, weekly review `days` in 1–90, and monthly audit `kev_days` in 1–365. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
+
 | Variable | Default | Description |
 |---|---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * *` / `24` | Error watch (daily at 08:00) and its look-back window — keep the window equal to the interval |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * *` / `24` | Access investigation (daily at 08:30); keep the look-back window at least as long as the interval |
+| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | Infrastructure, cost and permissions review (Mondays at 10:00) |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | Weekly issue and PR review |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | Monthly security audit |
 | `<SCHEDULE_KEY>_CRON` | job default | Jobs you add, e.g. `DEPLOY_WATCH_CRON` for schedule key `deploy-watch` |
@@ -107,6 +111,8 @@ ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 ONLY_JOBS=error-watch make gcp-
 ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 ONLY_JOBS=error-watch make gcp-schedule      # every 6 hours
 ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72 ONLY_JOBS=error-watch make gcp-schedule    # weekdays, Monday covers the weekend
 MONTHLY_CRON="0 9 15 * *" ONLY_JOBS=monthly-security-audit make gcp-schedule                    # audit on the 15th
+ACCESS_WATCH_CRON="0 9 * * *" ACCESS_WATCH_HOURS=24 ONLY_JOBS=access-watch make gcp-schedule    # access review at 09:00
+INFRASTRUCTURE_REVIEW_CRON="0 10 * * 5" ONLY_JOBS=infrastructure-review make gcp-schedule      # infrastructure review on Fridays
 ```
 
 Pause or resume a job without changing it:
@@ -117,6 +123,14 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 ```
 
 A longer look-back than the interval is harmless — duplicates are de-duplicated by fingerprint — but costs more tokens.
+
+`ACCESS_WATCH_HOURS` sets the scheduled job's `hours`. For a manual run, use `make run JOB=access_watch ARGS="--hours 24"`.
+Re-run `make gcp-schedule` after changing the cron variables or `TZ_NAME`. `OPS_TIMEZONE` formats report timestamps;
+`TZ_NAME` controls the scheduler, so keeping them aligned makes operations easier.
+
+Both reviews use the existing dry-run, issue cap, redaction and de-duplication controls. Cost proposals belong in the report;
+critical/high security findings use existing `ops:security` issues. See the [deployment prerequisites](deployment-gcp.md#access-and-infrastructure-data-prerequisites)
+for logging coverage and additional read permissions.
 
 ## Deployment (`make gcp-deploy`)
 

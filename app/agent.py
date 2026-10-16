@@ -13,23 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cloud ops team: a leader agent and three specialists.
+"""Build the common ADK root, deterministic job workflows and conversation entry.
 
-root (cloud_ops_team) ─┬─ error_watch     : error triage, root-cause analysis, issue filing
-                       ├─ security_audit  : monthly security / hygiene / EOL / threat-intel audit
-                       └─ pr_review       : weekly verification of fixes (PR, CI, recurrence)
-
-Specialists are defined in ``app/specialists/`` (one module each) and built
-here; add one by copying ``app/specialists/_template.py`` and registering it.
-
-The cloud is pluggable (``OPS_CLOUD_PROVIDER=gcp|aws|azure``): specialists use
-cloud-neutral tools that delegate to the selected provider
-(``app/providers``). Specialists are ``mode="single_turn"`` sub-agents: ADK
-exposes each one to the leader as a tool and runs it *inline* in the
-leader's session, so every tool call streams as an event and shows up in
-traces, while one headless trigger (Cloud Scheduler →
-``/apps/app/trigger/pubsub``) still yields one consolidated report.
+Scheduled JSON requests resolve through ``ScheduledRouter`` without an LLM
+leader. Required evidence is collected by a fixed workflow before a specialist
+receives only the tools and instructions for its analysis phase. Natural
+language retains a separate, scoped conversation leader.
 """
+
+import asyncio
+from collections.abc import Mapping
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
@@ -40,9 +33,11 @@ from google.genai import types
 from app import prompts
 from app.config import CONFIG
 from app.providers import get_provider
+from app.routing import ScheduledJobAdapter, ScheduledRouter, conversation_tool_guard
 from app.specialists import SPECIALISTS
-from app.specialists.base import Specialist
-from app.tools import get_run_context
+from app.specialists.base import Job, Specialist
+from app.tool_scope import build_tool_scope
+from app.workflows import prepare_job
 
 MODEL = CONFIG.model
 CLOUD = get_provider().profile.display_name
@@ -64,31 +59,70 @@ def _gen_config(max_output_tokens: int = 8192) -> types.GenerateContentConfig:
     )
 
 
-def build_specialist(specialist: Specialist) -> Agent:
+def build_specialist(specialist: Specialist, *, phase: str = "legacy") -> Agent:
     """Turn a specialist definition (app/specialists) into an ADK sub-agent."""
+    scope = build_tool_scope(specialist, phase=phase)
     return Agent(
         name=specialist.name,
         model=_model(),
         description=prompts.description_for(specialist),
-        instruction=prompts.instruction_for(specialist),
-        tools=list(specialist.tools),
+        instruction=prompts.instruction_for(specialist, tools=scope.tools, phase=phase),
+        tools=list(scope.tools),
+        before_model_callback=scope.before_model_callback,
+        before_tool_callback=scope.before_tool_callback,
         mode="single_turn",
         generate_content_config=_gen_config(specialist.max_output_tokens),
     )
 
 
-root_agent = Agent(
+async def build_scheduled_agent(
+    specialist: Specialist, job: Job, params: Mapping[str, int]
+) -> Agent:
+    """Collect required evidence without blocking the server's event loop."""
+    prepared = await asyncio.to_thread(prepare_job, specialist, job, params)
+    return build_specialist(prepared.analysis_specialist, phase="analysis")
+
+
+def build_job_adapter(specialist: Specialist) -> ScheduledJobAdapter:
+    """Expose a fixed workflow, rather than cloud tools, to conversation."""
+    jobs = ", ".join(identifier for job in specialist.jobs for identifier in job.ids)
+    return ScheduledJobAdapter(
+        name=specialist.name,
+        description=(
+            f"{specialist.role}。固定収集後に分析する。"
+            f"request は job を明示した JSON 文字列のみ。受付 job: {jobs}。"
+            "引数は担当の期間パラメーターだけ。自然文・別担当 job・full は受け付けない。"
+        ),
+        specialists=(specialist,),
+        job_runner_factory=build_scheduled_agent,
+    )
+
+
+_conversation_adapters = [build_job_adapter(specialist) for specialist in SPECIALISTS]
+
+conversation_leader = Agent(
+    name="conversation_leader",
+    model=_model(),
+    description=f"{CLOUD} 運用保守の対話窓口。自然言語の依頼を固定ワークフローへ割り振る。",
+    instruction=prompts.root_instruction,
+    tools=[],
+    sub_agents=_conversation_adapters,
+    before_tool_callback=conversation_tool_guard(_conversation_adapters),
+    generate_content_config=_gen_config(),
+)
+
+
+root_agent = ScheduledRouter(
     # Keep in sync with agents-cli-manifest.yaml: agents-cli derives this name
     # from the project `name:` recorded there, and telemetry reports it as
     # gen_ai.agent.name. Renaming the agent only here makes the two disagree,
     # and anything selecting traces by name stops finding this agent's.
     name="cloud_ops_team",
-    model=_model(),
-    description=f"{CLOUD} 運用保守チームのリーダー。ジョブを専門家に割り振り、統合レポートを返す。",
-    instruction=prompts.root_instruction,
-    tools=[get_run_context],
-    sub_agents=[build_specialist(specialist) for specialist in SPECIALISTS],
-    generate_content_config=_gen_config(),
+    model=_model(),  # Configuration is preserved; ScheduledRouter never calls it.
+    description=f"{CLOUD} 運用保守。定期ジョブを検証して直接実行し、対話は専用窓口へ渡す。",
+    specialists=tuple(SPECIALISTS),
+    job_runner_factory=build_scheduled_agent,
+    conversation_agent=conversation_leader,
 )
 
 app = App(

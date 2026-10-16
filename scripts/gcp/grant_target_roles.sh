@@ -18,12 +18,14 @@ ROLES=(
   roles/serviceusage.serviceUsageConsumer    # call APIs billed to the target (x-goog-user-project)
   roles/browser
   roles/logging.viewer                       # error logs
+  roles/logging.privateLogViewer             # Data Access audit logs for access investigations
   roles/monitoring.viewer                    # 5xx rates, alert policies, uptime checks
   roles/run.viewer                           # Cloud Run services, revisions, IAM
   roles/cloudscheduler.viewer                # failing jobs
   roles/cloudsql.viewer                      # Cloud SQL settings and maintenance
   roles/compute.networkViewer                # firewall rules
   roles/iam.securityReviewer                 # IAM policy, service-account keys
+  roles/recommender.iamViewer                 # read IAM least-privilege recommendations
   roles/securitycenter.findingsViewer        # Security Command Center (when enabled)
   roles/containeranalysis.occurrences.viewer # image vulnerabilities (when enabled)
   roles/artifactregistry.reader

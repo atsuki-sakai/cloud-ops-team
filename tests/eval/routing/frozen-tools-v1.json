@@ -1,0 +1,466 @@
+{
+  "schema_version": 1,
+  "clock": "2026-10-16T00:00:00Z",
+  "target": "fixture-project",
+  "repository": "example/fixture",
+  "capabilities": [
+    "summarize_error_groups",
+    "list_services",
+    "list_databases",
+    "investigate_access",
+    "list_optimization_recommendations",
+    "audit_iam",
+    "audit_databases"
+  ],
+  "tools": {
+    "get_run_context": {
+      "status": "ok",
+      "now": "2026-10-16T00:00:00+00:00",
+      "today": "2026-10-16",
+      "provider": "gcp",
+      "provider_name": "Google Cloud",
+      "target": "fixture-project",
+      "region": "asia-northeast1",
+      "github_repo": "example/fixture",
+      "dry_run": true,
+      "auto_close_issues": false,
+      "max_issues_per_run": 10,
+      "report_language": "ja",
+      "timezone": "Asia/Tokyo",
+      "unsupported_capabilities": []
+    },
+    "summarize_error_groups": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "groups": [],
+      "total_groups": 0,
+      "total_errors": 0
+    },
+    "list_error_logs": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "entries": [],
+      "total": 0
+    },
+    "get_log_context": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "entries": [],
+      "total": 0
+    },
+    "count_matching_errors": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "count": 0
+    },
+    "list_services": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "services": [
+        {
+          "name": "fixture-api",
+          "region": "asia-northeast1",
+          "ready": true
+        }
+      ],
+      "total": 1
+    },
+    "list_deployments": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "deployments": [],
+      "total": 0
+    },
+    "list_scheduled_jobs": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "jobs": [
+        {
+          "name": "fixture-daily",
+          "state": "ENABLED",
+          "schedule": "0 8 * * *",
+          "last_status": "OK"
+        }
+      ],
+      "total": 1
+    },
+    "list_databases": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "databases": [
+        {
+          "name": "fixture-db",
+          "databaseVersion": "POSTGRES_16",
+          "state": "RUNNABLE",
+          "backup_enabled": true,
+          "point_in_time_recovery_enabled": true
+        }
+      ],
+      "total": 1
+    },
+    "get_request_error_rates": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "services": [
+        {
+          "service": "fixture-api",
+          "total_requests": 100,
+          "error_5xx": 0,
+          "error_4xx": 0,
+          "error_rate": 0
+        }
+      ],
+      "hours": 24
+    },
+    "get_alerting_setup": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "alert_policies": [
+        {
+          "name": "fixture-error-rate",
+          "enabled": true
+        }
+      ],
+      "uptime_checks": [
+        {
+          "name": "fixture-uptime"
+        }
+      ]
+    },
+    "find_existing_ops_issue": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "found": false,
+      "issue": null
+    },
+    "search_issues": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "issues": [],
+      "total": 0
+    },
+    "create_ops_issue": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "comment_on_issue": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_iam": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_credentials": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_compute": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_databases": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_network": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "audit_security_services": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "list_security_findings": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "scan_deployed_images": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "fetch_cisa_kev": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "vulnerabilities": [],
+      "total": 0
+    },
+    "check_eol_status": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "get_repo_security_posture": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "repository": "example/fixture",
+      "checks": [
+        {
+          "name": "branch_protection",
+          "status": "enabled"
+        }
+      ]
+    },
+    "web_threat_research": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "publish_report": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "list_ops_issues": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "issues": [],
+      "total": 0
+    },
+    "get_issue": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "get_issue_linked_prs": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "pull_requests": [],
+      "total": 0
+    },
+    "list_recent_pull_requests": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "pull_requests": [],
+      "total": 0
+    },
+    "get_pull_request": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "get_recent_workflow_runs": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "runs": [],
+      "total": 0
+    },
+    "add_issue_labels": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "close_issue": {
+      "status": "ok",
+      "complete": true,
+      "findings": []
+    },
+    "investigate_access": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "coverage": {
+        "status": "complete",
+        "complete": true
+      },
+      "sources": [
+        {
+          "source": "audit",
+          "status": "ok",
+          "complete": true,
+          "observed_entries": 0
+        },
+        {
+          "source": "http",
+          "status": "ok",
+          "complete": true,
+          "observed_entries": 0
+        }
+      ],
+      "hours": 24
+    },
+    "list_optimization_recommendations": {
+      "status": "ok",
+      "complete": true,
+      "findings": [],
+      "recommendations": [],
+      "sources": [
+        {
+          "name": "fixture-recommender",
+          "status": "ok",
+          "complete": true
+        }
+      ],
+      "estimated_savings_status": "unknown"
+    }
+  },
+  "offline_plans": {
+    "error_watch": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "summarize_error_groups",
+        "arguments": {
+          "hours": 72
+        }
+      },
+      {
+        "tool": "get_request_error_rates",
+        "arguments": {
+          "hours": 72
+        }
+      }
+    ],
+    "access_watch": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "investigate_access",
+        "arguments": {
+          "hours": 24
+        }
+      }
+    ],
+    "security_audit": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "audit_iam",
+        "arguments": {}
+      },
+      {
+        "tool": "audit_databases",
+        "arguments": {}
+      },
+      {
+        "tool": "fetch_cisa_kev",
+        "arguments": {
+          "days": 30
+        }
+      }
+    ],
+    "pr_review": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "list_ops_issues",
+        "arguments": {
+          "state": "open",
+          "kind": "all"
+        }
+      },
+      {
+        "tool": "list_recent_pull_requests",
+        "arguments": {
+          "days": 7
+        }
+      }
+    ],
+    "infrastructure_review": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "list_optimization_recommendations",
+        "arguments": {}
+      },
+      {
+        "tool": "audit_iam",
+        "arguments": {}
+      },
+      {
+        "tool": "audit_databases",
+        "arguments": {}
+      }
+    ]
+  },
+  "scenarios": {
+    "access-partial-v1": {
+      "investigate_access": {
+        "status": "partial",
+        "complete": false,
+        "findings": [],
+        "coverage": {
+          "status": "partial",
+          "complete": false
+        },
+        "sources": [
+          {
+            "source": "audit",
+            "status": "ok",
+            "complete": true,
+            "observed_entries": 0
+          },
+          {
+            "source": "http",
+            "status": "partial",
+            "complete": false,
+            "reason": "fixture query truncated"
+          }
+        ]
+      }
+    },
+    "access-permission-denied-v1": {
+      "investigate_access": {
+        "status": "partial",
+        "complete": false,
+        "findings": [],
+        "coverage": {
+          "status": "partial",
+          "complete": false
+        },
+        "sources": [
+          {
+            "source": "audit",
+            "status": "permission_denied",
+            "complete": false,
+            "reason": "fixture PERMISSION_DENIED 403"
+          },
+          {
+            "source": "http",
+            "status": "ok",
+            "complete": true,
+            "observed_entries": 0
+          }
+        ]
+      }
+    }
+  }
+}

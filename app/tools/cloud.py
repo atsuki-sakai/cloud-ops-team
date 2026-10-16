@@ -212,3 +212,27 @@ def scan_deployed_images() -> dict:
     """Summarise vulnerability scan results for the container images that are
     currently serving traffic."""
     return _call("scan_deployed_images")
+
+
+def investigate_access(hours: int) -> dict:
+    """Investigate suspicious access signals in audit, HTTP and WAF logs.
+
+    Findings are leads for investigation, not proof of compromise. Always
+    report coverage, incomplete queries and missing logging alongside findings;
+    zero observed events cannot establish that no attack occurred.
+
+    Args:
+        hours: Look-back window in hours (1-168).
+    """
+    return _call("investigate_access", hours=hours)
+
+
+def list_optimization_recommendations() -> dict:
+    """Read cloud recommendations for resource efficiency and least privilege.
+
+    Returns source-backed suggestions, refresh times and coverage limitations.
+    Cost projections are estimates with currency and duration, not guaranteed
+    savings. Missing recommendations do not prove an optimal configuration.
+    This tool never applies or acknowledges recommendations.
+    """
+    return _call("list_optimization_recommendations")

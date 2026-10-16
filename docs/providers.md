@@ -7,7 +7,7 @@ English: [docs/en/providers.md](en/providers.md)
 
 | プロバイダー | キー | 状態 | コード |
 |---|---|---|---|
-| Google Cloud | `gcp` | 実装済み（18 の機能すべて） | [`app/providers/gcp/`](../app/providers/gcp/) |
+| Google Cloud | `gcp` | 実装済み（20 の機能。対象サービスは下表参照） | [`app/providers/gcp/`](../app/providers/gcp/) |
 | Amazon Web Services | `aws` | 雛形。すべての機能が `not_supported` を返します | [`app/providers/aws/__init__.py`](../app/providers/aws/__init__.py) |
 | Microsoft Azure | `azure` | 雛形。すべての機能が `not_supported` を返します | [`app/providers/azure/__init__.py`](../app/providers/azure/__init__.py) |
 
@@ -42,7 +42,7 @@ class AwsProvider(CloudProvider):
 ルール:
 
 1. **読み取り専用。** リソースを変更する API は決して呼びません。
-2. **`status` を持つ dict を返す。** 値は `ok`、または `api_disabled`・`permission_denied`・`not_found`・`rate_limited`・`error` のいずれかです。
+2. **`status` を持つ dict を返す。** 値は `ok`、`partial`（一部のみ取得）、`not_supported`、または `api_disabled`・`permission_denied`・`not_found`・`rate_limited`・`error` です。
    失敗時は短い `message` と、役に立つ場合は人間向けの直し方を示す `hint`（有効にすべき API、不足しているロールなど）を付けます。
    API の失敗で例外を投げないでください。ラッパーが例外を `status: error` に変換しますが、明確なメッセージのほうが役に立ちます。
 3. **応答を小さく保つ。** 一覧には上限を設け（GCP プロバイダーはエラーグループ最大 30 件、ログ 200 件、デプロイ 20 件まで）、
@@ -61,20 +61,22 @@ class AwsProvider(CloudProvider):
 | `list_error_logs` | `(hours: int, service_name: str, limit: int)` | エラー監視 |
 | `get_log_context` | `(service_name: str, around_time: str, window_minutes: int, trace: str)` | エラー監視 |
 | `count_matching_errors` | `(service_name: str, search_text: str, since: str)` | エラー監視、PR 確認 |
-| `list_services` | `()` | エラー監視 |
+| `list_services` | `()` | エラー監視、インフラ見直し |
 | `list_deployments` | `(service_name: str, limit: int)` | エラー監視 |
 | `list_scheduled_jobs` | `()` | エラー監視 |
-| `list_databases` | `()` | エラー監視、セキュリティ診断 |
+| `list_databases` | `()` | エラー監視、セキュリティ診断、インフラ見直し |
 | `get_request_error_rates` | `(hours: int)` | エラー監視 |
-| `get_alerting_setup` | `()` | エラー監視、セキュリティ診断 |
-| `audit_iam` | `()` | セキュリティ診断 |
-| `audit_credentials` | `()` | セキュリティ診断 |
-| `audit_compute` | `()` | セキュリティ診断 |
-| `audit_databases` | `()` | セキュリティ診断 |
-| `audit_network` | `()` | セキュリティ診断 |
+| `get_alerting_setup` | `()` | エラー監視、セキュリティ診断、インフラ見直し |
+| `audit_iam` | `()` | セキュリティ診断、不審アクセス調査、インフラ見直し |
+| `audit_credentials` | `()` | セキュリティ診断、インフラ見直し |
+| `audit_compute` | `()` | セキュリティ診断、インフラ見直し |
+| `audit_databases` | `()` | セキュリティ診断、インフラ見直し |
+| `audit_network` | `()` | セキュリティ診断、インフラ見直し |
 | `audit_security_services` | `()` | セキュリティ診断 |
-| `list_security_findings` | `(max_findings: int)` | セキュリティ診断 |
+| `list_security_findings` | `(max_findings: int)` | セキュリティ診断、不審アクセス調査 |
 | `scan_deployed_images` | `()` | セキュリティ診断 |
+| `investigate_access` | `(hours: int)`（1〜168） | 不審アクセス調査 |
+| `list_optimization_recommendations` | `()` | インフラ見直し |
 
 ### 共通形式の結果
 
@@ -145,6 +147,22 @@ class AwsProvider(CloudProvider):
 **`scan_deployed_images`**: `{"status", "image_count", "images": [{"image", "used_by", "total", "by_severity",
 "fix_available", "top_findings": [{"cve", "severity", "package", "version", "fixed_version"}]}]}`。
 
+**`investigate_access`** は監査の共通形式に `window`、`coverage`、`limitations`、`complete` を追加します。
+`window` は `start` 以上 `end_exclusive` 未満。各 finding の `evidence` には取得元・対象・主体の参照、件数、最初と最後の時刻、兆候の分類を含めます。
+主体と対象は安定した匿名参照で集約し、元の IP・メール・URL クエリ・任意のログ本文を返しません。
+`coverage` は取得元ごとの `status`・ページ数・取得件数・利用可能件数・不正レコード数・`complete` を返します。
+監査・機密パス探索・一般 HTTP 401/403・Cloud Armor の4系統を独立取得します。探索は最大1,000件、一般拒否は最大30,000件で、検索間の同一ログは重複集計しません。取得予算と検索間重複数も `coverage` に記録します。
+`logging_configuration="unverified"` を保持し、検索完了とログ収集の網羅性を分けます。
+部分取得の件数は下限であり、全取得失敗は `error`、一部取得は `partial` です。空の結果を安全判定に使いません。
+
+**`list_optimization_recommendations`** は `status`、`check`、`complete`、`scope`、`sources`、`recommendations`、`count`、`limitations` を返します。
+取得元ごとに状態と取得の完了を記録し、失敗した取得元の途中結果を正常な推奨一覧には混ぜません。
+推奨事項は `ACTIVE` のものに限定し、`name`、`recommender`、`location`、`priority`、`description`、`last_refresh_time`、
+`resources`、`recommended_changes`、`impacts`、`exclusive_group` を保持します。変更内容は提案であり実行しません。
+`impacts[].costProjection` に返された通貨・`units`・`nanos`・`duration` を保ち、金額や期間がない場合は推計しません。
+負のコスト変化は削減の見積もりです。異なる通貨・期間や同じ `exclusive_group` の排他的な案を無条件に合算しません。
+`complete=true` も列挙した取得元・リージョンに限った意味で、全クラウドの最適化済みを示しません。
+
 ## 各クラウドのサービスとの対応
 
 ### Google Cloud（実装済み）
@@ -163,6 +181,11 @@ class AwsProvider(CloudProvider):
 | セキュリティサービス | Service Usage で有効になっている API |
 | セキュリティ検出結果 | Security Command Center の `sources/-/findings` |
 | イメージ | トラフィックを受けているダイジェストに対する Container Analysis のオカレンス |
+| 不審アクセス | Cloud Logging `entries:list`: 監査の認証・権限拒否、IAM・鍵・ログ構成などの重要操作、HTTP 401/403 と探索パス、Cloud Armor 拒否 |
+| 最適化 | Recommender: 対象リージョンの Cloud Run Cost（v1）、Cloud SQL Idle / Overprovisioned（v1beta1）、`global` の IAM Policy（v1） |
+
+アクセスログの収集設定と追加権限は [デプロイ手順](deployment-gcp.md#アクセス調査とインフラ見直しの取得条件) を参照してください。
+新しい 2 機能は AWS / Azure では `not_supported` です。
 
 ### AWS（未実装。boto3 を使用）
 

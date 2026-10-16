@@ -3,14 +3,14 @@
 日本語版（メイン）: [docs/deployment-gcp.md](../deployment-gcp.md)
 
 The team runs as one Cloud Run service. Cloud Scheduler calls it with OIDC-authenticated HTTP requests.
-Total cost is dominated by model tokens: a daily error watch, a weekly review and a monthly audit amount to a few dozen
-short-lived requests per month, and the service scales to zero in between.
+Model tokens are a main cost: daily error and access reviews, weekly fix and infrastructure reviews, and a monthly audit.
+Also check the target's log collection and retention costs. The service scales to zero between runs.
 
 ```mermaid
 flowchart LR
-    SCH["Cloud Scheduler<br/>3 HTTP jobs"] -- "OIDC (invoker SA)" --> RUN["Cloud Run<br/>cloud-ops-team"]
+    SCH["Cloud Scheduler<br/>5 HTTP jobs"] -- "OIDC (invoker SA)" --> RUN["Cloud Run<br/>cloud-ops-team"]
     RUN -- "runtime SA" --> VTX["Vertex AI (Gemini)"]
-    RUN -- "read-only roles" --> TGT["Monitored project<br/>Logging · Monitoring · Run · SQL · IAM · SCC"]
+    RUN -- "read-only roles" --> TGT["Monitored project<br/>Logging · Monitoring · Run · SQL · IAM · SCC · Recommender"]
     RUN -- "token from Secret Manager" --> GH["GitHub issues / PRs"]
 ```
 
@@ -34,6 +34,30 @@ This enables the required APIs, creates the runtime service account `cloud-ops-t
 `roles/aiplatform.user`, `roles/secretmanager.secretAccessor`, `roles/logging.logWriter`, `roles/cloudtrace.agent` and
 `roles/monitoring.metricWriter`, grants it read-only roles on the target (`scripts/gcp/grant_target_roles.sh`), and stores the
 token in the secret `cloud-ops-team-github-token` (it asks for the token when `GITHUB_TOKEN` is not set).
+
+### Access and infrastructure data prerequisites
+
+- Enable `logging.googleapis.com` and `recommender.googleapis.com` on the monitored target; bootstrap includes them.
+- The target-role script adds `roles/logging.privateLogViewer` for Data Access audit logs and `roles/recommender.iamViewer`
+  for IAM recommendations to the existing read roles. Update an existing installation with `make gcp-grant`.
+- Data Access logging is disabled by default for many services. An administrator must check collection, exclusions,
+  destination and retention for the services under review. Bootstrap does not enable Data Access logging.
+  See [audit logs and required roles](https://docs.cloud.google.com/logging/docs/audit).
+- HTTP investigation needs access logs containing `httpRequest`; Cloud Armor denials are available only when their logs are
+  collected. The scripts do not deploy Cloud Armor or enable its logging. Zero entries may reflect missing collection.
+- Recommender covers Cloud Run and Cloud SQL in the target region and project IAM in `global`. Missing recommendations,
+  disabled APIs, denied access and partial reads must not be reported as no improvement opportunities.
+  See [Recommender roles](https://docs.cloud.google.com/iam/docs/roles-permissions/recommender).
+
+After `make doctor`, check the target's coverage, unknowns and proposals with:
+
+```bash
+OPS_DRY_RUN=true make run JOB=access_watch ARGS="--hours 24"
+OPS_DRY_RUN=true make run JOB=infrastructure_review
+```
+
+Passing local tests does not verify a target's log collection, API permissions or scheduled runs. Check execution logs and
+reports after deployment.
 
 ## 2. Deploy
 
@@ -60,7 +84,8 @@ make gcp-schedule            # create or update the jobs (the service URL is det
 gcloud scheduler jobs run cloud-ops-error-watch --location asia-northeast1   # run once now
 ```
 
-Defaults: error watch daily at 08:00, weekly review on Mondays at 09:00, monthly audit on the 1st at 09:00 (Asia/Tokyo).
+Defaults (Asia/Tokyo): error watch daily at 08:00, access review daily at 08:30, fix review Mondays at 09:00,
+infrastructure review Mondays at 10:00, and monthly audit on the 1st at 09:00.
 Change any of them with environment variables — see [configuration.md](configuration.md#schedules-make-gcp-schedule).
 
 ## Runbook

@@ -391,7 +391,7 @@ def create_ops_issue(
 def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) -> dict:
     """Publish a run report as a GitHub issue labelled ``ops:report``.
 
-    Use for the monthly security report and the weekly PR/issue review so
+    Use for security, access, infrastructure and PR/issue review reports so
     that headless runs leave a reviewable trace. Respects ``OPS_DRY_RUN``.
 
     Args:

@@ -87,9 +87,15 @@ English: [docs/en/configuration.md](en/configuration.md)
 定期実行ジョブは、`app/specialists/` の各担当（専門家）が宣言しているジョブから生成されます。一覧は `make jobs` で確認できます。
 どの値も上書きできます。`make gcp-schedule` を再実行すると反映され、既存のジョブはそのまま更新されます。
 
+登録済みジョブは全サーバー入口で同じ引数検証を通ります。`hours`は1〜168、週次レビューの`days`は1〜90、
+月次診断の`kev_days`は1〜365の整数です。JSONの数値文字列・bool・未知の項目・対象やリポジトリの上書きを拒否し、
+範囲外の値を別の値へ丸めて実行しません。対話から選んだ担当も、同じ検証と固定収集へ進みます。
+
 | 変数 | 既定値 | 説明 |
 |---|---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * *` / `24` | エラー監視（毎日 8:00）と、さかのぼる時間。さかのぼる時間は実行間隔と同じにしてください |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * *` / `24` | 不審アクセス調査（毎日 8:30）と、さかのぼる時間。調査窓は実行間隔以上に設定してください |
+| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | インフラ・費用・権限の見直し（毎週月曜 10:00） |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | 週次の ISSUE・PR レビュー |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | 月次セキュリティ診断 |
 | `<SCHEDULE_KEY>_CRON` | ジョブの既定値 | 自分で追加したジョブ用。例: スケジュールキーが `deploy-watch` なら `DEPLOY_WATCH_CRON` |
@@ -107,6 +113,8 @@ ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 ONLY_JOBS=error-watch make gcp-
 ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 ONLY_JOBS=error-watch make gcp-schedule      # 6 時間ごと
 ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72 ONLY_JOBS=error-watch make gcp-schedule    # 平日のみ。月曜は週末分も見る
 MONTHLY_CRON="0 9 15 * *" ONLY_JOBS=monthly-security-audit make gcp-schedule                    # 診断を毎月 15 日に
+ACCESS_WATCH_CRON="0 9 * * *" ACCESS_WATCH_HOURS=24 ONLY_JOBS=access-watch make gcp-schedule    # 不審アクセス調査を毎朝 9 時に
+INFRASTRUCTURE_REVIEW_CRON="0 10 * * 5" ONLY_JOBS=infrastructure-review make gcp-schedule      # インフラ見直しを金曜に
 ```
 
 設定を変えずにジョブを一時停止・再開するには、次のようにします。
@@ -117,6 +125,14 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 ```
 
 さかのぼる時間を実行間隔より長くしても問題はありません。重複はフィンガープリントで取り除かれます。ただし、モデルのトークン消費は増えます。
+
+`ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 24"` で指定します。
+`ACCESS_WATCH_CRON`・`INFRASTRUCTURE_REVIEW_CRON`・`TZ_NAME` を変更したら `make gcp-schedule` を再実行してください。
+`OPS_TIMEZONE` はレポートの表示時刻、`TZ_NAME` は定期実行の時刻に使うため、そろえて設定すると分かりやすくなります。
+
+不審アクセス調査とインフラ見直しは既存の `OPS_DRY_RUN`、起票上限、伏せ字、重複防止を使います。
+費用改善案はレポートにまとめ、セキュリティの critical / high は既存の `ops:security` ISSUE として扱います。
+データ収集の前提と追加の閲覧権限は [デプロイ手順](deployment-gcp.md#アクセス調査とインフラ見直しの取得条件) を確認してください。
 
 ## デプロイの設定（`make gcp-deploy`）
 

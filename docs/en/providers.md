@@ -7,7 +7,7 @@ names are identical on every cloud; only the provider changes (`OPS_CLOUD_PROVID
 
 | Provider | Key | Status | Code |
 |---|---|---|---|
-| Google Cloud | `gcp` | Implemented (all 18 capabilities) | [`app/providers/gcp/`](../../app/providers/gcp/) |
+| Google Cloud | `gcp` | Implemented (20 capabilities; service scope below) | [`app/providers/gcp/`](../../app/providers/gcp/) |
 | Amazon Web Services | `aws` | Skeleton — every capability returns `not_supported` | [`app/providers/aws/__init__.py`](../../app/providers/aws/__init__.py) |
 | Microsoft Azure | `azure` | Skeleton — every capability returns `not_supported` | [`app/providers/azure/__init__.py`](../../app/providers/azure/__init__.py) |
 
@@ -42,7 +42,7 @@ class AwsProvider(CloudProvider):
 Rules:
 
 1. **Read-only.** Never call an API that changes a resource.
-2. **Return a dict with `status`.** `ok`, or one of `api_disabled`, `permission_denied`, `not_found`, `rate_limited`, `error`
+2. **Return a dict with `status`.** `ok`, `partial` (some sources/results unavailable), `not_supported`, or one of `api_disabled`, `permission_denied`, `not_found`, `rate_limited`, `error`
    with a short `message` and, where useful, a `hint` telling a human how to fix it (which API to enable, which role is missing).
    Do not raise for API failures — the wrapper turns exceptions into `status: error`, but a clear message is better.
 3. **Keep responses small.** Cap lists (the GCP provider returns at most 30 error groups, 200 log entries, 20 deployments),
@@ -61,20 +61,22 @@ Rules:
 | `list_error_logs` | `(hours: int, service_name: str, limit: int)` | error watch |
 | `get_log_context` | `(service_name: str, around_time: str, window_minutes: int, trace: str)` | error watch |
 | `count_matching_errors` | `(service_name: str, search_text: str, since: str)` | error watch, PR review |
-| `list_services` | `()` | error watch |
+| `list_services` | `()` | error watch, infrastructure review |
 | `list_deployments` | `(service_name: str, limit: int)` | error watch |
 | `list_scheduled_jobs` | `()` | error watch |
-| `list_databases` | `()` | error watch, security audit |
+| `list_databases` | `()` | error watch, security audit, infrastructure review |
 | `get_request_error_rates` | `(hours: int)` | error watch |
-| `get_alerting_setup` | `()` | error watch, security audit |
-| `audit_iam` | `()` | security audit |
-| `audit_credentials` | `()` | security audit |
-| `audit_compute` | `()` | security audit |
-| `audit_databases` | `()` | security audit |
-| `audit_network` | `()` | security audit |
+| `get_alerting_setup` | `()` | error watch, security audit, infrastructure review |
+| `audit_iam` | `()` | security audit, access investigation, infrastructure review |
+| `audit_credentials` | `()` | security audit, infrastructure review |
+| `audit_compute` | `()` | security audit, infrastructure review |
+| `audit_databases` | `()` | security audit, infrastructure review |
+| `audit_network` | `()` | security audit, infrastructure review |
 | `audit_security_services` | `()` | security audit |
-| `list_security_findings` | `(max_findings: int)` | security audit |
+| `list_security_findings` | `(max_findings: int)` | security audit, access investigation |
 | `scan_deployed_images` | `()` | security audit |
+| `investigate_access` | `(hours: int)` (1–168) | access investigation |
+| `list_optimization_recommendations` | `()` | infrastructure review |
 
 ### Normalized results
 
@@ -145,6 +147,23 @@ Severity guide: `critical` (public data or admin exposure), `high` (exploitable 
 **`scan_deployed_images`** — `{"status", "image_count", "images": [{"image", "used_by", "total", "by_severity",
 "fix_available", "top_findings": [{"cve", "severity", "package", "version", "fixed_version"}]}]}`.
 
+**`investigate_access`** extends the shared audit shape with `window`, `coverage`, `limitations` and `complete`.
+The window is inclusive at `start` and exclusive at `end_exclusive`. Findings include `evidence` with source, resource/subject
+references, count, first/last timestamps and signal categories. Stable anonymous references group subjects and resources;
+raw IPs, emails, URL queries and arbitrary log payloads are not returned.
+Audit, sensitive-path probes, general HTTP 401/403 responses and Cloud Armor each have an independent query budget. Probes allow up to 1,000 entries and general denials up to 30,000; entries shared across searches are counted once. Coverage includes each budget and the cross-search duplicate count.
+Per-source `coverage` includes status, pages, fetched/usable/invalid counts and completion. `logging_configuration="unverified"`
+separates completed queries from comprehensive log collection. Partial counts are lower bounds; all sources failing produces
+`error`, while partial retrieval produces `partial`. Empty results must not be used as a safety verdict.
+
+**`list_optimization_recommendations`** returns `status`, `check`, `complete`, `scope`, `sources`, `recommendations`, `count`
+and `limitations`. Source status and completion remain visible; unfinished source results are not mixed into successful recommendations.
+Only `ACTIVE` recommendations are included, retaining `name`, `recommender`, `location`, `priority`, `description`,
+`last_refresh_time`, `resources`, `recommended_changes`, `impacts` and `exclusive_group`. Proposed operations are never executed.
+`impacts[].costProjection` preserves the API currency, `units`, `nanos` and `duration`; missing money or duration is not invented.
+Negative cost changes indicate estimated savings. Do not blindly sum differing currencies/durations or mutually exclusive
+proposals sharing an `exclusive_group`. `complete=true` applies only to the listed sources and region, not the whole cloud.
+
 ## Service mapping
 
 ### Google Cloud (implemented)
@@ -163,6 +182,11 @@ Severity guide: `critical` (public data or admin exposure), `high` (exploitable 
 | security services | Service Usage enabled APIs |
 | security findings | Security Command Center `sources/-/findings` |
 | images | Container Analysis occurrences for the digests serving traffic |
+| access investigation | Cloud Logging `entries:list`: audit authentication/permission denials, sensitive IAM/key/log operations, HTTP 401/403 and probe paths, Cloud Armor denials |
+| optimization | Recommender: Cloud Run Cost (v1) and Cloud SQL Idle / Overprovisioned (v1beta1) in the target region; IAM Policy (v1) in `global` |
+
+See [deployment prerequisites](deployment-gcp.md#access-and-infrastructure-data-prerequisites) for log collection and additional permissions.
+Both new capabilities return `not_supported` on AWS/Azure.
 
 ### AWS (to implement — boto3)
 
