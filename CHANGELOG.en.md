@@ -18,6 +18,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ### Changed
 - Scheduled jobs now use strict JSON validation and fixed collection; natural-language requests enter the same path through job-specific adapters. Analysis models receive only their stage's tools, descriptions and invocation history.
 - Execution validates periods, result limits, targets and repositories, retaining missing or truncated collection results as per-run evidence. Existing collector, model and fingerprint contracts are preserved.
+- Aligned the READMEs, architecture, configuration, provider and deployment guides with per-invocation issue budgets,
+  duplicate controls, audit coverage and result storage. Documented deployment gaps for custom context paths and A2A URLs.
+  Documentation of remaining limitations does not implement their proposed fixes.
 - Documentation is now **Japanese-first**: `README.md`, `docs/*.md`, `CONTRIBUTING.md` and `CHANGELOG.md` are Japanese;
   the English versions are `README.en.md`, `docs/en/*.md`, `CONTRIBUTING.en.md` and `CHANGELOG.en.md`.
   `SECURITY.md` and the issue and PR templates are bilingual, and `CODE_OF_CONDUCT.md` has a Japanese summary.
@@ -27,6 +30,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Daily `access_watch` at 08:30 with a 24-hour window: audit logs, HTTP authentication denials/probe paths and Cloud Armor denials, reported with evidence, confidence and coverage gaps.
 - Weekly `infrastructure_review` on Mondays at 10:00: GCP Recommender cost/IAM recommendations and existing configuration audits, with impact, risks, implementation, validation and rollback proposals. No automatic cloud changes.
 - Cloud-neutral `investigate_access(hours)` / `list_optimization_recommendations()` capabilities, schedule settings and deployment guidance for logging coverage and additional read roles. AWS/Azure return `not_supported` for both capabilities.
+- [Known limitations and improvement plan](docs/en/known-limitations.md) in both languages, recording ten unresolved defects,
+  the resolved session-counter defect (A03), two conditional risks, interim measures and required validation.
 - Japanese versions of the configuration reference, the Google Cloud deployment guide and the provider guide;
   the Japanese architecture document now covers everything the English one does.
 

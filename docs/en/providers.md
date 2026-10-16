@@ -11,9 +11,13 @@ names are identical on every cloud; only the provider changes (`OPS_CLOUD_PROVID
 | Amazon Web Services | `aws` | Skeleton — every capability returns `not_supported` | [`app/providers/aws/__init__.py`](../../app/providers/aws/__init__.py) |
 | Microsoft Azure | `azure` | Skeleton — every capability returns `not_supported` | [`app/providers/azure/__init__.py`](../../app/providers/azure/__init__.py) |
 
-A skeleton provider is still useful: repository posture, CISA KEV, EOL checks, web threat research and the weekly PR review
-need no cloud access, and the agents report every unsupported capability as "not checked".
+A skeleton provider can still inspect repository posture, CISA KEV, EOL and web threats, and retrieve PRs and CI.
+Confirming deployment and error recurrence in a weekly review requires the corresponding cloud capabilities.
+Unsupported capabilities return `not_supported`; the agents are instructed to report them as "not checked".
 Capabilities can be implemented one at a time — contributions are very welcome.
+
+"Implemented" means that a method exists, not that an audit is complete. See [known limitations](known-limitations.md)
+for current audit limitations and the checks an operator must supplement.
 
 ## The contract
 
@@ -46,12 +50,15 @@ Rules:
    with a short `message` and, where useful, a `hint` telling a human how to fix it (which API to enable, which role is missing).
    Do not raise for API failures — the wrapper turns exceptions into `status: error`, but a clear message is better.
 3. **Keep responses small.** Cap lists (the GCP provider returns at most 30 error groups, 200 log entries, 20 deployments),
-   truncate long strings, and paginate server-side.
+   truncate long strings, and paginate server-side. Preserve caps and partial failures in results; do not confuse fetched counts with totals.
 4. **Redact.** Pass log excerpts and free text through `app.core.redact.redact`. Return environment variable names, never values.
 5. **Use the shared shapes.** Audits return `app.core.findings.result(check, findings, summary)` with findings built by
    `app.core.findings.finding(...)`; fingerprints for error groups come from `app.core.fingerprint`.
 6. **Configuration** comes from `app.config.CONFIG` (`target`, `region`) plus provider-specific environment variables you
    document here (for example `OPS_AWS_LOG_GROUPS`).
+7. **Preserve conditions.** Do not discard IAM conditions, ACL expiry or engine-specific setting names during normalization.
+   Keep unevaluated conditions and retrieval failures as unknown. This is guidance for new implementations, not a guarantee
+   already applied to every existing GCP audit.
 
 ## Capabilities
 
@@ -106,8 +113,10 @@ so that `count_matching_errors` can find the same error again.
 **`list_error_logs`, `get_log_context`** — `{"status", "count", "entries": [{"timestamp", "severity", "service", "revision",
 "message", "http_status", "trace", "insert_id"}]}` (messages redacted).
 
-**`count_matching_errors`** — `{"status", "since", "count" (required), "capped", "first_seen", "last_seen", "latest_samples"}`.
-Match `search_text` against both the message and the request URL.
+**`count_matching_errors`** — `{"status", "since", "count", "capped", "complete", "first_seen", "last_seen", "latest_samples"}`.
+Match `search_text` against both the message and the request URL. The GCP implementation rejects empty search text and returns
+`complete: false` for page limits or partial failures. Even if the fetched count is zero, only `status: ok` with `complete: true`
+can support a "no recurrence" claim. A complete retrieval failure may omit `count`.
 
 **`list_services`** — `{"status", "target", "region", "count", "services": [{"name" (required), "uri", "ready" (required),
 "update_time" (required), "images", "service_account", "scaling", "env_plain_names", "env_secret_names", "labels"}]}`.
@@ -187,6 +196,16 @@ proposals sharing an `exclusive_group`. `complete=true` applies only to the list
 
 See [deployment prerequisites](deployment-gcp.md#access-and-infrastructure-data-prerequisites) for log collection and additional permissions.
 Both new capabilities return `not_supported` on AWS/Azure.
+
+An operator must supplement the current GCP audits with these checks:
+
+- **Service-account keys:** Only the first 60 accounts in the list are inspected. Check keys on later accounts separately.
+- **Cloud Run exposure:** IAM retrieval failure can leave `public: false`. Independently confirm that policy retrieval succeeded.
+- **IAM and Cloud SQL:** Binding conditions and authorized-network expiry are dropped from assessment, so expired settings can be reported as currently active.
+- **MySQL IAM authentication:** An enabled `cloudsql_iam_authentication` flag can be reported as disabled. Check the MySQL flag directly.
+
+These limitations remain unfixed. MySQL PITR assessment, firewall defaults and numeric protocols, and scanning images on older
+revisions serving traffic have been fixed. GitHub retrieval failures also return unknown rather than proving a setting is disabled.
 
 ### AWS (to implement — boto3)
 

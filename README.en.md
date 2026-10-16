@@ -10,7 +10,13 @@ review infrastructure weekly, audit security monthly and verify merged fixes wee
 Programs validate registered jobs and gather evidence through fixed procedures before a scoped AI analysis stage runs.
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
-[Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md)
+[Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md) ·
+[Known limitations and improvement plan](docs/en/known-limitations.md) · [Changelog](CHANGELOG.en.md)
+
+The current version provides evidence for human review. PR identity, audit coverage and issue writes across separate runs
+have unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with
+`OPS_DRY_RUN=true` and `OPS_AUTO_CLOSE_ISSUES=false`. Disabling automatic closure still allows verification labels and
+comments when writes are enabled; inspect their evidence before accepting a fix as complete.
 
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
@@ -47,8 +53,12 @@ flowchart TB
 - **Cloud-neutral collection, pluggable clouds.** Twenty capability functions (`list_services`, `audit_network`, ...) are available to workflows;
   a provider maps them to a cloud. Google Cloud implements these capabilities for the services listed below; AWS and Azure ship as skeletons that the agents already
   understand — capabilities can be added one at a time.
-- **No database.** Issues are the ledger: a log fingerprint stored in each issue de-duplicates findings and lets the weekly
-  review count recurrences after a fix is merged.
+- **Issues are the ledger.** A stored fingerprint helps find existing issues and count recurrences after a merge.
+  Normal issue creation is serialized within one invocation, but there is no shared lock across separate runs or instances.
+- **Issue budgets have a defined scope.** `OPS_MAX_ISSUES_PER_RUN` limits normal issue creation across one invocation,
+  including `full`, and resets on the next request through the standard router. `publish_report` is outside that shared
+  budget and has no enforced call-count cap. Recurrence cooldown uses the issue's update time; overlapping runs can still
+  create duplicates. See [known limitations](docs/en/known-limitations.md).
 - **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli). A programmatic root serves HTTP/SSE and A2A; scheduled calls bypass LLM routing, and specialist adapters preserve streamed tool events for conversations.
 
 Routing/tool changes have a [baseline/candidate comparison gate](tests/eval/routing/README.md) for route, tools, arguments, preconditions and task completion. Unauthorized tool presentation, attempt or execution must remain zero; missing or incomparable evidence fails closed. Stubbed-model tests validate contracts and cannot establish live-model accuracy or release eligibility. This architecture change still needs target-environment validation and deployment.
@@ -59,11 +69,12 @@ Browser coordinate recording/replay, backup creation/restore and the other opera
 
 | Cloud | Status | Logs · services · jobs · DBs · metrics | Security checks |
 |---|---|---|---|
-| Google Cloud | ✅ Implemented | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, Recommender | Audit/access logs, Cloud Armor denials, IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
+| Google Cloud | ✅ 20 capabilities implemented; known coverage and classification gaps | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, Recommender | Audit/access logs, Cloud Armor denials, IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
 | AWS | 🚧 Skeleton — contributions welcome | CloudWatch Logs, ECS / Lambda, EventBridge, RDS (planned) | IAM, Security Hub, Inspector, security groups (planned) |
 | Azure | 🚧 Skeleton — contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
 
-On every cloud, repository posture, CISA KEV, end-of-life checks, web threat research and the weekly PR review work today.
+On every cloud, repository posture, CISA KEV, end-of-life checks, web threat research and PR progress review are available.
+Without a log capability, the weekly review cannot verify recurrence; confirm that evidence separately.
 See [docs/providers.md](docs/en/providers.md) to add or complete a provider.
 
 ## Use it for your own project
@@ -108,7 +119,7 @@ error watch (`make jobs` shows the current ones). Full guide and runbook: [docs/
 | Add a job or a whole specialist | add the definition, request schema, fixed collection plan, analysis scope and comparison cases |
 | Support another cloud capability | implement it in `app/providers/<cloud>/` |
 
-Recipes with code: [docs/customization.md](docs/en/customization.md) (日本語: [docs/customization.md](docs/en/customization.md)).
+Recipes with code: [Customization](docs/en/customization.md) (日本語: [カスタマイズ](docs/customization.md)).
 
 ## Configuration
 
@@ -119,10 +130,11 @@ Recipes with code: [docs/customization.md](docs/en/customization.md) (日本語:
 | `GITHUB_REPO` | — | `owner/repo` |
 | `OPS_DRY_RUN` | `true` | Preview instead of writing to GitHub |
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue cap shared within one invocation; resets on the next request and excludes reports |
 | `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
 | `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels to match your repository |
-| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge for the agents |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge; the standard deployment does not forward custom paths |
 
 All variables: [docs/configuration.md](docs/en/configuration.md).
 

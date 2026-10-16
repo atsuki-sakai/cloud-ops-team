@@ -9,7 +9,8 @@ cloud-ops-team は、クラウド環境の定常的な運用保守を小さな A
 - クラウド: **Google Cloud**（実装済み）、**AWS** / **Azure**（雛形。[providers.md](providers.md)）
 - ISSUE トラッカー: GitHub
 
-English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [customization.md](customization.md)
+English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [customization.md](customization.md) ・
+[既知の制約と改善計画](known-limitations.md)
 
 ## 1. 人間とエージェントの役割分担
 
@@ -154,6 +155,9 @@ cloud-ops-team/
 `config/ops-context.md`の前提知識は指示文に追加できますが、実行権限や対象・引数の検証を変更しません。
 モデル・API待ち時間は残るため、ツール削減だけで完了時間を保証しません。定期実行の既定期限は30分です。
 
+標準デプロイでは`OPS_CONTEXT_FILE`の独自パス設定を渡しません。イメージに含める既定パスを使うか、配置設定を補完します。
+取得件数・対象・引数は実行側で検証しますが、プロンプトにある呼び出し回数や実行時間の目安は、アプリ全体の強制予算ではありません。
+
 ## 4. プロバイダー抽象
 
 固定収集と必要な追加調査は `app/tools/cloud.py` の20個の共通機能から選びます。各担当のモデルには工程で必要なものだけを公開します。各関数は `OPS_CLOUD_PROVIDER` で選ばれたプロバイダーの同名メソッドを呼びます。
@@ -186,6 +190,8 @@ cloud-ops-team/
 - **エージェントは使える機能を知っています**。実行contextの `capabilities` / `unsupported_capabilities` は担当・工程に絞られ、
   プロンプトの用語集にも未対応のツールが示されます。レポートには推測ではなく「確認できなかった項目」として書かれます。
 - **結果の形を統一しています**。監査は `app.core.findings.result(...)` を返し、観測系は [providers.md](providers.md#共通形式の結果) に書かれたフィールドを使います。
+  現在は取得失敗・調査上限・期限条件を十分に保持しない監査があるため、`status:ok` や findings が空という結果だけで安全とは判断できません。
+  個別の確認範囲は [既知の制約](known-limitations.md) を参照してください。
 - **プロバイダーは必要になってから読み込みます**。組み込みはキーで import し、外部パッケージは `cloud_ops_team.providers` の entry point で登録し、
   テストは `register_provider` を使います。
 - **障害を隔離します**。プロバイダーの例外は `{"status": "error", ...}` に変換され、実行全体が止まることはありません。
@@ -213,8 +219,8 @@ ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセ�
 | `full` | — | 手動 | 5 人全員 |
 
 Google Cloud では `scripts/gcp/setup_schedules.sh` が、Pub/Sub の push サブスクリプションではなく Cloud Scheduler の **HTTP** ジョブを作ります。
-Pub/Sub push は配信の上限が 10 分で、応答がないと再配送されます。HTTP ジョブなら 30 分のデッドラインと再試行 0 回を設定できるので、
-時間のかかる月次診断が二重に実行されることはありません。
+Pub/Sub push は配信の上限が 10 分で、応答がないと再配送されます。HTTP ジョブには 30 分のデッドラインと再試行 0 回を設定し、
+スケジューラによる再試行を抑えます。別ジョブや手動実行との重なりを含む単一実行保証はありません。
 周期・遡る時間・タイムゾーン・ジョブ名はすべて環境変数で変えられ、スクリプトを再実行すると既存のジョブがその場で更新されます
 （[configuration.md](configuration.md#定期実行の設定make-gcp-schedule)）。
 AWS では EventBridge Scheduler がサービスの URL を呼ぶ形、Azure では Container Apps のジョブか Logic App が同じ役割を担います。
@@ -258,14 +264,20 @@ sequenceDiagram
     loop 重要なグループ（最大5）
         E->>C: 許可されたログ・デプロイの追加調査
     end
-    E->>G: 既存案件検索・重複防止付き起票
+    E->>G: 既存案件検索・重複を抑えた起票
     E-->>R: 根拠・起票・見送り・未確認を含むレポート
     R-->>S: 担当の結果
 ```
 
 担当を選ぶモデル呼び出しと、収集済みの一覧取得ツールは定期実行の分析工程にありません。
 
+最終レポートはセッションのイベントです。trigger の成功応答は「必要な項目をすべて調査できた」という意味ではありません。
+日次監視で起票がなく、セッションを持つインスタンスが終了すると、調査不能の説明も失われる場合があります。
+
 ## 7. ISSUE のライフサイクル
+
+以下は専門家の指示文にある確認手順です。PR のリポジトリ・SHA、同じ SHA の CI、配置された revision、観測範囲を
+コードで一括検証する状態機械は未実装です。参照 PR が修正証拠に混ざる問題もあり、`ops:verified` の根拠を人が点検してください。
 
 ```mermaid
 stateDiagram-v2
@@ -297,10 +309,13 @@ GitHub の ISSUE そのものを台帳として使います。
 2. `fingerprint = sha1(resource_type | service | template)[:16]` で指紋を作ります（`app/core/fingerprint.py`）。
    式を変えると open な ISSUE がすべて再起票されてしまうため、基準値をユニットテストで固定しています。
 3. fingerprint・service・`search_text`・provider・target を ISSUE の `ops-meta` ブロックに保存します。
-4. 起票の前に、open の ISSUE と 30 日以内にクローズされた ISSUE を走査します。**fingerprint と target の両方**が一致したものだけを同一とみなすので、
+4. 起票の前に、open の ISSUE と 30 日以内にクローズされた ISSUE を走査します。**fingerprint・provider・target** が一致したものだけを同一とみなすので、
    staging と本番で 1 つのリポジトリを共有できます。マルチクラウド対応より前に起票された ISSUE の `project` キーは target として扱います。
 5. 一致した ISSUE が open なら再発コメントを付けます。ただし `OPS_RECURRENCE_COOLDOWN_HOURS` 以内に更新済みなら省略します。
    最近クローズされた ISSUE と一致した場合は、新しい ISSUE に関連として記載します。
+
+同一実行内の通常起票は排他制御しますが、複数実行で共有する検索・書き込みのロックはありません。複数実行が同じ検索結果を読むと、重複起票や同じクールダウン内の再発コメントが起こります。
+クールダウンの基準は再発コメントの時刻ではなく ISSUE 全体の `updated_at` なので、人間の編集でも報告が抑制されます。
 
 `search_text` は、週次レビューがマージ後の再発件数を数えるときに使う文字列です。リクエストログでは URL パスの最初の ID らしき部分の手前まで
 （例: `/api/v1/worker/sns-plans`）、それ以外ではメッセージ中で最も長い英字の並びを使います。
@@ -312,12 +327,12 @@ GitHub の ISSUE そのものを台帳として使います。
 |---|---|
 | 権限 | 監視対象のクラウドには閲覧系・レビュー系のロールだけを付けます（`scripts/gcp/grant_target_roles.sh`）。変更系の API を呼ぶツールは存在しません |
 | ジョブ・ツール境界 | 全入口で登録ジョブと引数を検証し、工程外ツール・別対象・過大取得をcallbackと関数wrapperで拒否します |
-| 入口 | サービスは未認証のリクエストを拒否します。スケジューラは専用サービスアカウントの OIDC トークンで呼び出します |
+| 入口 | サービスは未認証のリクエストを拒否します。スケジューラは専用サービスアカウントの OIDC トークンで呼び出します。A2A のセッション所有権との分離は別途確認が必要です |
 | 書き込み | `OPS_DRY_RUN=true`（既定、お試しモード）では GitHub に書き込まずプレビューだけを返します。クローズは `OPS_AUTO_CLOSE_ISSUES=true` のときだけ |
-| 影響範囲 | 1 回の実行で新しく起票するのは `OPS_MAX_ISSUES_PER_RUN`（既定 10）件まで。再発コメントはクールダウン期間ごとに 1 ISSUE 1 回まで |
+| 影響範囲 | 通常起票に `OPS_MAX_ISSUES_PER_RUN`（既定 10）の実行単位の予算があり、複数担当で共有して次の依頼でリセットします。レポート起票は対象外です。実行間・インスタンス間の重複も保証して防げません |
 | データ | `app/core/redact.py` が、トークン（Bearer、JWT、Stripe、Google、GitHub、Slack）、秘密鍵、`password=` 形式の値、URL 内の認証情報、メールアドレス（サービスアカウントを除く）、カード番号、公開 IP の末尾をマスクします。環境変数は名前だけを返します |
 | プロンプト | 変更の依頼は断って ISSUE 化を提案します。根拠を必ず添え、個人情報を出さず、`error` / `not_supported` は正直に報告します |
-| 秘密情報 | GitHub トークンはシークレットマネージャーに保存し、`GITHUB_TOKEN` として注入します。`.env` はアップロードしません |
+| 秘密情報 | GitHub トークンはシークレットマネージャーに保存し、`GITHUB_TOKEN` として注入します。`.env` と `.env.backup-*` は Git・配置アップロードから除外します。bootstrap の Secret Accessor は現在プロジェクト単位です |
 
 ## 10. 認証
 
@@ -343,9 +358,9 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 |---|---|---|
 | Cloud Run | 1 vCPU、2 GiB、同時実行 4、インスタンス 0〜2、タイムアウト 1800 秒、未認証アクセス不可 | 1 つのジョブは 1 つの長いリクエストです。ジョブがないときはインスタンス 0 まで縮小します |
 | 実行 ID | 専用のサービスアカウント | 既定のコンピュート SA は使いません（診断自体がそれを指摘するため） |
-| スケジューラ | HTTP ターゲット、OIDC、デッドライン 1800 秒、再試行 0 回 | 長いジョブが二重に実行されないようにするため |
-| ビルド | `gcloud run deploy --source .`（Dockerfile: python:3.12-slim ＋ uv） | `scripts/gcp/deploy_cloud_run.sh` はサービスに必要な環境変数だけを渡します |
-| セッション | メモリ内 | 1 回の実行が 1 つのセッションで完結し、引き継ぐものがないため |
+| スケジューラ | HTTP ターゲット、OIDC、デッドライン 1800 秒、再試行 0 回 | 再試行を抑制します。別実行との重複保証はありません |
+| ビルド | `gcloud run deploy --source .`（Dockerfile: python:3.12-slim ＋ uv） | 許可リストを JSON の env ファイルで渡します。独自 `OPS_CONTEXT_FILE`・`APP_URL` は現時点で対象外です |
+| セッション | メモリ内 | インスタンス終了で履歴を失います。A2A task も既定ではメモリ内です |
 
 手順は [deployment-gcp.md](deployment-gcp.md) にまとめています。
 
@@ -355,18 +370,22 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 - **エージェントが何をしたか**: OpenTelemetry 経由の Cloud Trace（`otel_to_cloud=True`、メッセージ本文は記録しません）、
   インスタンスが生きている間は ADK のセッション API、ローカルでは `scripts/run_job.py`（すべてのツール呼び出しを時刻付きで表示）で確認します。
 - **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。週次・月次のレポートもここに残ります。
+  日次監視は必ずレポート ISSUE を作るわけではありません。HTTP 成功・起票なしだけでは、異常なしと調査不能を区別できません。
+  実行結果と確認範囲の永続保存は [改善計画](known-limitations.md) に含めています。
 - **モデルへの提示範囲**: 分析呼び出しごとの`model_tool_presentation`構造化ログに、実際のツール名・件数・schemaと説明の文字数を記録します。この記録にプロンプト・schema本文・引数・結果本文は含めません。
 
 ## 14. テストと評価
 
 | 種類 | 場所 | 内容 |
 |---|---|---|
-| ユニット | `tests/unit/` | フィンガープリントの基準値、マスキング、メタデータの往復、ラベル、設定、プロバイダーの登録と契約、雛形プロバイダー、ツールの規約（docstring・型ヒント・既定値なし）、プロバイダーごとのプロンプト生成、監視対象単位の重複排除、多言語対応 |
+| ユニット | `tests/unit/` | フィンガープリント、マスキング、設定、プロバイダー契約、ツール規約、多言語対応。追加の回帰テストは対象環境の照合、一覧・ログの完全性、書き込み失敗、ファイアウォール、稼働中リビジョン、MySQL PITR、外部 API の不正応答、デプロイ env の値保持を検証 |
 | 結合 | `tests/integration/` | ストリーミング応答と A2A サーバー（モデルを呼びます） |
 | 内容評価 | `tests/eval/datasets/`, `tests/eval/holdout/` | 既存の基本5件・holdout2件で根拠・報告内容・dry_run・安全性を評価 |
 | 構成比較 | `tests/eval/routing/`, `scripts/evaluate_routing.py` | 15ケースの担当・必須ツール・引数・前提・業務完了、未許可提示/試行/実行を同条件の旧構成と比較 |
 
 CI（`.github/workflows/ci.yml`）は、プルリクエストごとに lint・型チェック・ユニットテストを実行します。
+単体テスト合格は、実モデルによる業務完了、配置先の権限・revision、定期実行結果を確認した証拠にはなりません。
+未修正のケースと今後必要な回帰テストは [既知の制約](known-limitations.md) を参照してください。
 
 
 [比較評価ガイド](../tests/eval/routing/README.md)の形式で、旧構成と候補を同じモデル・設定・データ・時刻・対象・権限で実行します。
@@ -388,6 +407,9 @@ CI（`.github/workflows/ci.yml`）は、プルリクエストごとに lint・�
 - **モデルを変更**: `OPS_MODEL` で任意の Gemini モデルを選択。Gemini 以外は `app/agent.py` で ADK の `LiteLlm` を使う
 
 ## 16. 既知の制約
+
+追加レビューの 11 件のうち解消済み 1 件・未修正 10 件と、利用条件によって顕在化するリスク 2 件は
+[既知の制約と改善計画](known-limitations.md) にまとめています。次の制約と合わせて確認してください。
 
 - `agents-cli run` と `agents-cli eval generate` には 120 秒の固定の読み取りタイムアウトがあります。1 つのツール呼び出しがそれより長く無音だと、
   クライアントの接続が切れます。時間のかかるジョブをローカルで動かすときは `scripts/run_job.py` を使います。

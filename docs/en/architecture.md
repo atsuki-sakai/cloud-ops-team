@@ -10,7 +10,7 @@ Humans (often with AI coding tools) implement the fixes; the agents never change
 - Clouds: **Google Cloud** (implemented), **AWS** and **Azure** (provider skeletons, see [providers.md](providers.md))
 - Issue tracker: GitHub
 
-日本語版（メイン）: [docs/architecture.md](../architecture.md)
+日本語版（メイン）: [docs/architecture.md](../architecture.md) · [Known limitations and improvement plan](known-limitations.md)
 
 ## 1. The human–agent loop
 
@@ -149,7 +149,15 @@ The actual tool list, schema, docstrings, cloud glossary and context capabilitie
 Analysis also rejects follow-up, issue creation and reporting until the actual `get_collected_evidence` read returns successfully. A snapshot containing partial/error sources still permits reporting those gaps after it has been read.
 Instructions are callable providers: collection procedures are replaced with analysis steps while evidence, safety and reporting requirements are preserved.
 
-Project knowledge in `config/ops-context.md` does not change runtime permissions, scope or validation. Model/API latency remains; fewer tools do not guarantee completion time. Scheduled requests retain a 30-minute default deadline.
+**Project context.** `config/ops-context.md` (optional, `OPS_CONTEXT_FILE`) is appended to instructions so operators can
+describe services, severity policy and known noise without editing prompts. It does not change runtime permissions, scope
+or validation. The standard deployment does not forward custom paths; include the file in the image and apply the
+[post-deploy settings](deployment-gcp.md#post-deploy-settings).
+
+Programmatic dispatch and specialist adapters preserve tool events for SSE clients and local runners. The scheduler
+trigger does not return the investigation's progress or final report in its HTTP response. A long silent call can still
+cause a client timeout, while in-memory history can be lost independently. Model/API latency remains; fewer tools do not
+guarantee completion time. Scheduled requests retain a 30-minute default deadline.
 
 ## 4. Provider abstraction
 
@@ -184,6 +192,8 @@ Design rules:
   prompt glossary marks unsupported tools so reports list them as "not checked" instead of guessing.
 - **Results share one shape.** Audits return `app.core.findings.result(...)`; observability results use the fields documented
   in [providers.md](providers.md#normalized-results).
+  Some audits currently lose retrieval errors, coverage limits or expiry conditions. Neither `status:ok` nor an empty
+  findings list establishes safety; see [known limitations](known-limitations.md) for the affected checks.
 - **Providers are discovered lazily.** Built-ins are imported by key; third-party packages register through the
   `cloud_ops_team.providers` entry point; tests use `register_provider`.
 - **Wrappers isolate failures.** A provider exception becomes `{"status": "error", ...}` and never crashes the run.
@@ -212,8 +222,8 @@ ADK (`trigger_sources=["pubsub"]`) decodes it and runs `ScheduledRouter` with
 | `full` | — | manual | all five |
 
 On Google Cloud, `scripts/gcp/setup_schedules.sh` creates Cloud Scheduler **HTTP** jobs rather than Pub/Sub push subscriptions:
-push deliveries are capped at 10 minutes and redelivered when not acknowledged, while HTTP jobs allow a 30-minute deadline and
-zero retries, so a long audit never runs twice. Schedules, look-back windows, time zone and job names are all environment variables;
+push deliveries are capped at 10 minutes and redelivered when not acknowledged. HTTP jobs use a 30-minute deadline and
+zero retries to suppress scheduler retries; other jobs and manual runs can still overlap. Schedules, look-back windows, time zone and job names are all environment variables;
 re-running the script updates jobs in place. On AWS the equivalent is EventBridge Scheduler calling the service URL; on Azure,
 a Container Apps job or Logic App.
 
@@ -263,8 +273,14 @@ sequenceDiagram
 ```
 
 Scheduled analysis does not need an LLM routing call or the already-completed inventory tools.
+The final report is a session event; a successful trigger response does not establish that all required checks completed.
+If daily monitoring files no issue and its instance terminates, the explanation of an incomplete investigation can be lost.
 
 ## 7. Issue lifecycle
+
+This is the specialist's prompted workflow. There is no state machine that jointly validates repository and PR SHA, CI for
+that SHA, the deployed revision and observation coverage. Referenced PRs can currently enter fix evidence, so a human must
+inspect the evidence behind `ops:verified`.
 
 ```mermaid
 stateDiagram-v2
@@ -297,11 +313,15 @@ GitHub issues are the ledger.
 2. `fingerprint = sha1(resource_type | service | template)[:16]` (`app/core/fingerprint.py`).
    Golden values are pinned by unit tests because changing the formula would re-file every open issue.
 3. The fingerprint, service, `search_text`, provider and target are stored in the issue's `ops-meta` block.
-4. Before filing, open issues and issues closed in the last 30 days are scanned. A match must have the same fingerprint **and**
-   the same target, so staging and production can share one repository (issues filed before multi-cloud support use the
+4. Before filing, open issues and issues closed in the last 30 days are scanned. A match must have the same **fingerprint,
+   provider and target**, so staging and production can share one repository (issues filed before multi-cloud support use the
    legacy `project` key, which is treated as the target).
 5. An open match gets a recurrence comment unless it was updated within `OPS_RECURRENCE_COOLDOWN_HOURS`; a recently closed
    match is referenced from the new issue.
+
+Normal issue creation is serialized within one invocation by `RunBudget`. There is no shared search-and-write lock across
+separate invocations or instances, so overlapping runs can still create duplicate issues or recurrence comments within
+the same cooldown. Cooldown uses the issue's `updated_at`, not the last recurrence comment time, so human edits also suppress reports.
 
 `search_text` is what the weekly review later counts: for request logs the URL path up to the first id-like segment
 (`/api/v1/worker/sns-plans`), otherwise the longest alphabetic run of the message. Security findings use
@@ -313,12 +333,12 @@ GitHub issues are the ledger.
 |---|---|
 | Permissions | Viewer / reviewer roles only on the monitored cloud (`scripts/gcp/grant_target_roles.sh`). No tool calls a mutating API |
 | Job/tool boundary | The shared root validates jobs/arguments; callbacks and wrappers reject out-of-stage tools, foreign scope and excessive queries |
-| Entry point | The service rejects unauthenticated requests; the scheduler authenticates with an OIDC token of a dedicated service account |
+| Entry point | The service rejects unauthenticated requests; the scheduler authenticates with an OIDC token of a dedicated service account. A2A session ownership needs separate validation |
 | Writes | `OPS_DRY_RUN=true` (default) returns previews instead of writing to GitHub; closing needs `OPS_AUTO_CLOSE_ISSUES=true` |
-| Blast radius | `OPS_MAX_ISSUES_PER_RUN` (10) caps new issues per run; one recurrence comment per issue per cooldown |
+| Blast radius | `RunBudget` shares the normal issue cap (`OPS_MAX_ISSUES_PER_RUN`, default 10) across one invocation, including `full`, and resets at the next standard-router request. `publish_report` is outside that budget and has no enforced call-count cap. Separate runs can still race |
 | Data | `app/core/redact.py` masks tokens (Bearer, JWT, Stripe, Google, GitHub, Slack), private keys, `password=`-style values, credentials in URLs, e-mail addresses (service accounts excepted), card numbers and the last octet of public IPs. Environment variables are returned by name only |
 | Prompts | Refuse change requests and propose an issue instead; cite evidence; never output personal data; report `error` / `not_supported` honestly |
-| Secrets | The GitHub token lives in a secret manager and is injected as `GITHUB_TOKEN`; `.env` is never uploaded |
+| Secrets | The GitHub token lives in a secret manager and is injected as `GITHUB_TOKEN`; `.env` and `.env.backup-*` are excluded from Git and deployment uploads. Bootstrap currently grants Secret Accessor at project scope |
 
 ## 10. Authentication
 
@@ -343,9 +363,9 @@ See [configuration.md](configuration.md) for every variable. The essentials: `OP
 |---|---|---|
 | Cloud Run | 1 vCPU, 2 GiB, concurrency 4, 0–2 instances, 1800 s timeout, no unauthenticated access | One job is one long request; scale to zero between jobs |
 | Runtime identity | Dedicated service account | Never the default compute account (which the audit itself flags) |
-| Scheduler | HTTP target, OIDC, 1800 s deadline, 0 retries | No duplicate runs of long jobs |
-| Build | `gcloud run deploy --source .` (Dockerfile: python:3.12-slim + uv) | `scripts/gcp/deploy_cloud_run.sh` passes only the variables the service needs |
-| Sessions | In memory | One run is one session; nothing to carry over |
+| Scheduler | HTTP target, OIDC, 1800 s deadline, 0 retries | Suppresses retries; does not prevent overlapping runs |
+| Build | `gcloud run deploy --source .` (Dockerfile: python:3.12-slim + uv) | An allowlisted JSON env file preserves values. Custom `OPS_CONTEXT_FILE` and `APP_URL` are currently excluded |
+| Sessions | In memory | History is lost on instance termination; A2A tasks also use memory by default |
 
 Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 
@@ -354,19 +374,23 @@ Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 - Runs: request logs of the trigger endpoint (latency = run time)
 - What the agents did: Cloud Trace via OpenTelemetry (`otel_to_cloud=True`, message content not captured), ADK session API while
   the instance is alive, or `scripts/run_job.py` locally (prints every tool call with timestamps)
-- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports
+- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports. Daily monitoring does not always
+  publish a report issue. HTTP success with no issue does not distinguish a clean run from an incomplete investigation.
+  Durable results and coverage are part of the [improvement plan](known-limitations.md).
 - Model exposure: `model_tool_presentation` JSON logs record each analysis call's actual tool names/count and schema/description character counts. Prompts, schema text, arguments and results are not written into these records.
 
 ## 14. Tests and evaluation
 
 | Kind | Location | What it covers |
 |---|---|---|
-| Unit | `tests/unit/` | Fingerprint golden values, redaction, metadata round trip, labels, configuration, provider registry and contract, skeleton providers, tool conventions (docstrings, type hints, no defaults), prompt rendering per provider, target-scoped de-duplication, i18n |
+| Unit | `tests/unit/` | Fingerprints, redaction, configuration, provider contracts, tool conventions and i18n. Regression cases also cover target isolation, issue and log completeness, failed writes, firewall rules, serving revisions, MySQL PITR, malformed external responses and deployment env value preservation |
 | Integration | `tests/integration/` | Streaming responses and the A2A server (calls the model) |
 | Content evaluation | `tests/eval/datasets/`, `tests/eval/holdout/` | Existing 5 core + 2 hold-out cases for evidence, reports, dry-run honesty and safety |
 | Architecture comparison | `tests/eval/routing/`, `scripts/evaluate_routing.py` | 15 cases comparing routes, required tools, arguments, preconditions, completion and unauthorized presentation/attempt/execution |
 
 CI (`.github/workflows/ci.yml`) runs lint, type checks and unit tests on every pull request.
+Passing unit tests does not establish model-backed task completion, deployed permissions and revision, or scheduled run outcomes.
+Unresolved cases and required regression coverage are listed in [known limitations](known-limitations.md).
 
 
 Use the [comparison guide](../../tests/eval/routing/README.md) to record baseline and candidate with the same model, configuration, data, clock, target and permissions. Every case needs at least three independent samples; missing cases, incomparable conditions or incomplete traces fail closed. Unauthorized presentation, attempt and execution must each remain zero.
@@ -388,6 +412,9 @@ Step-by-step recipes with code are in [customization.md](customization.md). In s
 - **A model**: `OPS_MODEL` selects any Gemini model; other providers are possible through ADK's `LiteLlm` wrapper in `app/agent.py`.
 
 ## 16. Known limitations
+
+The [known limitations and improvement plan](known-limitations.md) records ten unresolved defects, the resolved
+session-counter defect (A03) and two conditional risks from the additional review. Read it alongside the limitations below.
 
 - `agents-cli run` and `agents-cli eval generate` have a fixed 120-second read timeout; a single tool call that stays silent
   longer than that ends the client connection. Use `scripts/run_job.py` for long jobs locally.

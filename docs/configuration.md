@@ -3,8 +3,9 @@
 English: [docs/en/configuration.md](en/configuration.md)
 
 設定はすべて環境変数で行います。手元では `.env`（`make setup` で作成します。ひな形は [`.env.example`](../.env.example)）、
-デプロイ後は Cloud Run サービスの環境変数（`make gcp-deploy` が `.env` の値を設定します）を使います。
-設定を変えたら `make doctor` を実行して、正しく動くか確認してください。
+デプロイ後は Cloud Run サービスの環境変数（`make gcp-deploy` が `.env` の許可リスト内の値を設定します）を使います。
+設定を変えたら `make doctor` で設定とアクセス権を点検し、実行結果も確認してください。
+現在の保証範囲と人による補完確認は [既知の制限](known-limitations.md) にまとめています。
 
 ## エージェントの設定（`app/config.py`）
 
@@ -32,13 +33,17 @@ English: [docs/en/configuration.md](en/configuration.md)
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | お試しモード。GitHub には一切書き込まず、作成する予定の内容をプレビューとして返します |
 | `OPS_AUTO_CLOSE_ISSUES` | `false` | 週次レビューで修正を確認できた ISSUE を自動でクローズします（`false` のときは `ops:verified` ラベルとコメントを付けるだけです） |
-| `OPS_MAX_ISSUES_PER_RUN` | `10` | 1 回の実行で新しく作る ISSUE の上限 |
-| `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | 同じ ISSUE への再発コメントは、この時間内に 1 回までにします |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | `create_ops_issue` の新規起票上限。実行単位で複数担当が予算を共有し、同じセッションの次の依頼でもリセットします。`publish_report` は対象外です |
+| `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | ISSUE の `updated_at` からこの時間以内なら再発コメントを省略します。人による編集も影響し、複数インスタンス間で投稿を一度に抑える保証はありません |
 
 真偽値は `true/false`、`yes/no`、`on/off`、`1/0`（大文字小文字を区別しません）を受け付けます。
 未設定・空値は既定値を使い、それ以外の値は設定エラーとして起動を止めます。
 `make setup` が保存する `.env` とそのバックアップは所有者だけが読み書きでき、
 `.env.backup-*` は Git とデプロイのアップロード対象から除外されます。
+
+通常起票の予算は実行ごとにリセットします。レポート起票への共通予算の適用と、実行間の重複防止は未実装です。
+自動クローズを有効にする前に、PR のリポジトリ・修正関係、CI、配置、ログの観測範囲を人が確認してください。
+参照 PR と修正 PR の識別には [既知の制限](known-limitations.md) が残っています。
 
 ### 動作
 
@@ -58,7 +63,7 @@ English: [docs/en/configuration.md](en/configuration.md)
 | `OPS_ERROR_LABELS` | `bug` | エラーの ISSUE に追加で付けるラベル（カンマ区切り。空にすると付けません） |
 | `OPS_SECURITY_LABELS` | `security` | セキュリティの ISSUE に追加で付けるラベル |
 | `OPS_SEVERITY_LABELS` | `critical=severity: critical,high=severity: high,medium=severity: medium,low=severity: low` | 重要度ごとに付けるラベル（1 つの重要度に複数付けるときは `high=a\|b`） |
-| `OPS_CONTEXT_FILE` | `config/ops-context.md` | すべての指示文の末尾に追加されるプロジェクトの事情（`config/ops-context.example.md` をコピーして作ります） |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | 指示文の末尾に追加するプロジェクトの事情。独自パスはローカルで利用できますが、標準デプロイスクリプトはこの変数を転送しません（[デプロイ時の補完設定](deployment-gcp.md)） |
 
 どの ISSUE にも、チームが内部で使う `ops-agent` と、`ops:error` / `ops:security` / `ops:report` のいずれかのラベルが必ず付きます。
 
@@ -68,6 +73,10 @@ English: [docs/en/configuration.md](en/configuration.md)
 |---|---|---|
 | `OPS_TRIGGER_AUDIENCE` | `make gcp-deploy` がサービスの URL を設定 | Cloud Scheduler が送る Google 署名付きの OIDC トークンを、ADK がこの audience で検証します。空の場合、認証は Cloud Run の IAM に任せます（ローカル開発時も同様） |
 | `OPS_TRIGGER_SERVICE_ACCOUNTS` | `<JOB_PREFIX>-invoker@<project>` | audience を設定したときに、ジョブの起動を許可する呼び出し元 |
+
+A2A カードの接続先は `APP_URL`（サービスの外部 URL）から組み立てます。
+未設定時は `http://0.0.0.0:8000/a2a/app` を広告します。`make gcp-deploy` は `APP_URL` も転送しないため、
+A2A を使う場合は [デプロイ手順](deployment-gcp.md) に従って配置後に設定し、カードの接続先を確認してください。
 
 ### モデルへのアクセス
 
@@ -124,7 +133,9 @@ gcloud scheduler jobs pause  cloud-ops-error-watch --location asia-northeast1
 gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 ```
 
-さかのぼる時間を実行間隔より長くしても問題はありません。重複はフィンガープリントで取り除かれます。ただし、モデルのトークン消費は増えます。
+さかのぼる時間を実行間隔より長くすると、同じエラーを再び取得します。既存 ISSUE はフィンガープリントで検索しますが、
+複数実行が同時に検索・起票すると重複が残る可能性があります。実行の重なりを避け、ISSUE と再発コメントを確認してください。
+観測範囲を広げると、モデルのトークン消費も増えます。
 
 `ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 24"` で指定します。
 `ACCESS_WATCH_CRON`・`INFRASTRUCTURE_REVIEW_CRON`・`TZ_NAME` を変更したら `make gcp-schedule` を再実行してください。
@@ -137,7 +148,8 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 ## デプロイの設定（`make gcp-deploy`）
 
 `make gcp-deploy` は `.env` を読み込んでから `scripts/gcp/deploy_cloud_run.sh` を実行します。
-上のエージェントの設定すべてに加えて、次の変数を受け付けます。
+エージェント設定のうち `scripts/gcp/deploy_env.py` の許可リストに含まれるものに加えて、次の変数を受け付けます。
+`OPS_CONTEXT_FILE` と `APP_URL` は現在このリストに含まれず、配置後の補完設定が必要です。
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
