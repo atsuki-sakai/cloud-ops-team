@@ -30,6 +30,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   `SECURITY.md` and the issue and PR templates are bilingual, and `CODE_OF_CONDUCT.md` has a Japanese summary.
 
 ### Added
+- Connected the Issue #8 SQLite ledger and evidence store to existing jobs. When configured, it records delivery deduplication, protected pre-filter evidence, actual presentation ranges, final results, partial acquisition, report failures and interruption, rejecting later operations after storage failure. Shared-budget enforcement, recovery after hard process loss and cloud persistence remain follow-up work. See [requirements and remaining work](docs/en/execution-history.md).
 - A comparison CLI and cases for routing, tools, arguments, preconditions and task completion against the previous architecture. Missing evidence and unauthorized tool presentations or calls fail the release gate.
 - Daily `access_watch` at 08:30 with a 24-hour window: audit logs, HTTP authentication denials/probe paths and Cloud Armor denials, reported with evidence, confidence and coverage gaps.
 - Weekly `infrastructure_review` on Mondays at 10:00: GCP Recommender cost/IAM recommendations and existing configuration audits, with impact, risks, implementation, validation and rollback proposals. No automatic cloud changes.

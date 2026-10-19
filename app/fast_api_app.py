@@ -24,6 +24,8 @@ from google.adk.runners import Runner
 
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
+from app.app_utils.execution_identity import ExecutionIdentityMiddleware
+from app.config import CONFIG
 
 load_dotenv()
 allow_origins = (
@@ -98,6 +100,7 @@ app: FastAPI = get_fast_api_app(
 )
 app.title = "cloud-ops-team"
 app.description = "API for interacting with the Agent cloud-ops-team"
+app.add_middleware(ExecutionIdentityMiddleware, enabled=bool(CONFIG.execution_db_path))
 
 
 # Main execution

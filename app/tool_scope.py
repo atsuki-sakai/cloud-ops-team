@@ -25,6 +25,7 @@ from app.core.run_budget import (
     RunBudget,
     current_run_budget,
 )
+from app.execution_history import ExecutionHistory, current_execution
 from app.providers import CAPABILITIES
 from app.specialists.base import Specialist
 
@@ -106,6 +107,9 @@ class ToolScope:
     _run_budget: RunBudget | None = field(
         default_factory=current_run_budget, init=False, repr=False, compare=False
     )
+    _execution: ExecutionHistory | None = field(
+        default_factory=current_execution, init=False, repr=False, compare=False
+    )
     _evidence_read: Event = field(
         default_factory=Event, init=False, repr=False, compare=False
     )
@@ -178,6 +182,8 @@ class ToolScope:
         with_context: bool = False,
     ) -> dict[str, str] | None:
         """Reject unknown tools/arguments, excessive queries and scope escapes."""
+        if self._execution is not None:
+            self._execution.ensure_active()
         functions = {function.__name__: function for function in self.originals}
         function = functions.get(name)
         if function is None:
@@ -270,7 +276,11 @@ class ToolScope:
         self, tool: Any, args: dict[str, Any], tool_context: ToolContext
     ) -> dict[str, str] | None:
         """ADK callback: a rejection skips the tool and becomes its response."""
-        return self.validate(getattr(tool, "name", ""), args)
+        name = getattr(tool, "name", "")
+        rejected = self.validate(name, args)
+        if rejected and self._execution is not None and name in self.tool_names:
+            self._execution.observe_tool(name, rejected, incomplete=True)
+        return rejected
 
     def _wrap(self, function: ToolFunction) -> ToolFunction:
         def arguments_for(args: tuple[Any, ...], kwargs: dict[str, Any]):
@@ -280,6 +290,14 @@ class ToolScope:
                 return None
 
         def checked_result(result: Any) -> Any:
+            if self._execution is not None:
+                # Import lazily: workflows depends on routing and this module is
+                # also imported while specialist agents are being constructed.
+                from app.workflows import _incomplete
+
+                self._execution.observe_tool(
+                    function.__name__, result, incomplete=_incomplete(result)
+                )
             if function.__name__ == "get_collected_evidence" and isinstance(
                 result, dict
             ):
@@ -301,26 +319,32 @@ class ToolScope:
 
             @wraps(function)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if self._execution is not None:
+                    self._execution.ensure_active()
                 arguments = arguments_for(args, kwargs)
                 if arguments is None:
-                    return _reject(function.__name__, "invalid_arguments")
+                    return checked_result(
+                        _reject(function.__name__, "invalid_arguments")
+                    )
                 rejected = self.validate(
                     function.__name__, arguments, with_context=True
                 )
                 if rejected:
-                    return rejected
+                    return checked_result(rejected)
                 return checked_result(await function(*args, **kwargs))
 
             return async_wrapper
 
         @wraps(function)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if self._execution is not None:
+                self._execution.ensure_active()
             arguments = arguments_for(args, kwargs)
             if arguments is None:
-                return _reject(function.__name__, "invalid_arguments")
+                return checked_result(_reject(function.__name__, "invalid_arguments"))
             rejected = self.validate(function.__name__, arguments, with_context=True)
             if rejected:
-                return rejected
+                return checked_result(rejected)
             if function.__name__ == "create_ops_issue" and self._run_budget is not None:
                 # Keep the existing issue function's dry-run, duplicate and cap
                 # behavior. Only its trusted count crosses the stage boundary;
