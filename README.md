@@ -253,7 +253,7 @@ Recipes with code: [docs/en/customization.md](docs/en/customization.md).
 | `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels matching your repository |
 | `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge; the standard deployment does not forward custom paths |
 
-All variables: [docs/en/configuration.md](docs/en/configuration.md).
+All variables: [docs/en/configuration.md](docs/en/configuration.md). Optional run and evidence ledger: [docs/en/execution-history.md](docs/en/execution-history.md).
 
 <details>
 <summary><b>Project layout</b></summary>
