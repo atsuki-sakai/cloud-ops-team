@@ -14,7 +14,7 @@
 AI はクラウドの設定を一切変更しません。調べて、報告して、確認するだけです。修正するのはあなた（と、あなたが使う AI コーディングツール）です。
 
 [English README](README.en.md) ・ [仕組みの詳細](docs/architecture.md) ・ [カスタマイズガイド](docs/customization.md) ・ [設定一覧](docs/configuration.md) ・ [Google Cloud へのデプロイ手順](docs/deployment-gcp.md) ・
-[プロバイダー（GCP / AWS / Azure）](docs/providers.md) ・ [既知の制約と改善計画](docs/known-limitations.md) ・ [変更履歴](CHANGELOG.md)
+[プロバイダー（GCP / AWS / Azure）](docs/providers.md) ・ [実行台帳・証拠保存の基盤](docs/execution-history.md) ・ [既知の制約と改善計画](docs/known-limitations.md) ・ [変更履歴](CHANGELOG.md)
 
 現状は、調査結果を人が確認して使う運用支援ツールです。PR の紐付け、監査の確認範囲、同時実行時の起票制御には
 未修正の問題があります。導入前に [既知の制約と改善計画](docs/known-limitations.md) を確認し、

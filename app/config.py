@@ -65,6 +65,19 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a positive integer") from None
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _env_csv(name: str) -> tuple[str, ...]:
     raw = os.getenv(name) or ""
     return tuple(part.strip() for part in raw.split(",") if part.strip())
@@ -128,6 +141,9 @@ class OpsConfig:
     severity_labels: dict[str, tuple[str, ...]] | None = None
     context_file: str = "config/ops-context.md"
     issue_label: str = "ops-agent"
+    execution_db_path: str = ""
+    execution_max_evidence_bytes: int = 8 * 1024 * 1024
+    execution_retention_seconds: int = 30 * 24 * 3600
 
     @property
     def tz(self) -> ZoneInfo:
@@ -172,6 +188,13 @@ def load_config() -> OpsConfig:
         security_labels=_label_list("OPS_SECURITY_LABELS", DEFAULT_SECURITY_LABELS),
         severity_labels=_label_map("OPS_SEVERITY_LABELS", DEFAULT_SEVERITY_LABELS),
         context_file=(os.getenv("OPS_CONTEXT_FILE") or "config/ops-context.md").strip(),
+        execution_db_path=(os.getenv("OPS_EXECUTION_DB_PATH") or "").strip(),
+        execution_max_evidence_bytes=_env_positive_int(
+            "OPS_EXECUTION_MAX_EVIDENCE_BYTES", 8 * 1024 * 1024
+        ),
+        execution_retention_seconds=_env_positive_int(
+            "OPS_EXECUTION_RETENTION_SECONDS", 30 * 24 * 3600
+        ),
     )
 
 

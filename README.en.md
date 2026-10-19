@@ -11,7 +11,7 @@ Programs validate registered jobs and gather evidence through fixed procedures b
 
 [日本語 README（メイン）](README.md) · [Architecture](docs/en/architecture.md) · [Customization](docs/en/customization.md) ·
 [Providers (GCP / AWS / Azure)](docs/en/providers.md) · [Configuration](docs/en/configuration.md) · [Deploy on Google Cloud](docs/en/deployment-gcp.md) ·
-[Known limitations and improvement plan](docs/en/known-limitations.md) · [Changelog](CHANGELOG.en.md)
+[Execution and evidence storage foundation](docs/en/execution-history.md) · [Known limitations and improvement plan](docs/en/known-limitations.md) · [Changelog](CHANGELOG.en.md)
 
 The current version provides evidence for human review. PR identity, audit coverage and issue writes across separate runs
 have unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with

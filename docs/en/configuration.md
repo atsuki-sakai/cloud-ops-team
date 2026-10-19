@@ -47,6 +47,19 @@ instances do not share a search-and-write lock; a common issue budget including 
 Before enabling automatic closure, have an operator check the PR repository and fix relationship, CI, deployment and log coverage.
 Distinguishing a reference PR from a fixing PR has [known limitations](known-limitations.md).
 
+### Execution history and evidence storage
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPS_EXECUTION_DB_PATH` | empty (disabled) | Absolute SQLite path on private durable storage. Enables recording of registered jobs and conversation adapters; storage failures stop subsequent work |
+| `OPS_EXECUTION_MAX_EVIDENCE_BYTES` | `8388608` | Maximum protected evidence body size (8 MiB); oversized content is not silently truncated and marked stored |
+| `OPS_EXECUTION_RETENTION_SECONDS` | `2592000` | Body retention in seconds (30 days); expired bodies cannot be read. Operators must schedule `purge_expired(scope)` for deletion |
+
+Limits and retention require positive integers; malformed values are configuration errors.
+See the [execution-history guide](execution-history.md) for storage ownership/permissions, delivery identity, retries and final states.
+The standard deployment scripts neither provision storage nor forward these three settings.
+Cloud Run temporary storage does not guarantee durability across multiple instances or replacement.
+
 ### Behaviour
 
 | Variable | Default | Description |

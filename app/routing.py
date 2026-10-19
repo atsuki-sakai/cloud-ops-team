@@ -6,6 +6,7 @@ are resolved against the registered job identifiers without a model decision.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -24,6 +25,7 @@ from pydantic import Field
 
 from app.config import CONFIG
 from app.core.run_budget import invocation_budget
+from app.execution_history import begin_execution, bind_execution
 from app.specialists.base import Job, Specialist
 
 logger = logging.getLogger(__name__)
@@ -279,30 +281,86 @@ class ScheduledRouter(Agent):
                 specialist=routed.specialist.name,
                 params=dict(routed.params),
             )
+            execution = None
             try:
-                agent = self.job_runner_factory(
-                    routed.specialist, routed.job, routed.params
+                execution = begin_execution(
+                    ctx.invocation_id, routed.job.name, routed.params
                 )
-                if inspect.isawaitable(agent):
-                    agent = await agent
-                isolated = self._job_context(ctx, routed)
-                report = ""
-                async with aclosing(agent.run_async(isolated)) as events:
-                    async for event in events:
-                        # Runner appends to the original session; this isolated
-                        # context also needs its own tool calls/responses for the
-                        # next model turn, without importing previous job events.
-                        if not event.partial:
-                            isolated.session.events.append(event)
-                            isolated.session.state.update(event.actions.state_delta)
-                        if event.error_code:
-                            raise RuntimeError("The selected job returned an error.")
-                        if event.is_final_response() and _text(event):
-                            report = _text(event)
-                        yield event
-                if not report:
-                    raise RuntimeError("The selected job produced no final report.")
-            except Exception:
+                if execution is not None and not execution.created:
+                    yield self._result(
+                        ctx,
+                        json.dumps(
+                            {
+                                "status": "duplicate",
+                                "job": routed.job.name,
+                                "run_id": execution.run.run_id,
+                                "run_status": execution.run.status,
+                                "completed_jobs": completed,
+                            }
+                        ),
+                    )
+                    return
+                with bind_execution(execution):
+                    agent = self.job_runner_factory(
+                        routed.specialist, routed.job, routed.params
+                    )
+                    if inspect.isawaitable(agent):
+                        agent = await agent
+                    isolated = self._job_context(ctx, routed)
+                    report = ""
+                    async with aclosing(agent.run_async(isolated)) as events:
+                        async for event in events:
+                            # Keep only this job's events for its next model turn.
+                            if not event.partial:
+                                isolated.session.events.append(event)
+                                isolated.session.state.update(event.actions.state_delta)
+                            if event.error_code:
+                                raise RuntimeError(
+                                    "The selected job returned an error."
+                                )
+                            if (
+                                not event.partial
+                                and event.is_final_response()
+                                and _text(event)
+                            ):
+                                report = _text(event)
+                            yield event
+                    if not report.strip():
+                        raise RuntimeError("The selected job produced no final report.")
+                    if execution is not None:
+                        execution.ensure_active()
+                        status = (
+                            "report_failed"
+                            if execution.report_failed
+                            else "partial"
+                            if execution.partial or execution.evidence_read_required
+                            else "succeeded"
+                        )
+                        execution.finish(
+                            status, report=report, reason="stream_completed"
+                        )
+            except (asyncio.CancelledError, GeneratorExit):
+                if execution is not None:
+                    try:
+                        execution.finish("interrupted", reason="cancelled")
+                    except Exception:
+                        self._audit(
+                            ctx, "history_failed", code="history_finalization_failed"
+                        )
+                raise
+            except Exception as exc:
+                if execution is not None:
+                    try:
+                        execution.finish(
+                            "timed_out" if isinstance(exc, TimeoutError) else "failed",
+                            reason="deadline"
+                            if isinstance(exc, TimeoutError)
+                            else "execution_error",
+                        )
+                    except Exception:
+                        self._audit(
+                            ctx, "history_failed", code="history_finalization_failed"
+                        )
                 self._audit(
                     ctx,
                     "job_failed",
