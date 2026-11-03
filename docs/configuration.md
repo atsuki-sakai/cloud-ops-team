@@ -150,6 +150,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 既存の `yadora-prod/gcp-ops-team` の build ID 移行では `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` を明示します。
 値の正は `scripts/gcp/build_profile.sh`、手順と権限は [専用 runbook](build-identity-yadora.md) を参照してください。
 この限定 profile は既存 runtime 設定を再送しません。以下の一般デプロイ設定の置換動作は profile なしの場合です。
+source deploy は `--no-traffic`、切替は検証済み revision 名への100% pin として扱います。既存候補の再 build を避ける `make gcp-promote-existing` は明示した expected 値で検査し、既定は plan-only です。詳細は同 runbook を参照してください。
 
 `make gcp-deploy` は `.env` を読み込んでから `scripts/gcp/deploy_cloud_run.sh` を実行します。
 エージェント設定のうち `scripts/gcp/deploy_env.py` の許可リストに含まれるものに加えて、次の変数を受け付けます。

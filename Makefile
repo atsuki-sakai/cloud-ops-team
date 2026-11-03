@@ -7,7 +7,7 @@ ARGS ?=
 ENVRUN := uv run --quiet python scripts/envrun.py
 
 .PHONY: help install setup doctor jobs run chat test lint eval \
-        gcp-bootstrap gcp-build-bootstrap gcp-grant gcp-deploy gcp-schedule gcp-logs
+        gcp-bootstrap gcp-build-bootstrap gcp-grant gcp-deploy gcp-promote-existing gcp-schedule gcp-logs
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -50,6 +50,9 @@ gcp-grant: ## Grant the runtime service account read-only roles on OPS_TARGET
 
 gcp-deploy: ## Deploy from .env; the explicit build profile preserves existing runtime settings
 	$(ENVRUN) ./scripts/gcp/deploy_cloud_run.sh
+
+gcp-promote-existing: ## Plan a guarded existing-image promotion; explicit profile/ARGS required (--apply to promote)
+	$(ENVRUN) python scripts/gcp/promote_build.py resume $(ARGS)
 
 gcp-schedule: ## Create or update the Cloud Scheduler jobs (ERROR_WATCH_CRON=... to change)
 	$(ENVRUN) ./scripts/gcp/setup_schedules.sh

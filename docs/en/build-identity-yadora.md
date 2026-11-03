@@ -55,9 +55,26 @@ OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-deploy
 
 The profile supplies `--source .` and the dedicated `--build-service-account` to the existing service. It does not resend generic deployment flags for environment files, runtime SA, sizing/scaling/timeout, secrets, labels or authentication/IAM. Existing runtime settings are retained instead of reapplying `.env` values such as dry-run mode, model or monitored target. The profile itself is not a runtime environment variable.
 
-This performs a real source build and deploys a new image, advancing traffic as a normal Cloud Run deploy. It is not plan-only or build-only validation. Run it only after the required review/checks, then compare live runtime settings and IAM with the snapshot. A correctly named builder alone is not success evidence.
+The fixed profile builds and creates a revision with `--no-traffic`, validates the saved single 100% route, then assigns 100% to this revision **by name**. An existing explicit revision pin does not move merely because source deployment succeeds. Exit 0 or HTTP 200 from the old revision is not evidence that the new image serves traffic.
+
+Before promotion, it reads latest-created revision, immutable digest, Ready, service UID, runtime settings and IAM, plus the actual successful Build's identity, source bucket and pushed digest. After comparing generations it sends exactly one [traffic-only PATCH](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/patch) with the freshly read [Service etag](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services#Service). It does not enable LATEST following or update runtime/IAM. Conflicts, failed reads, mismatches and unknown operations stop without write retries. An already verified 100% pin to the same revision returns without another write.
 
 Verify actual Cloud Build serviceAccount, source bucket, destination repository, successful status, pushed digest, log output and the new SA's permissions. Check Cloud Run Ready/traffic/digest and an authenticated read path such as `/list-apps`. HTTP success does not establish audit-job completion or successful GitHub writes. Do not trigger jobs that publish externally without authorization.
+
+## Resume an existing candidate without rebuilding
+
+`make gcp-promote-existing` is resume-only: it performs no build, source deployment or IAM operation. Supply the private service/service-IAM JSON saved before source deployment, expected old/new revisions and digests, actual Build ID and **the source SHA that built that image**. The default only reads and plans; `--apply` enables the same conditional traffic-only PATCH.
+
+```bash
+PROMOTION_ARGS="--before-service artifacts/before-service.json --before-iam artifacts/before-service-iam.json --previous-revision gcp-ops-team-pr23-2a16824 --previous-digest sha256:4011722df35db78d918e62155c33fa7477d30f280730a3469dd4db90dab4bf60 --revision gcp-ops-team-00009-rlx --digest sha256:ee4cd770ea067f4e8ff671fece75dec6d11f0d5fa397edc06aba48fb023a93a3 --build-id dc66ced2-8926-47de-95d2-a7796a4fbb83 --image-source-sha e1788e0c6f5f1995e8710a7c7e25e80936732cb8"
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS"
+# Only after reviewing the plan/evidence and authorizing the live change:
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS --apply"
+```
+
+This example is the candidate actually built/pushed by the dedicated SA on 2026-11-03. Do not replace its image-source SHA with the newer helper commit and claim that image was built there. The helper extracts the recorded SHA's `git archive` into a private temporary directory and computes its entire upload set using that revision's ignore rules, then compares the generation-pinned actual GCS source zip. Deletions or changed ignore rules in the current checkout cannot shrink that expected set. Dirty checkouts, another source, changed content and extra/missing files stop execution. The SHA is an operator-recorded source, not a fabricated Cloud Build Git-provenance field.
+
+Multiple routes, tags, another service/revision, non-Ready state, runtime/IAM differences and concurrent changes stop rather than bypass checks. If an operation outcome is unknown, inspect actual state without rebuilding or repeating PATCH; resume verification with the same expected values. Separately verify the new 100% revision/digest and authenticated read-only health afterwards.
 
 ## Recovery and completion
 

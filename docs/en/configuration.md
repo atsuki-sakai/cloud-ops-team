@@ -150,6 +150,7 @@ For the existing `yadora-prod/gcp-ops-team` build-identity migration, explicitly
 `OPS_BUILD_PROFILE=yadora-prod-gcp-ops`. Values are owned by `scripts/gcp/build_profile.sh`; see the
 [scoped runbook](build-identity-yadora.md) for permissions and steps. This profile does not resend runtime settings.
 The generic configuration-replacement behavior below applies without the profile.
+Source deployment uses `--no-traffic`, followed by a validated 100% pin to the specific revision name. `make gcp-promote-existing` avoids rebuilding an existing candidate and requires explicit expected identities; it defaults to plan-only. See the same runbook.
 
 `make gcp-deploy` runs `scripts/gcp/deploy_cloud_run.sh` with `.env` loaded. It forwards agent settings allowlisted in
 `scripts/gcp/deploy_env.py`, plus
