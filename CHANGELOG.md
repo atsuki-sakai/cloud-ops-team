@@ -8,9 +8,10 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 ## [Unreleased]
 
 ### 修正
+- Yadora 向け専用 Build SA の実 build / push、新 revision への100%切替、認証付き読取経路、稼働 digest / source SHA の本番記録を追加しました。既定 Compute SA の Editor 削除は保留しています。
 - SDK 568.0.0 の `run deploy` が受理しない `--ignore-file` を使わず、固定 profile の記録 source を一時領域へ展開して専用 ignore を適用するようにしました。元 checkout と通常 profile は保持し、全 upload attestation と traffic guard は維持します。
 - Yadora 限定 profile で既存 revision pin が残る場合も、実 build・source・digest・Ready・runtime を検証して revision 名へ100%切り替えるようにしました。etag 競合時は停止し、既存候補の再 build をしない plan-only 既定の resume と、base bytes を保つ専用 source ignore を追加しました。余剰 Ruff cache は例外受容しません。
-- 既存の Yadora 向けサービスだけに専用 build SA を明示する配置 profile と、plan が既定の build 専用 IAM bootstrap を追加しました。本番の適用・実ビルド・Editor 削除は別途検証が必要です。
+- 既存の Yadora 向けサービスだけに専用 build SA を明示する配置 profile と、plan が既定の build 専用 IAM bootstrap を追加しました。本番の適用・実ビルドの結果は [移行記録](docs/production-yadora-build-identity-2026-11-03.md) に記録しています。
 - 比較評価の判定器が「機能は用意されておりません」などの未対応説明を完了と誤分類する問題を修正しました。実行済みトレースの再判定は元記録・判定器の版・変更内容を分けて保存します。
 - モデルHTTP通信の無通信待機を60秒で制限し、HTTPX経由でSDKのタイムアウト再試行を有効にしました。エージェント全体や応答を受け取り始めたストリームは再試行しません。
 - JSON・構造化データ内の秘密値、ISSUE/レポートのタイトルとメタデータの伏せ字漏れを修正しました。秘密値や伏せ字を含む検索語は再発ゼロの根拠に使いません。

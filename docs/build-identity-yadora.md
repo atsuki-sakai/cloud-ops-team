@@ -4,6 +4,8 @@ English: [docs/en/build-identity-yadora.md](en/build-identity-yadora.md)
 
 Refs [atsuki-sakai/Yadora#1652](https://github.com/atsuki-sakai/Yadora/issues/1652)。移行用の手順・契約であり、IAM 適用・本番ビルド・Editor 削除の実施記録ではありません。
 
+専用 SA の実 build / push、新 revision への100%切替と認証付き読取検証は [2026-11-03の本番記録](production-yadora-build-identity-2026-11-03.md) を参照してください。Editor 削除は保留しています。
+
 ## 固定する対象
 
 `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` を明示したときだけ、次の組合せを使います。値の正は `scripts/gcp/build_profile.sh`。設定一覧は [configuration.md](configuration.md#デプロイの設定make-gcp-deploy) を参照してください。
