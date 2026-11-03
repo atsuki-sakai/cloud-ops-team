@@ -4,6 +4,8 @@
 
 Refs [atsuki-sakai/Yadora#1652](https://github.com/atsuki-sakai/Yadora/issues/1652). This is a migration contract and runbook, not a record of live IAM application, builds or Editor removal.
 
+See the [2026-11-03 production record](production-yadora-build-identity-2026-11-03.md) for the dedicated-SA build/push, named revision promotion to 100% and authenticated reads. Editor removal remains on hold.
+
 ## Fixed target
 
 Only the explicit `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` profile selects this combination. `scripts/gcp/build_profile.sh` owns the values; see [configuration](configuration.md#deployment-make-gcp-deploy).

@@ -8,9 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Recorded the real Yadora dedicated-SA build/push, promotion to a named revision at 100%, authenticated read paths and serving digest/source SHA. Default Compute SA Editor removal remains on hold.
 - Stage the fixed profile's recorded source privately and apply its checked ignore there instead of using `--ignore-file`, which SDK 568.0.0 rejects for `run deploy`. The original checkout/generic profile, complete upload attestation and traffic guards are retained.
 - The Yadora-only profile now validates actual build/source/digest/Ready/runtime before pinning 100% to a named revision even when an old pin remains. Etag conflicts stop the write; added a plan-only-by-default resume and a profile source ignore preserving exact base bytes. Extra Ruff caches are not accepted as exceptions.
-- Added an explicit dedicated build-SA profile for the existing Yadora service and a plan-only-by-default build IAM bootstrap. Live application, real builds and Editor removal still require separate validation.
+- Added an explicit dedicated build-SA profile for the existing Yadora service and a plan-only-by-default build IAM bootstrap. Live application/build results are recorded in the [migration record](docs/en/production-yadora-build-identity-2026-11-03.md).
 - Corrected routing-evaluation classification of unsupported-capability explanations such as Japanese negative preparation forms. Reassessments retain original traces, assessor version and assessment changes separately.
 - Bound model HTTP idle waits to 60 seconds and use HTTPX so SDK timeout retries apply. Whole agent runs and streams that have begun returning a response are not retried.
 - Redact secret values in JSON/structured data and issue/report titles and metadata. Sensitive or masked search literals cannot establish zero recurring errors.
