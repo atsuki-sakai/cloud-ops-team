@@ -520,6 +520,8 @@ def test_source_deploy_cli_stages_only_fixed_identity_and_no_runtime_flags(monke
             ".",
             "--build-service-account",
             promotion.BUILDER,
+            "--ignore-file",
+            promotion.PROFILE_IGNORE,
             "--no-traffic",
             "--quiet",
         ]
@@ -537,3 +539,80 @@ def test_cli_failure_does_not_print_response_or_token(monkeypatch, capsys):
     with pytest.raises(RuntimeError, match="CLI read/operation failed"):
         promotion.command(["gcloud", "run", "services", "describe"])
     assert capsys.readouterr().out == ""
+
+
+def test_fixed_profile_ignore_preserves_every_ordered_base_rule():
+    assert (
+        promotion.profile_ignore_contents(promotion.ROOT)
+        == (promotion.ROOT / promotion.PROFILE_IGNORE).read_bytes()
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing-cache",
+        "missing-private-rule",
+        "extra-negation",
+        "leading-include-space",
+        "leading-pattern-space",
+    ],
+)
+def test_invalid_fixed_profile_ignore_stops_before_source_build(
+    tmp_path, monkeypatch, change
+):
+    base = "#!include:.gitignore\n.env\nartifacts/\n"
+    selected = base + "\n.ruff_cache/\n" + promotion.PROFILE_IGNORE + "\n"
+    if change == "missing-cache":
+        selected = selected.replace(".ruff_cache/\n", "")
+    elif change == "missing-private-rule":
+        selected = selected.replace("artifacts/\n", "")
+    elif change == "extra-negation":
+        selected += "!.env\n"
+    elif change == "leading-include-space":
+        selected = selected.replace("#!include:.gitignore", " #!include:.gitignore")
+    else:
+        selected = selected.replace(".env\n", " .env\n")
+    (tmp_path / ".gcloudignore").write_text(base)
+    (tmp_path / promotion.PROFILE_IGNORE).write_text(selected)
+    monkeypatch.setattr(promotion, "ROOT", tmp_path)
+
+    def reject(*args, **kwargs):
+        raise AssertionError("Source CLI must not be called")
+
+    monkeypatch.setattr(promotion.subprocess, "run", reject)
+    with pytest.raises(RuntimeError, match="ignore must preserve"):
+        promotion.Cloud().deploy_source()
+
+
+def test_historical_profile_ignore_drives_manifest_and_cache_is_rejected(monkeypatch):
+    files = {
+        "Dockerfile": b"docker",
+        "uv.lock": b"lock",
+        "app/agent.py": b"app",
+        ".gitignore": b"",
+        ".gcloudignore": b".env\n",
+        promotion.PROFILE_IGNORE: b".env\n\n.ruff_cache/\n.gcloudignore.yadora\n",
+    }
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        for path, content in files.items():
+            item = tarfile.TarInfo(path)
+            item.size = len(content)
+            archive.addfile(item, io.BytesIO(content))
+
+    def invoke(arguments, *, cwd=None):
+        if arguments[:2] == ["git", "archive"]:
+            return output.getvalue()
+        assert arguments == ["gcloud", "meta", "list-files-for-upload"]
+        assert cwd is not None
+        assert (cwd / ".gcloudignore").read_bytes() == files[promotion.PROFILE_IGNORE]
+        return b"Dockerfile\nuv.lock\napp/agent.py\n"
+
+    monkeypatch.setattr(promotion, "command", invoke)
+    expected = promotion.Cloud().source_files(SOURCE)
+    promotion.verify_archive(zipped(expected), expected)
+    with pytest.raises(RuntimeError, match="file set differs"):
+        promotion.verify_archive(
+            zipped({**expected, ".ruff_cache/0.17.0/123": b"cache"}), expected
+        )

@@ -31,6 +31,7 @@ RUNTIME = f"gcp-ops-team@{PROJECT}.iam.gserviceaccount.com"
 BUCKET = "run-sources-yadora-prod-asia-northeast1"
 IMAGE = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/{SERVICE}"
 ROOT = Path(__file__).resolve().parents[2]
+PROFILE_IGNORE = ".gcloudignore.yadora"
 PROVENANCE = {
     "run.googleapis.com/client-name",
     "run.googleapis.com/client-version",
@@ -63,6 +64,16 @@ def decode(raw):
         return json.loads(raw)
     except (ValueError, UnicodeError):
         raise RuntimeError("Invalid JSON response") from None
+
+
+def profile_ignore_contents(directory):
+    base = (directory / ".gcloudignore").read_bytes()
+    selected = (directory / PROFILE_IGNORE).read_bytes()
+    require(
+        selected == base + b"\n.ruff_cache/\n" + PROFILE_IGNORE.encode() + b"\n",
+        "Fixed-profile ignore must preserve the exact base bytes and only append its two exclusions",
+    )
+    return selected
 
 
 def policy_members(policy):
@@ -233,6 +244,7 @@ class Cloud:
         return self.cli("builds", "describe", identifier, "--region", REGION)
 
     def deploy_source(self):
+        profile_ignore_contents(ROOT)
         arguments = [
             "gcloud",
             "run",
@@ -246,6 +258,8 @@ class Cloud:
             ".",
             "--build-service-account",
             BUILDER,
+            "--ignore-file",
+            PROFILE_IGNORE,
             "--no-traffic",
             "--quiet",
         ]
@@ -275,6 +289,11 @@ class Cloud:
             # data rejects paths/links outside the private extraction directory.
             with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as historical:
                 historical.extractall(directory, filter="data")
+            if (directory / PROFILE_IGNORE).exists():
+                # meta has no --ignore-file option. This changes only the private
+                # historical extraction, and .gcloudignore itself is excluded.
+                selected_ignore = profile_ignore_contents(directory)
+                (directory / ".gcloudignore").write_bytes(selected_ignore)
             paths = (
                 command(["gcloud", "meta", "list-files-for-upload"], cwd=directory)
                 .decode()
