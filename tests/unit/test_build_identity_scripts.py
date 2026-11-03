@@ -66,6 +66,11 @@ def cli(tmp_path):
         f"#!{sys.executable}\n"
         "import os, sys\n"
         "assert sys.argv[1:4] == ['run', '--quiet', 'python']\n"
+        "if sys.argv[4].endswith('/promote_build.py'):\n"
+        "    import json\n"
+        "    with open(os.environ['CAPTURE'], 'a') as f: f.write(json.dumps(['profile-promotion-helper', *sys.argv[5:]]) + '\\n')\n"
+        "    print('runtime settings preserved by the promotion helper')\n"
+        "    sys.exit(9 if os.environ.get('FAILURE') == 'deploy' else 0)\n"
         "os.execv(sys.executable, [sys.executable, *sys.argv[4:]])\n"
     )
     uv.chmod(0o755)
@@ -111,23 +116,10 @@ def test_profile_passes_build_identity_and_preserves_live_runtime(
         OPS_MODEL="must-not-reconfigure-runtime",
     )
     assert result.returncode == 0, result.stderr
-    deploy = mutations(calls)
-    assert deploy == [
-        [
-            "run",
-            "deploy",
-            "gcp-ops-team",
-            "--project",
-            "yadora-prod",
-            "--region",
-            "asia-northeast1",
-            "--source",
-            ".",
-            "--build-service-account",
-            RESOURCE,
-            "--quiet",
-        ]
+    assert [call for call in calls if call[0] == "profile-promotion-helper"] == [
+        ["profile-promotion-helper", "deploy"]
     ]
+    assert mutations(calls) == [["profile-promotion-helper", "deploy"]]
     assert not any(
         "secrets" in call or call[:2] == ["services", "enable"] for call in calls
     )
@@ -194,7 +186,10 @@ def test_profile_fails_closed_before_deploy(cli, failure):
 def test_source_deploy_failure_is_not_retried_or_replaced(cli):
     result, calls = cli(FAILURE="deploy")
     assert result.returncode != 0
-    assert len(mutations(calls)) == 1
+    assert [call for call in calls if call[0] == "profile-promotion-helper"] == [
+        ["profile-promotion-helper", "deploy"]
+    ]
+    assert mutations(calls) == [["profile-promotion-helper", "deploy"]]
 
 
 def test_build_bootstrap_defaults_to_read_only_plan(cli):

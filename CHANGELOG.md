@@ -8,6 +8,7 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 ## [Unreleased]
 
 ### 修正
+- Yadora 限定 profile で既存 revision pin が残る場合も、実 build・source・digest・Ready・runtime を検証して revision 名へ100%切り替えるようにしました。etag 競合時は停止し、既存候補の再 build をしない plan-only 既定の resume と、base bytes を保つ専用 source ignore を追加しました。余剰 Ruff cache は例外受容しません。
 - 既存の Yadora 向けサービスだけに専用 build SA を明示する配置 profile と、plan が既定の build 専用 IAM bootstrap を追加しました。本番の適用・実ビルド・Editor 削除は別途検証が必要です。
 - 比較評価の判定器が「機能は用意されておりません」などの未対応説明を完了と誤分類する問題を修正しました。実行済みトレースの再判定は元記録・判定器の版・変更内容を分けて保存します。
 - モデルHTTP通信の無通信待機を60秒で制限し、HTTPX経由でSDKのタイムアウト再試行を有効にしました。エージェント全体や応答を受け取り始めたストリームは再試行しません。

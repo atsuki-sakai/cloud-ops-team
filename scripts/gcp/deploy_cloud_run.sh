@@ -41,8 +41,7 @@ if [[ "$BUILD_PROFILE_ACTIVE" == true ]]; then
   require_enabled_build_identity
   require_only_build_project_role
   cd "$SCRIPT_DIR/../.."
-  gcloud run deploy "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --source . \
-    --build-service-account "$BUILD_SERVICE_ACCOUNT" --quiet
+  uv run --quiet python "$SCRIPT_DIR/promote_build.py" deploy
   echo 'Build identity deployment completed; verify live runtime settings and required operations separately.'
   exit 0
 fi

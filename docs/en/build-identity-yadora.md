@@ -55,9 +55,30 @@ OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-deploy
 
 The profile supplies `--source .` and the dedicated `--build-service-account` to the existing service. It does not resend generic deployment flags for environment files, runtime SA, sizing/scaling/timeout, secrets, labels or authentication/IAM. Existing runtime settings are retained instead of reapplying `.env` values such as dry-run mode, model or monitored target. The profile itself is not a runtime environment variable.
 
-This performs a real source build and deploys a new image, advancing traffic as a normal Cloud Run deploy. It is not plan-only or build-only validation. Run it only after the required review/checks, then compare live runtime settings and IAM with the snapshot. A correctly named builder alone is not success evidence.
+Only this fixed profile uses `--ignore-file .gcloudignore.yadora`. It preserves the base `.gcloudignore` bytes exactly and appends only two fixed exclusions: `.ruff_cache/` and the profile ignore file itself. Whitespace/include changes, missing/reordered base content and extra re-inclusions fail before building. Other profiles keep their existing ignore/deploy behavior.
+
+The fixed profile builds and creates a revision with `--no-traffic`, validates the saved single 100% route, then assigns 100% to this revision **by name**. An existing explicit revision pin does not move merely because source deployment succeeds. Exit 0 or HTTP 200 from the old revision is not evidence that the new image serves traffic.
+
+Before promotion, it reads latest-created revision, immutable digest, Ready, service UID, runtime settings and IAM, plus the actual successful Build's identity, source bucket and pushed digest. After comparing generations it sends exactly one [traffic-only PATCH](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/patch) with the freshly read [Service etag](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services#Service). It does not enable LATEST following or update runtime/IAM. Conflicts, failed reads, mismatches and unknown operations stop without write retries. An already verified 100% pin to the same revision returns without another write.
 
 Verify actual Cloud Build serviceAccount, source bucket, destination repository, successful status, pushed digest, log output and the new SA's permissions. Check Cloud Run Ready/traffic/digest and an authenticated read path such as `/list-apps`. HTTP success does not establish audit-job completion or successful GitHub writes. Do not trigger jobs that publish externally without authorization.
+
+## Resume an existing candidate without rebuilding
+
+`make gcp-promote-existing` is resume-only: it performs no build, source deployment or IAM operation. Supply the private service/service-IAM JSON saved before source deployment, expected old/new revisions and digests, actual Build ID and **the source SHA that built that image**. The default only reads and plans; `--apply` enables the same conditional traffic-only PATCH.
+
+```bash
+PROMOTION_ARGS="--before-service artifacts/before-service.json --before-iam artifacts/before-service-iam.json --previous-revision PREVIOUS_REVISION --previous-digest sha256:PREVIOUS_DIGEST --revision CANDIDATE_REVISION --digest sha256:CANDIDATE_DIGEST --build-id ACTUAL_BUILD_ID --image-source-sha ACTUAL_40_CHAR_SOURCE_SHA"
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS"
+# Only after reviewing the plan/evidence and authorizing the live change:
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS --apply"
+```
+
+Replace uppercase values with actual observations. The helper extracts the recorded SHA's `git archive` into a private temporary directory and computes its entire upload set using that revision's profile ignore file (or base ignore for older SHAs), then compares the generation-pinned actual GCS source zip. Deletions or changed ignore rules in the current checkout cannot shrink that expected set. Dirty checkouts, another source, changed content and extra/missing files stop execution. The SHA is an operator-recorded source, not a fabricated Cloud Build Git-provenance field.
+
+The older 2026-11-03 candidate `gcp-ops-team-00009-rlx` / `ee4cd770…` was actually built/pushed from source SHA `e1788e0…` by Build `dc66ced2-8926-47de-95d2-a7796a4fbb83`, but its source zip also included 16 untracked Ruff-cache files. All 127 tracked upload files matched, yet the complete set differed, so strict resume rejects it. Retain that candidate/evidence without exceptions and run normal `make gcp-deploy` once from new main containing the profile ignore file. Do not claim that old candidate was built from the new helper SHA.
+
+Multiple routes, tags, another service/revision, non-Ready state, runtime/IAM differences and concurrent changes stop rather than bypass checks. If an operation outcome is unknown, inspect actual state without rebuilding or repeating PATCH; resume verification with the same expected values. Separately verify the new 100% revision/digest and authenticated read-only health afterwards.
 
 ## Recovery and completion
 

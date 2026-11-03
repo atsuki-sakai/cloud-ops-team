@@ -8,6 +8,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- The Yadora-only profile now validates actual build/source/digest/Ready/runtime before pinning 100% to a named revision even when an old pin remains. Etag conflicts stop the write; added a plan-only-by-default resume and a profile source ignore preserving exact base bytes. Extra Ruff caches are not accepted as exceptions.
 - Added an explicit dedicated build-SA profile for the existing Yadora service and a plan-only-by-default build IAM bootstrap. Live application, real builds and Editor removal still require separate validation.
 - Corrected routing-evaluation classification of unsupported-capability explanations such as Japanese negative preparation forms. Reassessments retain original traces, assessor version and assessment changes separately.
 - Bound model HTTP idle waits to 60 seconds and use HTTPX so SDK timeout retries apply. Whole agent runs and streams that have begun returning a response are not retried.

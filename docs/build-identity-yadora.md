@@ -55,9 +55,30 @@ OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-deploy
 
 この profile は既存 service に `--source .` と専用 `--build-service-account` を渡します。一般デプロイの `--env-vars-file`、runtime SA、memory / CPU / scaling / timeout、secret、labels、認証・IAM を再設定する flag は渡しません。`.env` の `OPS_DRY_RUN`、model、監視対象などを本番へ再適用しないため、現在の runtime 設定を維持できます。profile 自体は runtime の環境変数へ転送しません。
 
-これは実 source build と新 image の配置を行い、通常の Cloud Run deploy として traffic を新 revision へ進める操作です。plan や build-only 検査ではありません。必要なレビュー・検査後に実行し、完了後は snapshot と比較して runtime 設定・IAM が保持されたことを確認します。builder の名前が正しいことだけを成功の証拠にはしません。
+固定 profile だけは `--ignore-file .gcloudignore.yadora` を使います。通常の `.gcloudignore` の原文 bytes をそのまま保ち、固定の `.ruff_cache/` と専用 ignore ファイル自身の2除外だけを末尾に追加します。空白・include を含む原文の改変、欠落・並替え・追加の再包含は build 前に拒否します。他 profile の ignore / deploy は変更しません。
+
+この固定 profile は `--no-traffic` で source build と revision 作成を行い、保存した唯一の100%旧 route を検査してから、今回の revision **名**に100%を割り当てます。既存の明示 pin は通常の source deploy だけでは移動しません。source deploy の exit 0 や、旧 revision の HTTP 200 を新 image の配備成功と扱わないでください。
+
+切替前に最新 Created revision・immutable digest・Ready・service UID・runtime 設定・IAM、実 Build の成功・専用 SA・source bucket・push digest を実取得します。generation を照合した [v2 Service の etag](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services#Service) を付け、[`updateMask=traffic` の PATCH](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/patch) だけを1回行います。LATEST への追従・runtime・IAM は更新しません。競合・取得失敗・不一致・operation 不明時は書込みを再試行せず停止します。既に同じ revision 名へ100%切替済みなら、検証だけで終了します。
 
 Cloud Build の実 `serviceAccount`、source bucket、Docker repository、成功 status、push した digest、ログ出力と新 SA の権限を照合します。Cloud Run の Ready / traffic / digest、認証付きの `/list-apps` 等の読取経路も確認します。HTTP 成功だけを監査ジョブの完了・GitHub 書込みの成功とは扱いません。無断で監査ジョブを起動して外部へ投稿しないでください。
+
+## 既存候補を再 build せず切り替える
+
+`make gcp-promote-existing` は resume 専用です。build / source deploy / IAM 操作を呼びません。source deploy 前に保存した service / service IAM の非公開 JSON と、旧・新 revision / digest・実 Build ID・**その image を build した source SHA** を明示します。既定は読取検証と plan のみで、`--apply` のときだけ上記の限定 PATCH を行います。
+
+```bash
+PROMOTION_ARGS="--before-service artifacts/before-service.json --before-iam artifacts/before-service-iam.json --previous-revision PREVIOUS_REVISION --previous-digest sha256:PREVIOUS_DIGEST --revision CANDIDATE_REVISION --digest sha256:CANDIDATE_DIGEST --build-id ACTUAL_BUILD_ID --image-source-sha ACTUAL_40_CHAR_SOURCE_SHA"
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS"
+# plan と証拠をレビューし、実反映が許可された後だけ:
+OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-promote-existing ARGS="$PROMOTION_ARGS --apply"
+```
+
+大文字の値は実取得した値で置き換えます。記録した SHA の `git archive` を private tempdir に展開し、その時点の専用 ignore（存在しない旧 SHA は通常の ignore）から全 upload 対象を生成して、Build が参照する generation 固定の実 GCS source zip と照合します。現在の checkout の削除・ignore 改変で期待集合を縮めません。dirty checkout、別 source、内容・追加/欠落ファイルは停止条件です。SHA は operator が記録した source であり、Cloud Build の Git provenance フィールドを捏造しません。
+
+2026-11-03の旧候補 `gcp-ops-team-00009-rlx` / `ee4cd770…` は実 source SHA `e1788e0…`・Build `dc66ced2-8926-47de-95d2-a7796a4fbb83` で build/push 済みですが、source zip に未追跡 Ruff cache 16ファイルが混入していました。tracked upload 127ファイルの内容は一致しても全体集合が異なるため、厳密 resume は拒否します。例外受容せず候補と証拠を保持し、専用 ignore を含む新 main から通常 `make gcp-deploy` を1回行います。旧 candidate を新 helper SHA で build 済みとは記録しません。
+
+複数 route・tag・別 service/revision・Ready 不成立・runtime/IAM 差分・外部同時変更は手動で迂回せず停止します。operation の結果が不明なら再 build / PATCH をせず実設定を確認し、同じ expected 値での resume 検証を使います。完了後は新 revision の100% / digest と、認証付きの読取 health を別途確認します。
 
 ## 復旧と完了条件
 
