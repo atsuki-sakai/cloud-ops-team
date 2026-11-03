@@ -69,6 +69,9 @@ OPS_DRY_RUN=true make run JOB=infrastructure_review
 
 ## 2. デプロイ
 
+既存の `yadora-prod/gcp-ops-team` の build SA だけを移行する場合は、先に [限定 profile の手順](build-identity-yadora.md) を使ってください。
+一般の runtime / secret bootstrap を再実行せず、明示した builder と既存 runtime 設定を保持します。
+
 まずはお試しモードで動かし、チームが登録しようとする ISSUE を確認してから、書き込みを有効にします。
 
 ```bash

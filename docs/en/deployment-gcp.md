@@ -68,6 +68,9 @@ reports after deployment.
 
 ## 2. Deploy
 
+For the existing `yadora-prod/gcp-ops-team` build-SA migration, use the [scoped profile runbook](build-identity-yadora.md)
+first. It avoids rerunning runtime/secret bootstrap and preserves the existing runtime configuration.
+
 Start in dry-run mode, look at what the team would file, then enable writes:
 
 ```bash

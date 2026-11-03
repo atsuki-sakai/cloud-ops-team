@@ -146,6 +146,11 @@ for logging coverage and additional read permissions.
 
 ## Deployment (`make gcp-deploy`)
 
+For the existing `yadora-prod/gcp-ops-team` build-identity migration, explicitly select
+`OPS_BUILD_PROFILE=yadora-prod-gcp-ops`. Values are owned by `scripts/gcp/build_profile.sh`; see the
+[scoped runbook](build-identity-yadora.md) for permissions and steps. This profile does not resend runtime settings.
+The generic configuration-replacement behavior below applies without the profile.
+
 `make gcp-deploy` runs `scripts/gcp/deploy_cloud_run.sh` with `.env` loaded. It forwards agent settings allowlisted in
 `scripts/gcp/deploy_env.py`, plus
 `PROJECT_ID` (default `GOOGLE_CLOUD_PROJECT`), `REGION` (default `OPS_TARGET_REGION`), `SERVICE` (`cloud-ops-team`), `RUNTIME_SA`,
