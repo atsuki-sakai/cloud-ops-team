@@ -8,6 +8,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Stage the fixed profile's recorded source privately and apply its checked ignore there instead of using `--ignore-file`, which SDK 568.0.0 rejects for `run deploy`. The original checkout/generic profile, complete upload attestation and traffic guards are retained.
 - The Yadora-only profile now validates actual build/source/digest/Ready/runtime before pinning 100% to a named revision even when an old pin remains. Etag conflicts stop the write; added a plan-only-by-default resume and a profile source ignore preserving exact base bytes. Extra Ruff caches are not accepted as exceptions.
 - Added an explicit dedicated build-SA profile for the existing Yadora service and a plan-only-by-default build IAM bootstrap. Live application, real builds and Editor removal still require separate validation.
 - Corrected routing-evaluation classification of unsupported-capability explanations such as Japanese negative preparation forms. Reassessments retain original traces, assessor version and assessment changes separately.

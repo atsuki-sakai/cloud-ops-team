@@ -151,7 +151,7 @@ For the existing `yadora-prod/gcp-ops-team` build-identity migration, explicitly
 [scoped runbook](build-identity-yadora.md) for permissions and steps. This profile does not resend runtime settings.
 The generic configuration-replacement behavior below applies without the profile.
 Source deployment uses `--no-traffic`, followed by a validated 100% pin to the specific revision name. `make gcp-promote-existing` avoids rebuilding an existing candidate and requires explicit expected identities; it defaults to plan-only. See the same runbook.
-Only the fixed profile's `.gcloudignore.yadora` excludes Ruff-cache source uploads while retaining the base `.gcloudignore` bytes exactly.
+The fixed profile stages the recorded SHA's tracked source in a private temporary directory and sets its `.gcloudignore` to the checked `.gcloudignore.yadora` bytes. This excludes Ruff caches while preserving the base bytes and leaving the original checkout/base ignore unchanged.
 
 `make gcp-deploy` runs `scripts/gcp/deploy_cloud_run.sh` with `.env` loaded. It forwards agent settings allowlisted in
 `scripts/gcp/deploy_env.py`, plus

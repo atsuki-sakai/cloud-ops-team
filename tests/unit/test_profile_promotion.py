@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 import io
+import os
+import subprocess
 import tarfile
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -231,7 +234,8 @@ class FakeCloud:
         self.current["status"]["traffic"] = [{"revisionName": NEW, "percent": 100}]
         return {"done": True}
 
-    def deploy_source(self):
+    def deploy_source(self, source_sha):
+        assert source_sha == SOURCE
         self.deploys += 1
         self.current = copy.deepcopy(self.deployed)
 
@@ -497,15 +501,58 @@ def test_resume_rejects_current_dirty_tree_before_any_cloud_read(monkeypatch):
     assert len(calls) == 1
 
 
-def test_source_deploy_cli_stages_only_fixed_identity_and_no_runtime_flags(monkeypatch):
+@pytest.mark.parametrize("outcome", ["success", "failed", "timeout"])
+def test_source_deploy_cli_stages_only_recorded_source_without_runtime_flags(
+    monkeypatch, outcome
+):
+    monkeypatch.setenv("CLOUDSDK_GCLOUDIGNORE_ENABLED", "false")
     calls = []
+    directories = []
+    base = b".env\nartifacts/\n"
+    historical_files = {
+        **FILES,
+        ".gcloudignore": base,
+        promotion.PROFILE_IGNORE: base + b"\n.ruff_cache/\n.gcloudignore.yadora\n",
+    }
+    archived = io.BytesIO()
+    with tarfile.open(fileobj=archived, mode="w") as archive:
+        for name, data in historical_files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(data)
+            archive.addfile(entry, io.BytesIO(data))
+
+    def historical(arguments, **kwargs):
+        assert arguments == ["git", "archive", "--format=tar", SOURCE]
+        return archived.getvalue()
 
     def invoke(arguments, **kwargs):
         calls.append(arguments)
-        return SimpleNamespace(returncode=0)
+        assert kwargs["cwd"] == promotion.ROOT
+        assert kwargs["env"]["CLOUDSDK_GCLOUDIGNORE_ENABLED"] == "true"
+        assert os.environ["CLOUDSDK_GCLOUDIGNORE_ENABLED"] == "false"
+        directory = Path(arguments[arguments.index("--source") + 1])
+        directories.append(directory)
+        assert directory != promotion.ROOT
+        assert directory.stat().st_mode & 0o777 == 0o700
+        assert (directory / ".gcloudignore").read_bytes() == historical_files[
+            promotion.PROFILE_IGNORE
+        ]
+        assert (directory / "uv.lock").read_bytes() == FILES["uv.lock"]
+        assert (directory / "uv.lock").stat().st_mode & 0o777 == 0o600
+        assert not (directory / ".ruff_cache").exists()
+        assert not (directory / "artifacts").exists()
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(arguments, 2700)
+        return SimpleNamespace(returncode=9 if outcome == "failed" else 0)
 
+    monkeypatch.setattr(promotion, "command", historical)
     monkeypatch.setattr(promotion.subprocess, "run", invoke)
-    promotion.Cloud().deploy_source()
+    if outcome == "success":
+        promotion.Cloud().deploy_source(SOURCE)
+    else:
+        with pytest.raises(RuntimeError, match=r"Source deploy (failed|timed out)"):
+            promotion.Cloud().deploy_source(SOURCE)
+    assert len(directories) == 1 and not directories[0].exists()
     assert calls == [
         [
             "gcloud",
@@ -517,15 +564,60 @@ def test_source_deploy_cli_stages_only_fixed_identity_and_no_runtime_flags(monke
             "--region",
             promotion.REGION,
             "--source",
-            ".",
+            str(directories[0]),
             "--build-service-account",
             promotion.BUILDER,
-            "--ignore-file",
-            promotion.PROFILE_IGNORE,
             "--no-traffic",
             "--quiet",
         ]
     ]
+
+
+@pytest.mark.parametrize("profile", [None, b".env\n!.env\n"])
+def test_source_deploy_rejects_missing_or_invalid_historical_profile(
+    monkeypatch, profile
+):
+    files = {**FILES, ".gcloudignore": b".env\n"}
+    if profile is not None:
+        files[promotion.PROFILE_IGNORE] = profile
+    archived = io.BytesIO()
+    with tarfile.open(fileobj=archived, mode="w") as archive:
+        for name, content in files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+
+    def historical(arguments, **kwargs):
+        assert arguments == ["git", "archive", "--format=tar", SOURCE]
+        return archived.getvalue()
+
+    def reject(*args, **kwargs):
+        raise AssertionError("No source cloud operation may be started")
+
+    monkeypatch.setattr(promotion, "command", historical)
+    monkeypatch.setattr(promotion.subprocess, "run", reject)
+    with pytest.raises(
+        RuntimeError, match=r"(profile ignore missing|ignore must preserve)"
+    ):
+        promotion.Cloud().deploy_source(SOURCE)
+
+
+def test_manifest_child_enables_ignores_without_mutating_inherited_setting(monkeypatch):
+    monkeypatch.setenv("CLOUDSDK_GCLOUDIGNORE_ENABLED", "false")
+    calls = []
+
+    def invoke(arguments, **kwargs):
+        calls.append(arguments)
+        assert kwargs["env"]["CLOUDSDK_GCLOUDIGNORE_ENABLED"] == "true"
+        assert os.environ["CLOUDSDK_GCLOUDIGNORE_ENABLED"] == "false"
+        return SimpleNamespace(returncode=0, stdout=b"Dockerfile\n")
+
+    monkeypatch.setattr(promotion.subprocess, "run", invoke)
+    assert (
+        promotion.command(["gcloud", "meta", "list-files-for-upload"])
+        == b"Dockerfile\n"
+    )
+    assert len(calls) == 1
 
 
 def test_cli_failure_does_not_print_response_or_token(monkeypatch, capsys):
@@ -582,7 +674,7 @@ def test_invalid_fixed_profile_ignore_stops_before_source_build(
 
     monkeypatch.setattr(promotion.subprocess, "run", reject)
     with pytest.raises(RuntimeError, match="ignore must preserve"):
-        promotion.Cloud().deploy_source()
+        promotion.Cloud().deploy_source(SOURCE)
 
 
 def test_historical_profile_ignore_drives_manifest_and_cache_is_rejected(monkeypatch):

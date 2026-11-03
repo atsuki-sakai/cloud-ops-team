@@ -20,6 +20,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 PROJECT = "yadora-prod"
@@ -49,7 +50,14 @@ def require(condition, message):
 def command(arguments, *, cwd=ROOT):
     try:
         result = subprocess.run(
-            arguments, cwd=cwd, capture_output=True, check=False, timeout=120
+            arguments,
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            timeout=120,
+            env=source_environment()
+            if arguments[:3] == ["gcloud", "meta", "list-files-for-upload"]
+            else None,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("CLI read timed out; no automatic retry") from None
@@ -74,6 +82,39 @@ def profile_ignore_contents(directory):
         "Fixed-profile ignore must preserve the exact base bytes and only append its two exclusions",
     )
     return selected
+
+
+def source_environment():
+    # Ignore exclusions cannot be disabled by caller config or inherited env.
+    return {**os.environ, "CLOUDSDK_GCLOUDIGNORE_ENABLED": "true"}
+
+
+@contextmanager
+def recorded_source(source_sha, *, require_profile=False):
+    require(
+        re.fullmatch(r"[0-9a-f]{40}", source_sha),
+        "Expected a complete image source SHA",
+    )
+    archived = command(["git", "archive", "--format=tar", source_sha])
+    with tempfile.TemporaryDirectory(prefix="cloudops-recorded-source-") as temporary:
+        directory = Path(temporary).resolve()
+        with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as historical:
+            historical.extractall(directory, filter="data")
+        for selected in directory.rglob("*"):
+            require(not selected.is_symlink(), "Recorded source symlink is unsupported")
+            selected.chmod(
+                0o700 if selected.is_dir() or selected.stat().st_mode & 0o111 else 0o600
+            )
+        has_profile = (directory / PROFILE_IGNORE).exists()
+        require(
+            not require_profile or has_profile, "Recorded source profile ignore missing"
+        )
+        if has_profile:
+            # Run deploy has no --ignore-file flag in supported installed SDKs.
+            # Only this private archive receives the exact checked profile bytes.
+            selected_ignore = profile_ignore_contents(directory)
+            (directory / ".gcloudignore").write_bytes(selected_ignore)
+        yield directory
 
 
 def policy_members(policy):
@@ -243,57 +284,46 @@ class Cloud:
     def build(self, identifier):
         return self.cli("builds", "describe", identifier, "--region", REGION)
 
-    def deploy_source(self):
+    def deploy_source(self, source_sha):
         profile_ignore_contents(ROOT)
-        arguments = [
-            "gcloud",
-            "run",
-            "deploy",
-            SERVICE,
-            "--project",
-            PROJECT,
-            "--region",
-            REGION,
-            "--source",
-            ".",
-            "--build-service-account",
-            BUILDER,
-            "--ignore-file",
-            PROFILE_IGNORE,
-            "--no-traffic",
-            "--quiet",
-        ]
-        try:
-            result = subprocess.run(arguments, cwd=ROOT, check=False, timeout=2700)
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                "Source deploy timed out; inspect the existing operation, do not resubmit"
-            ) from None
-        require(
-            result.returncode == 0,
-            "Source deploy failed; no automatic retry or promotion",
-        )
+        with recorded_source(source_sha, require_profile=True) as directory:
+            arguments = [
+                "gcloud",
+                "run",
+                "deploy",
+                SERVICE,
+                "--project",
+                PROJECT,
+                "--region",
+                REGION,
+                "--source",
+                str(directory),
+                "--build-service-account",
+                BUILDER,
+                "--no-traffic",
+                "--quiet",
+            ]
+            try:
+                result = subprocess.run(
+                    arguments,
+                    cwd=ROOT,
+                    check=False,
+                    timeout=2700,
+                    env=source_environment(),
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(
+                    "Source deploy timed out; inspect the existing operation, do not resubmit"
+                ) from None
+            require(
+                result.returncode == 0,
+                "Source deploy failed; no automatic retry or promotion",
+            )
 
     def source_files(self, source_sha):
         # Compare the complete uploaded tracked tree, including deployment scripts,
         # so the newer helper commit cannot be called the old image's source SHA.
-        require(
-            re.fullmatch(r"[0-9a-f]{40}", source_sha),
-            "Expected a complete image source SHA",
-        )
-        archived = command(["git", "archive", "--format=tar", source_sha])
-        with tempfile.TemporaryDirectory(
-            prefix="cloudops-recorded-source-"
-        ) as temporary:
-            directory = Path(temporary).resolve()
-            # data rejects paths/links outside the private extraction directory.
-            with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as historical:
-                historical.extractall(directory, filter="data")
-            if (directory / PROFILE_IGNORE).exists():
-                # meta has no --ignore-file option. This changes only the private
-                # historical extraction, and .gcloudignore itself is excluded.
-                selected_ignore = profile_ignore_contents(directory)
-                (directory / ".gcloudignore").write_bytes(selected_ignore)
+        with recorded_source(source_sha) as directory:
             paths = (
                 command(["gcloud", "meta", "list-files-for-upload"], cwd=directory)
                 .decode()
@@ -620,7 +650,7 @@ def deploy(cloud, source_sha):
     previous_digest = cloud.revision(previous)["status"]["imageDigest"].rsplit("@", 1)[
         -1
     ]
-    cloud.deploy_source()
+    cloud.deploy_source(source_sha)
     after = cloud.service()
     candidate = after["status"]["latestCreatedRevisionName"]
     digest = after["spec"]["template"]["spec"]["containers"][0]["image"].rsplit("@", 1)[

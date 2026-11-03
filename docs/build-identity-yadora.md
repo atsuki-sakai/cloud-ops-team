@@ -53,9 +53,11 @@ Owner 等の承認済み operator で適用します。非 Owner への実行委
 OPS_BUILD_PROFILE=yadora-prod-gcp-ops make gcp-deploy
 ```
 
-この profile は既存 service に `--source .` と専用 `--build-service-account` を渡します。一般デプロイの `--env-vars-file`、runtime SA、memory / CPU / scaling / timeout、secret、labels、認証・IAM を再設定する flag は渡しません。`.env` の `OPS_DRY_RUN`、model、監視対象などを本番へ再適用しないため、現在の runtime 設定を維持できます。profile 自体は runtime の環境変数へ転送しません。
+この profile は既存 service に記録 SHA の一時 source と専用 `--build-service-account` を渡します。一般デプロイの `--env-vars-file`、runtime SA、memory / CPU / scaling / timeout、secret、labels、認証・IAM を再設定する flag は渡しません。`.env` の `OPS_DRY_RUN`、model、監視対象などを本番へ再適用しないため、現在の runtime 設定を維持できます。profile 自体は runtime の環境変数へ転送しません。
 
-固定 profile だけは `--ignore-file .gcloudignore.yadora` を使います。通常の `.gcloudignore` の原文 bytes をそのまま保ち、固定の `.ruff_cache/` と専用 ignore ファイル自身の2除外だけを末尾に追加します。空白・include を含む原文の改変、欠落・並替え・追加の再包含は build 前に拒否します。他 profile の ignore / deploy は変更しません。
+固定 profile だけは clean HEAD の `git archive` を private tempdir（directory 0700、file 0600 / executable 0700）へ展開します。`.gcloudignore.yadora` が通常の `.gcloudignore` の原文 bytes と末尾の `.ruff_cache/`・専用 ignore ファイル自身の2除外に完全一致することを検査し、一時 source の `.gcloudignore` に設定します。source deploy は supported な `--source TEMP_DIRECTORY` を使い、成功・失敗・timeout のいずれも一時領域を削除します。deploy と manifest 取得の子プロセスだけは `CLOUDSDK_GCLOUDIGNORE_ENABLED=true` を固定し、利用者設定による除外の無効化を防ぎます。元 checkout / base ignore、global config / 親の環境変数、他 profile は変更しません。空白・include の変更、欠落・並替え・再包含は build 前に拒否します。
+
+2026-11-03の SDK 568.0.0 は `gcloud run deploy --ignore-file` を実 flag として登録していませんでした。main `e1680afd…` の実行は引数解析で停止し、service snapshot 不変・新 SA の Build 0件を実取得しました。help 本文の記述だけで対応済みと判断せず、実 parser と upload manifest を確認します。[公式 run deploy の引数](https://docs.cloud.google.com/sdk/gcloud/reference/run/deploy)と[upload root の `.gcloudignore`](https://docs.cloud.google.com/sdk/gcloud/reference/topic/gcloudignore)に従い、未対応 flag や全体設定の変更で回避しません。
 
 この固定 profile は `--no-traffic` で source build と revision 作成を行い、保存した唯一の100%旧 route を検査してから、今回の revision **名**に100%を割り当てます。既存の明示 pin は通常の source deploy だけでは移動しません。source deploy の exit 0 や、旧 revision の HTTP 200 を新 image の配備成功と扱わないでください。
 
