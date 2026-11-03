@@ -7,7 +7,7 @@ ARGS ?=
 ENVRUN := uv run --quiet python scripts/envrun.py
 
 .PHONY: help install setup doctor jobs run chat test lint eval \
-        gcp-bootstrap gcp-grant gcp-deploy gcp-schedule gcp-logs
+        gcp-bootstrap gcp-build-bootstrap gcp-grant gcp-deploy gcp-schedule gcp-logs
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -42,10 +42,13 @@ eval: ## Behaviour evaluation with an LLM judge (calls the model)
 gcp-bootstrap: ## Google Cloud one-time setup: APIs, service account, roles, GitHub token secret
 	$(ENVRUN) ./scripts/gcp/bootstrap.sh
 
+gcp-build-bootstrap: ## Plan build-only IAM for an explicit profile (ARGS=--apply to apply after review)
+	$(ENVRUN) ./scripts/gcp/bootstrap_build.sh $(ARGS)
+
 gcp-grant: ## Grant the runtime service account read-only roles on OPS_TARGET
 	$(ENVRUN) ./scripts/gcp/grant_target_roles.sh
 
-gcp-deploy: ## Deploy to Cloud Run (OPS_DRY_RUN from .env; OPS_DRY_RUN=false make gcp-deploy to go live)
+gcp-deploy: ## Deploy from .env; the explicit build profile preserves existing runtime settings
 	$(ENVRUN) ./scripts/gcp/deploy_cloud_run.sh
 
 gcp-schedule: ## Create or update the Cloud Scheduler jobs (ERROR_WATCH_CRON=... to change)

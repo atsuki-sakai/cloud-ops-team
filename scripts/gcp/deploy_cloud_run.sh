@@ -30,11 +30,31 @@
 #   JOB_PREFIX [cloud-ops]  INVOKER_SA [<JOB_PREFIX>-invoker]   same as scripts/gcp/setup_schedules.sh
 #   MEMORY [2Gi]  CPU [1]  MIN_INSTANCES [0]  MAX_INSTANCES [2]  CONCURRENCY [4]  TIMEOUT [1800]
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gcp/build_profile.sh
+source "$SCRIPT_DIR/build_profile.sh"
+load_build_profile
+if [[ "$BUILD_PROFILE_ACTIVE" == true ]]; then
+  # This existing-service profile changes build identity/source only. Omitting
+  # runtime flags preserves live env, secrets, runtime SA, sizing and IAM.
+  require_existing_build_target
+  require_enabled_build_identity
+  require_only_build_project_role
+  cd "$SCRIPT_DIR/../.."
+  gcloud run deploy "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --source . \
+    --build-service-account "$BUILD_SERVICE_ACCOUNT" --quiet
+  echo 'Build identity deployment completed; verify live runtime settings and required operations separately.'
+  exit 0
+fi
 PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}}"
 : "${PROJECT_ID:?PROJECT_ID is required}"
 : "${GITHUB_REPO:?GITHUB_REPO (owner/repo) is required}"
 REGION="${REGION:-${OPS_TARGET_REGION:-asia-northeast1}}"
 SERVICE="${SERVICE:-cloud-ops-team}"
+if [[ "$PROJECT_ID" == yadora-prod && "$SERVICE" == gcp-ops-team ]]; then
+  build_profile_error 'this existing service requires OPS_BUILD_PROFILE=yadora-prod-gcp-ops'
+  exit 1
+fi
 RUNTIME_SA="${RUNTIME_SA:-${SERVICE}@${PROJECT_ID}.iam.gserviceaccount.com}"
 TARGET_PROJECT="${TARGET_PROJECT:-${OPS_TARGET:-$PROJECT_ID}}"
 TARGET_REGION="${TARGET_REGION:-${OPS_TARGET_REGION:-$REGION}}"
