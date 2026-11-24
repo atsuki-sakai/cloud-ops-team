@@ -24,6 +24,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Deployment label values conflicting with argument delimiters; added offline regression tests for these cases.
 
 ### Changed
+- Error watch and access investigation now default to twice a week, Monday and Thursday at 08:00 and 08:30 Asia/Tokyo. The default look-back is 120 hours, covering the 96-hour Thursday-to-Monday gap plus a 24-hour overlap.
+- Publishing a periodic report closes older open reports of the same `report_kind` (and legacy access/infrastructure titles stored as `security`) as `not_planned`, with a short comment linking the new issue. Fingerprint de-duplication of findings and `OPS_AUTO_CLOSE_ISSUES` are unchanged.
 - Scheduled jobs now use strict JSON validation and fixed collection; natural-language requests enter the same path through job-specific adapters. Analysis models receive only their stage's tools, descriptions and invocation history.
 - Execution validates periods, result limits, targets and repositories, retaining missing or truncated collection results as per-run evidence. Existing collector, model and fingerprint contracts are preserved.
 - Aligned the READMEs, architecture, configuration, provider and deployment guides with per-invocation issue budgets,

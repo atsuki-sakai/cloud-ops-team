@@ -35,6 +35,7 @@ search_issues は最大 3 回。ツール呼び出しは合計 30 回以内、�
   重複は fingerprint で自動検出される。
 - medium 以下は起票せず月次レポートにまとめる。
 - 最後に publish_report(kind="security", title="月次セキュリティ診断 YYYY-MM", body=...) で全体レポートを発行する。
+  同じ kind の前回の open レポートは publish_report が対応不要として閉じる。finding には close_issue を使わない。
 
 ## ISSUE 本文（Markdown）
 ## 概要

@@ -1,9 +1,10 @@
 """GitHub issue / pull-request tools.
 
 Writes are guarded by ``OPS_DRY_RUN`` (default on) and by the per-run issue
-cap; closing an issue additionally requires ``OPS_AUTO_CLOSE_ISSUES``. Every
-issue the team creates carries the ``ops-agent`` label and a hidden
-``ops-meta`` block so that later runs can recognise and verify it.
+cap. Closing a verified finding additionally requires ``OPS_AUTO_CLOSE_ISSUES``.
+Publishing a periodic report closes older open reports of the same series even
+when that flag is off. Every issue the team creates carries the ``ops-agent``
+label and a hidden ``ops-meta`` block so that later runs can recognise it.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "auto_close_off": "_自動クローズは無効（OPS_AUTO_CLOSE_ISSUES=false）のため、確認のうえ人間がクローズしてください。_",
         "cooldown": "同じ fingerprint の open ISSUE が {hours}h 以内に更新済みのためコメントを省略",
         "cap": "OPS_MAX_ISSUES_PER_RUN ({cap}) に達したため起票をスキップ",
+        "superseded_report": "新しい定期レポート #{number} を発行したため、このレポートは対応不要としてクローズしました。最新の内容は {url} を参照してください。",
     },
     "en": {
         "footer": "_Filed automatically by the cloud-ops-team agents ({when} / {provider}: {target}). "
@@ -74,6 +76,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "auto_close_off": "_Auto-close is disabled (OPS_AUTO_CLOSE_ISSUES=false); please close it after review._",
         "cooldown": "An open issue with the same fingerprint was updated within {hours}h; comment skipped",
         "cap": "Skipped: OPS_MAX_ISSUES_PER_RUN ({cap}) reached",
+        "superseded_report": "Closed as not planned because periodic report #{number} replaces it. The latest report is {url}.",
     },
 }
 
@@ -405,21 +408,131 @@ def create_ops_issue(
     }
 
 
+# Access and infrastructure reviews used to share ``security`` with the monthly
+# audit. They keep the ``ops:security`` label, but their series id is separate
+# so a new access report does not retire the monthly audit (or the reverse).
+_REPORT_EXTRA_LABELS = {
+    "error": "ops:error",
+    "security": "ops:security",
+    "access": "ops:security",
+    "infrastructure": "ops:security",
+}
+
+# Titles fixed by the specialist instructions before those series were split.
+# Older issues stored report_kind "security" for every one of them.
+_LEGACY_SECURITY_TITLES: dict[str, tuple[str, ...]] = {
+    "access": ("不審アクセス",),
+    "infrastructure": ("インフラ見直し",),
+}
+_SUPERSEDE_OK = {"closed", "already_closed"}
+
+
+def _legacy_security_series(title: str) -> str | None:
+    for series, markers in _LEGACY_SECURITY_TITLES.items():
+        if any(marker in title for marker in markers):
+            return series
+    return None
+
+
+def _same_report_series(issue: dict[str, Any], report_kind: str) -> bool:
+    """Open report of this series, provider and target. Findings are excluded."""
+    if issue.get("state", "open") != "open" or "pull_request" in issue:
+        return False
+    meta = parse_meta_comment(issue.get("body") or "")
+    if meta.get("kind") not in (None, "", "report"):
+        return False
+    if not _matches_scope(meta):
+        return False
+    previous = str(meta.get("report_kind") or "").strip().lower()
+    title = str(issue.get("title") or "")
+    if previous == report_kind:
+        if report_kind == "security" and _legacy_security_series(title):
+            return False
+        return True
+    return previous == "security" and _legacy_security_series(title) == report_kind
+
+
+def _open_series_reports(
+    report_kind: str,
+) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
+    ok, issues = _list_issues("open", [CONFIG.issue_label, "ops:report"])
+    if not ok:
+        return False, issues
+    assert isinstance(issues, list)
+    return True, [issue for issue in issues if _same_report_series(issue, report_kind)]
+
+
+def _supersede_report(
+    issue_number: int, new_number: int | None, new_url: str
+) -> dict[str, Any]:
+    """Close one replaced report as not planned, without the verified-close path."""
+    ok, issue = _get_scoped_issue(issue_number)
+    if not ok:
+        return {
+            "number": issue_number,
+            "status": issue.get("status", "error"),
+            "error": issue,
+        }
+    if issue.get("state") == "closed":
+        return {"number": issue_number, "status": "already_closed"}
+    link = new_url or (f"#{new_number}" if new_number is not None else "")
+    comment = redact(
+        _msg(
+            "superseded_report",
+            number=new_number if new_number is not None else "?",
+            url=link or "(no url)",
+        )
+    )
+    ok_comment, payload = gh_rest(
+        "POST",
+        f"{repo_path()}/issues/{int(issue_number)}/comments",
+        json={"body": comment},
+    )
+    if not ok_comment:
+        return {
+            "number": issue_number,
+            "status": payload.get("status", "error"),
+            "failed_step": "comment",
+            "error": payload,
+        }
+    ok_close, payload = gh_rest(
+        "PATCH",
+        f"{repo_path()}/issues/{int(issue_number)}",
+        json={"state": "closed", "state_reason": "not_planned"},
+    )
+    if not ok_close:
+        return {
+            "number": issue_number,
+            "status": payload.get("status", "error"),
+            "failed_step": "close",
+            "error": payload,
+        }
+    return {"number": issue_number, "status": "closed"}
+
+
 def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) -> dict:
     """Publish a run report as a GitHub issue labelled ``ops:report``.
 
-    Use for security, access, infrastructure and PR/issue review reports so
-    that headless runs leave a reviewable trace. Respects ``OPS_DRY_RUN``.
+    After the new issue exists, older open reports of the same series
+    (``report_kind``, plus legacy access/infrastructure titles that were stored
+    as ``security``) for this provider and target are closed as ``not_planned``
+    with a comment linking the new issue. Finding issues stay on fingerprint
+    de-duplication and are not closed here. Superseding does not consult
+    ``OPS_AUTO_CLOSE_ISSUES``. Respects ``OPS_DRY_RUN``. A failed listing does
+    not create another open report.
 
     Args:
-        kind: ``security`` | ``error`` | ``weekly`` (adds matching label).
+        kind: Series id. ``security`` and ``error`` add those labels;
+            ``access`` and ``infrastructure`` add ``ops:security``;
+            ``weekly`` adds only the report labels.
         title: Title without prefix, e.g. ``Monthly security audit 2026-10``.
         body: Markdown report.
     """
     kind = kind.strip().lower()
     labels = [CONFIG.issue_label, "ops:report"]
-    if kind in ("security", "error"):
-        labels.append(f"ops:{kind}")
+    extra = _REPORT_EXTRA_LABELS.get(kind)
+    if extra:
+        labels.append(extra)
     meta = {
         "kind": "report",
         "report_kind": kind,
@@ -429,6 +542,11 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     }
     full_title = _title("report", title)
     full_body = redact(body) + _footer(meta)
+    ok, previous = _open_series_reports(kind)
+    if not ok:
+        assert isinstance(previous, dict)
+        return {"status": previous.get("status", "error"), "error": previous}
+    assert isinstance(previous, list)
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
@@ -436,6 +554,7 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
             "title": full_title,
             "labels": labels,
             "body_preview": full_body[:1200],
+            "would_supersede": [issue.get("number") for issue in previous],
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
@@ -448,11 +567,22 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     )
     if not ok:
         return {"status": issue.get("status", "error"), "error": issue}
+    number = issue.get("number")
+    url = issue.get("html_url") or ""
+    superseded = [
+        _supersede_report(int(old["number"]), number, url)
+        for old in previous
+        if old.get("number") not in (None, number)
+    ]
     return {
         "status": "created",
-        "number": issue.get("number"),
-        "url": issue.get("html_url"),
+        "number": number,
+        "url": url or None,
         "title": full_title,
+        "superseded": superseded,
+        "close_status": "ok"
+        if all(row.get("status") in _SUPERSEDE_OK for row in superseded)
+        else "incomplete",
     }
 
 

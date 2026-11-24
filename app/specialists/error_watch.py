@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.config import DEFAULT_WATCH_LOOKBACK_HOURS
 from app.specialists.base import Job, Specialist
 from app.tools import ERROR_WATCH_TOOLS
 
@@ -63,9 +64,9 @@ SPECIALIST = Specialist(
         Job(
             name="error_watch",
             params={"hours": "data.hours があればそれ、無ければ __LOOKBACK__"},
-            schedule="0 8 * * *",
+            schedule="0 8 * * 1,4",
             schedule_key="error-watch",
-            scheduled_params={"hours": 24},
+            scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
             cron_env="ERROR_WATCH_CRON",
             param_env={"hours": "ERROR_WATCH_HOURS"},
         ),

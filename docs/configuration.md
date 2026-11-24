@@ -32,7 +32,7 @@ English: [docs/en/configuration.md](en/configuration.md)
 | 変数 | 既定値 | 説明 |
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | お試しモード。GitHub には一切書き込まず、作成する予定の内容をプレビューとして返します |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | 週次レビューで修正を確認できた ISSUE を自動でクローズします（`false` のときは `ops:verified` ラベルとコメントを付けるだけです） |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | 週次レビューで修正を確認できた finding を自動でクローズします（`false` のときは `ops:verified` ラベルとコメントを付けるだけです）。定期レポートの置き換えはこの設定を見ません |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | `create_ops_issue` の新規起票上限。実行単位で複数担当が予算を共有し、同じセッションの次の依頼でもリセットします。`publish_report` は対象外です |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | ISSUE の `updated_at` からこの時間以内なら再発コメントを省略します。人による編集も影響し、複数インスタンス間で投稿を一度に抑える保証はありません |
 
@@ -50,7 +50,7 @@ English: [docs/en/configuration.md](en/configuration.md)
 | 変数 | 既定値 | 説明 |
 |---|---|---|
 | `OPS_REPORT_LANGUAGE` | `ja` | レポート・ISSUE・コメントの言語。`ja` または `en` |
-| `OPS_ERROR_LOOKBACK_HOURS` | `24` | ジョブが `hours` を指定しないときに、エラー監視がさかのぼる時間 |
+| `OPS_ERROR_LOOKBACK_HOURS` | `120` | ジョブが `hours` を指定しないときに、エラー監視がさかのぼる時間。週2回の長い間隔（96 時間）を覆います |
 | `OPS_TIMEZONE` | `Asia/Tokyo` | レポートに書く時刻のタイムゾーン |
 | `OPS_STACK_KEYWORDS` | プロバイダーの既定値と一般的な OS・ランタイム | CISA KEV（実際に悪用が確認された脆弱性の一覧）の絞り込みと、Web での脅威調査の焦点に使うキーワード（カンマ区切り） |
 | `OPS_MODEL` | `gemini-3.8-flash` | すべてのエージェントが使うモデル |
@@ -102,8 +102,8 @@ A2A を使う場合は [デプロイ手順](deployment-gcp.md) に従って配�
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * *` / `24` | エラー監視（毎日 8:00）と、さかのぼる時間。さかのぼる時間は実行間隔と同じにしてください |
-| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * *` / `24` | 不審アクセス調査（毎日 8:30）と、さかのぼる時間。調査窓は実行間隔以上に設定してください |
+| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | エラー監視（月曜・木曜 8:00）と、さかのぼる時間。長い間隔は木曜 8:00 から月曜 8:00 の 96 時間で、120 時間はそこに 24 時間の重なりを足したものです |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | 不審アクセス調査（月曜・木曜 8:30）と、さかのぼる時間。調査窓は長い方の間隔以上にしてください |
 | `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | インフラ・費用・権限の見直し（毎週月曜 10:00） |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | 週次の ISSUE・PR レビュー |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | 月次セキュリティ診断 |
@@ -137,7 +137,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 複数実行が同時に検索・起票すると重複が残る可能性があります。実行の重なりを避け、ISSUE と再発コメントを確認してください。
 観測範囲を広げると、モデルのトークン消費も増えます。
 
-`ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 24"` で指定します。
+`ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 120"` で指定します。
 `ACCESS_WATCH_CRON`・`INFRASTRUCTURE_REVIEW_CRON`・`TZ_NAME` を変更したら `make gcp-schedule` を再実行してください。
 `OPS_TIMEZONE` はレポートの表示時刻、`TZ_NAME` は定期実行の時刻に使うため、そろえて設定すると分かりやすくなります。
 

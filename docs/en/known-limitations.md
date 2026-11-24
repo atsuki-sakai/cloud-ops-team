@@ -46,7 +46,7 @@ Source: [Invocation budget](../../app/core/run_budget.py#L35), [Analysis tool bo
 
 Source: [Report publishing](../../app/tools/issues.py#L391)
 
-- **Current behavior:** `publish_report` neither checks nor updates `OPS_MAX_ISSUES_PER_RUN`. Repeated calls can create the same report multiple times in one run.
+- **Current behavior:** `publish_report` neither checks nor updates `OPS_MAX_ISSUES_PER_RUN`. Repeated calls can create the same report multiple times in one run. Publishing a newer report of the same `report_kind` then closes the older open reports as `not_planned`. The cap itself is still not applied.
 - **Impact:** The total number of new Issues can exceed the configured limit.
 - **Temporary measure:** Do not treat this setting as a strict limit including reports; check the number created. Use dry-run when writes need to be restricted.
 - **Proposed fix:** Share the run budget across all creation paths and record report operations to prevent duplicates of the same kind within a run. If reports have a separate allowance, document its configuration and limit.

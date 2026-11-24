@@ -19,6 +19,11 @@ load_dotenv()
 DEFAULT_MODEL = "gemini-3.8-flash"
 LANGUAGES: dict[str, str] = {"ja": "日本語", "en": "English"}
 
+# Monday and Thursday watches. Thursday 08:00 to the next Monday 08:00 is 96
+# hours; 120 hours covers that gap and keeps a 24-hour overlap so a late start
+# does not drop the boundary. Collection tools accept at most 168 hours.
+DEFAULT_WATCH_LOOKBACK_HOURS = 120
+
 # Extra GitHub labels added to the team's issues (besides ops-agent / ops:*).
 # Override them to match your repository's conventions; empty disables them.
 DEFAULT_ERROR_LABELS = "bug"
@@ -164,7 +169,9 @@ def load_config() -> OpsConfig:
         dry_run=_env_bool("OPS_DRY_RUN", True),
         auto_close_issues=_env_bool("OPS_AUTO_CLOSE_ISSUES", False),
         max_issues_per_run=_env_int("OPS_MAX_ISSUES_PER_RUN", 10),
-        error_lookback_hours=_env_int("OPS_ERROR_LOOKBACK_HOURS", 24),
+        error_lookback_hours=_env_int(
+            "OPS_ERROR_LOOKBACK_HOURS", DEFAULT_WATCH_LOOKBACK_HOURS
+        ),
         recurrence_cooldown_hours=_env_int("OPS_RECURRENCE_COOLDOWN_HOURS", 24),
         timezone=(os.getenv("OPS_TIMEZONE") or "Asia/Tokyo").strip(),
         stack_keywords=_env_csv("OPS_STACK_KEYWORDS"),

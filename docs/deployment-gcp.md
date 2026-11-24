@@ -3,7 +3,7 @@
 English: [docs/en/deployment-gcp.md](en/deployment-gcp.md)
 
 チームは 1 つの Cloud Run サービスとして動きます。Cloud Scheduler が、OIDC で認証した HTTP リクエストでこのサービスを呼び出します。
-主な費用はモデルのトークン代です。既定では毎日のエラー監視と不審アクセス調査、週次の修正確認とインフラ見直し、月次診断を実行します。
+主な費用はモデルのトークン代です。既定では週2回のエラー監視と不審アクセス調査、週次の修正確認とインフラ見直し、月次診断を実行します。
 費用と実行時間はログ量、モデル、再試行、手動実行などに左右されます。既定の最小インスタンス数は 0 です。
 ログの収集量や保持設定に応じた費用も導入先で確認してください。
 配置前に [既知の制約](known-limitations.md) を確認してください。以下の手順だけで監査の完全性や重複起票の防止を保証するものではありません。
@@ -123,9 +123,17 @@ make gcp-schedule            # ジョブを作成または更新（サービス�
 gcloud scheduler jobs run cloud-ops-error-watch --project "$DEPLOY_PROJECT" --location "$DEPLOY_REGION"   # 今すぐ 1 回実行
 ```
 
-既定の予定は、エラー監視が毎日 8:00、不審アクセス調査が毎日 8:30、修正確認が毎週月曜 9:00、
+既定の予定は、エラー監視が月曜・木曜 8:00、不審アクセス調査が月曜・木曜 8:30、修正確認が毎週月曜 9:00、
 インフラ見直しが毎週月曜 10:00、月次診断が毎月 1 日 9:00 です（いずれも Asia/Tokyo）。
+さかのぼる時間の既定は 120 時間です。木曜 8:00 から月曜 8:00 の 96 時間を覆い、24 時間分を重ねます。
 どれも環境変数で変えられます。詳しくは [設定一覧](configuration.md#定期実行の設定make-gcp-schedule) を見てください。
+
+コードの既定を変えても、作成済みの Cloud Scheduler ジョブは `make gcp-schedule`（`scripts/gcp/setup_schedules.sh`）を再実行するまで変わりません。
+`.env` やシェルに古い `ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`、`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS` が残っていると、コードの既定より優先されます。
+既存の `yadora-prod` / `asia-northeast1` / `gcp-ops-team` では、サービス名とジョブ接頭辞を本番で使っている値に合わせます。
+予定だけを更新するなら `SKIP_SERVICE_UPDATE=1` を付け、サービスの IAM やタイムアウトは触りません。
+`OPS_BUILD_PROFILE=yadora-prod-gcp-ops` のデプロイは runtime の環境変数を更新しないため、定期実行の `hours` はジョブの payload が持ちます。
+手動実行で `hours` を省略したときの既定を揃えるには、Cloud Run の `OPS_ERROR_LOOKBACK_HOURS` も `120` に更新します。
 
 ## 運用手順
 
