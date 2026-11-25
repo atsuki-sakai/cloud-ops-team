@@ -76,12 +76,13 @@ exclude = [".venv/**"]
 
 [tool.ty.rules]
 # Ignore common issues with third-party libraries and dynamic code patterns
-unresolved-import = "ignore"
-unresolved-attribute = "ignore"
+import-not-found = "ignore"
+missing-attribute = "ignore"
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
-invalid-return-type = "ignore"
+invalid-explicit-return = "ignore"
 possibly-missing-attribute = "ignore"
+missing-union-attribute = "ignore"
 not-subscriptable = "ignore"
 deprecated = "ignore"
 
