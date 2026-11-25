@@ -7,6 +7,10 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 
 ## [Unreleased]
 
+### 変更
+- README を **英語メイン** に切り替え、構成を刷新しました。`README.md` が英語、日本語版は `README.ja.md` です（`README.en.md` は廃止）。`docs/*.md`・`CONTRIBUTING.md`・`CHANGELOG.md` は引き続き日本語メインです。
+- 日本語 README に残っていた古い既定（毎朝のエラー監視、月十数回の実行）を、現在の既定（月曜・木曜の監視、月約 27 回の定期実行）に合わせました。
+
 ### 修正
 - Yadora 向け専用 Build SA の実 build / push、新 revision への100%切替、認証付き読取経路、稼働 digest / source SHA の本番記録を追加しました。既定 Compute SA の Editor 削除は保留しています。
 - SDK 568.0.0 の `run deploy` が受理しない `--ignore-file` を使わず、固定 profile の記録 source を一時領域へ展開して専用 ignore を適用するようにしました。元 checkout と通常 profile は保持し、全 upload attestation と traffic guard は維持します。

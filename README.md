@@ -1,138 +1,104 @@
+<div align="center">
+
 # cloud-ops-team
+
+**A scheduled AI operations team for your cloud.**<br/>
+Five read-only specialist agents watch errors, suspicious access, infrastructure, security posture and merged fixes,
+then report to you through GitHub issues.
 
 [![CI](https://github.com/atsuki-sakai/cloud-ops-team/actions/workflows/ci.yml/badge.svg)](https://github.com/atsuki-sakai/cloud-ops-team/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue)
 ![Built with Google ADK](https://img.shields.io/badge/built%20with-Google%20ADK-4285F4)
 
-**クラウドの運用保守を、AI のチームが決まった予定で代わりに見張ってくれる仕組みです。**
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Customize](#customize) · [Configuration](#configuration) · [FAQ](#faq) · [日本語](README.ja.md)
 
-登録済みジョブをプログラムで選び、決まった手順で証拠を集めた後、必要な追加調査だけをAIに任せます。
-本番環境のエラーを週2回（月曜・木曜）チェックし、原因を調べて GitHub に ISSUE（やることリスト）として登録します。
-不審なアクセスの兆候も同じ曜日に調査し、毎週インフラの無駄・権限・構成を見直して修正案をまとめます。
-月に一度はセキュリティの健康診断をし、毎週「直したはずの問題が本当に直ったか」を確かめます。
-AI はクラウドの設定を一切変更しません。調べて、報告して、確認するだけです。修正するのはあなた（と、あなたが使う AI コーディングツール）です。
-
-[English README](README.en.md) ・ [仕組みの詳細](docs/architecture.md) ・ [カスタマイズガイド](docs/customization.md) ・ [設定一覧](docs/configuration.md) ・ [Google Cloud へのデプロイ手順](docs/deployment-gcp.md) ・
-[プロバイダー（GCP / AWS / Azure）](docs/providers.md) ・ [既知の制約と改善計画](docs/known-limitations.md) ・ [変更履歴](CHANGELOG.md)
-
-現状は、調査結果を人が確認して使う運用支援ツールです。PR の紐付け、監査の確認範囲、同時実行時の起票制御には
-未修正の問題があります。導入前に [既知の制約と改善計画](docs/known-limitations.md) を確認し、
-`OPS_DRY_RUN=true`、`OPS_AUTO_CLOSE_ISSUES=false` で結果を点検してください。自動クローズを無効にしても、
-書き込みを有効にすると「検証済み」ラベルとコメントは付くため、その根拠も人が確認します。
-定期レポートは別です。書き込みが有効なとき、同じ系列の新しいレポートを発行すると前回の open レポートを対応不要として閉じます。
+</div>
 
 ---
 
-## こんな人のためのツールです
+> [!WARNING]
+> This release produces evidence for **human review**. PR identity, audit coverage and issue writes across separate runs
+> have unresolved defects. Read the [known limitations](docs/en/known-limitations.md) first, and start with
+> `OPS_DRY_RUN=true` and `OPS_AUTO_CLOSE_ISSUES=false`. Even with automatic closure off, enabling writes still adds
+> verification labels and comments, so check their evidence before you accept a fix as complete.
 
-- 本番のエラーログを毎日見る余裕がない
-- セキュリティ診断や「使っているソフトのサポート期限」の確認を後回しにしてしまう
-- ISSUE を直したつもりでも、本当に直ったかまでは追えていない
-- 小さなチームで、専任の SRE（運用担当）やセキュリティ担当がいない
+## Why
 
-## 導入すると、こう変わります
+Small teams rarely have time to read production logs every day, audit IAM and end-of-life runtimes, or confirm that a
+merged fix actually stopped the error. cloud-ops-team does that legwork on a schedule. You read the issues and decide what to fix.
 
-| | 導入前 | 導入後 |
-|---|---|---|
-| エラー | 気づくのはユーザーからの問い合わせ | 月曜と木曜の朝、原因の見立てと対応案つきの ISSUE が届く |
-| 不審なアクセス | ログを個別に調べるまで気づかない | 月曜と木曜、攻撃の兆候と確認できた証拠・調査の限界を報告 |
-| インフラ・権限 | 無駄な費用や過剰な権限を見直せない | 毎週、根拠・リスク・確認方法付きの改善案を報告 |
-| セキュリティ | 気が向いたときに確認 | 毎月、危険度の高い問題が ISSUE になり、月次レポートが届く |
-| 修正の確認 | PR をマージしたら終わり | 毎週、マージ後にエラーが再発していないかを自動で確認 |
+- **Read-only.** No tool can change your cloud. GitHub writes are limited to issues, comments and labels, and they stay off until you enable them.
+- **Deterministic.** Code picks the registered job and runs its fixed evidence collection. The model only analyzes and reports.
+- **Scoped.** Each analysis agent sees the collected evidence plus 5–10 follow-up and reporting tools. Runtime checks reject anything else.
+- **Pluggable.** Twenty cloud-neutral capabilities with a full Google Cloud provider. AWS and Azure ship as skeletons.
 
-## 5 人の AI 担当者
+## Meet the team
 
-| 担当 | いつ（変更可） | やること |
-|---|---|---|
-| 🔍 **エラー監視**（SRE） | 月曜・木曜 08:00 | 直近 120 時間のエラーログを集めて同じ種類ごとにまとめ、サーバーエラーの割合・失敗している定期ジョブ・直前のデプロイと照らし合わせて原因を推測します。対応が必要なものだけ ISSUE にします。同じエラーが続いている場合は新しい ISSUE を作らず、既存の ISSUE にコメントします |
-| 🔎 **不審アクセス調査** | 月曜・木曜 08:30 | 直近 120 時間の監査ログ、HTTP 401/403・探索パス、Cloud Armor の拒否を調べます。不審な兆候と侵入の確証を区別し、証拠・確度・確認できなかった範囲を報告します。定期レポートは最新の1件だけを開いたままにします |
-| 🧰 **インフラ見直し** | 毎週月曜 10:00 | GCP Recommender の費用・権限の推奨事項と、IAM・認証情報・Cloud Run・Cloud SQL・ネットワークの監査をまとめます。期待効果、変更リスク、実施・確認・ロールバックの案を示します |
-| 🛡️ **セキュリティ診断** | 毎月 1 日 09:00 | 権限の付けすぎ、インターネットに開いたままのポート、古い鍵、データベースの設定、使っているソフトの脆弱性やサポート期限切れ、最近実際に悪用されている攻撃などを調べます。危険度の高いものは ISSUE にし、全体を月次レポートにまとめます |
-| ✅ **修正の確認**（リリース管理） | 毎週月曜 09:00 | open の ISSUE と直近30日以内にクローズされた未検証の ISSUE について、対応 PR のマージ・テスト・エラー再発を確認します。`closes #番号` で自動クローズされても検証します。直っていれば「確認済み」、open のまま2週間動きがなければ「停滞」の印を付け、週次レポートを書きます |
+| Job | Default schedule | Specialist | What you get |
+|---|---|---|---|
+| `error_watch` | Mon & Thu 08:00 | 🔍 SRE | Groups 120 h of error logs by fingerprint and correlates them with 5xx rates, failing scheduled jobs and recent deploys. Files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate. |
+| `access_watch` | Mon & Thu 08:30 | 🔎 Access investigator | Reviews 120 h of audit logs, HTTP 401/403, probe paths and Cloud Armor denials. Keeps suspicious signals apart from confirmed compromise and reports evidence, confidence and coverage gaps. |
+| `infrastructure_review` | Mon 10:00 | 🧰 Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits. Each proposal comes with impact, risk, validation and rollback steps. |
+| `monthly_security_audit` | 1st of the month | 🛡️ Cloud security | Covers IAM, long-lived credentials, compute, databases, network rules, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel. Critical and high findings become issues, and everything goes into a monthly report. |
+| `weekly_pr_review` | Mon 09:00 | ✅ Release manager | Checks open issues, plus unverified issues closed within 30 days (including auto-closed via `closes #N`), against linked PRs, CI and recurrence. Labels verified fixes and stale issues and publishes a weekly report. |
 
-時刻の既定は `Asia/Tokyo` で、変更できます。定期実行のほかに、話しかけて使うこともできます（例:「不審なアクセスがないか調べて」「インフラの無駄と権限を見直して」「PR の進捗はどう？」）。
+Schedules default to `Asia/Tokyo`. You can also just ask, for example *"investigate suspicious access"*,
+*"review infrastructure waste and permissions"* or *"what is the PR status?"*.
 
-不審アクセス調査は定期的なログレビューです。リアルタイムの侵入防御や遮断は行いません。
-ログが未収集・取得不可・途中までの場合や、検出が 0 件の場合に「不正アクセスがない」とは断定しません。
-費用削減額は API に見積もりがある場合だけ示します。対象リージョンの Cloud Run・Cloud SQL とプロジェクトの IAM を扱い、全インフラの費用を網羅するものではありません。
-
-## 1 週間の流れ（例）
-
-```mermaid
-flowchart LR
-    A["毎朝 08:00<br/>エラー監視"] -->|"ISSUE を登録"| B["あなた<br/>ISSUE を読み<br/>対応を決める"]
-    B -->|"修正して PR を作成<br/>本文に closes #番号"| C["PR をマージ"]
-    C --> D["月曜 09:00<br/>修正の確認"]
-    D -->|"証拠を確認"| E["確認済みの印<br/>人が確認してクローズ"]
-    D -->|"再発あり"| B
-```
-
-たとえば、ある朝こんな ISSUE が届きます（実際の出力を簡略化した例）。
+<details>
+<summary><b>Example issue</b> (simplified from real output)</summary>
 
 ```text
-[ops/error] worker: /api/v1/jobs/expire-reservations で HTTP 500 が継続（DB の接続数不足）
-ラベル: ops-agent, ops:error, bug, major
+[ops/error] worker: HTTP 500 persists on /api/v1/jobs/expire-reservations (DB connection pool exhausted)
+Labels: ops-agent, ops:error, bug, major
 
-## 概要
-worker サービスで 12:30〜12:40 に 5 分おきに 3 回、HTTP 500 が発生。
+## Summary
+The worker service returned HTTP 500 three times, every 5 minutes, between 12:30 and 12:40.
 
-## 影響範囲
-期限切れ予約の自動解放が約 10 分遅延。
+## Impact
+Automatic release of expired reservations was delayed by about 10 minutes.
 
-## 証跡
-"pool timed out while waiting for an open connection"（12:30:05, 12:35:04, 12:40:04）
+## Evidence
+"pool timed out while waiting for an open connection" (12:30:05, 12:35:04, 12:40:04)
 
-## 原因分析（確度: 高）
-12:30 に 10 件以上の定期ジョブが同時に起動し、データベースの接続が足りなくなった。
+## Root cause (confidence: high)
+More than 10 scheduled jobs started at 12:30 and exhausted the database connections.
 
-## 推奨対応
-1. 定期ジョブの実行時刻を数分ずつずらす
-2. 接続プールの上限とデータベースの最大接続数を見直す
+## Recommended actions
+1. Stagger the scheduled jobs by a few minutes
+2. Review the connection pool limit and the database max_connections
 
-## 確認方法
-修正後、"/api/v1/jobs/expire-reservations" のエラーが 0 件であることを確認（週次の確認で自動チェック）。
+## Verification
+After the fix, confirm zero errors on "/api/v1/jobs/expire-reservations" (checked automatically by the weekly review).
 ```
 
-あなたはこれを読んで修正し、PR の本文に `closes #番号` と書いてマージします。翌週の月曜に AI が確認結果を報告するので、
-対象 PR・CI・デプロイ・再発確認の根拠を点検してください。現在の「検証済み」は修正完了を保証する判定ではありません。
+You fix it, merge a PR containing `closes #N`, and the next Monday the release manager reports what it found.
+Review its PR, CI, deploy and recurrence evidence yourself; "verified" is not a guarantee that the fix is complete.
 
-## 安全に使えるように作っています
+</details>
 
-| AI がやること | AI がやらないこと |
-|---|---|
-| ログ・設定・メトリクスを**読む** | クラウドの設定変更、再起動、削除、デプロイ |
-| GitHub に ISSUE・コメント・ラベルを**書く** | PR のマージ、コードの変更 |
-| 確認済みの ISSUE に印を付ける | ISSUE のクローズ（設定で許可した場合のみ） |
+> [!NOTE]
+> Access investigation is a scheduled log review. It does not block anything in real time. Missing, inaccessible or
+> truncated logs, or zero detections, never prove that no unauthorized access happened. Savings are quoted only when the API
+> returns an estimate, and optimization covers Cloud Run and Cloud SQL in the target region plus project IAM, not every resource.
 
-- **最初は「お試しモード」**（`OPS_DRY_RUN=true`）で動きます。GitHub には何も書き込まず、「こういう ISSUE を作る予定です」という下書きだけを表示します。内容に納得してから本番モードに切り替えてください。
-- **起票数を抑える設定があります。** 通常起票は 1 回の実行で既定 10 件までです。複数担当で予算を共有し、次の依頼でリセットします。
-  レポート起票はこの予算の対象外です。既存 ISSUE の検索と再発クールダウンも、複数の実行が同時に書き込む場合の重複を保証して防ぐものではありません。
-  詳細は [起票制御の制約](docs/known-limitations.md) を参照してください。
-- **秘密情報は書き込みません。** ログに含まれるトークン・パスワード・メールアドレス・IP アドレスなどは、ISSUE に書く前に自動で伏せ字にします。
-- クラウドには**閲覧用の権限だけ**を与えます。仮に AI が指示を誤解しても、クラウドを壊すことはできません。
+## Quick start
 
-## 自分のプロジェクトで使う
+**Prerequisites:** Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), [agents-cli](https://github.com/google/agents-cli)
+(`uv tool install google-agents-cli`), `make`, `gcloud` (logged in, plus `gcloud auth application-default login`),
+Gemini access (Vertex AI or `GEMINI_API_KEY`) and a GitHub token or `gh auth login`.
 
-このリポジトリは **クローンして自分用に使う** ためのものです。GitHub の「Use this template」から自分のリポジトリを作るか、そのままクローンしてください。
-すべての操作は `make` コマンドにまとめてあります（`make` だけで一覧が出ます）。
+The repository is meant to be **cloned and adapted**: click **Use this template** on GitHub, or clone it directly.
+Every task runs through `make`; run `make` on its own to list them.
 
-### 1. 用意するもの
-
-- 監視したい **Google Cloud プロジェクト**と、それを閲覧できるアカウント（`gcloud auth login` と `gcloud auth application-default login` 済み）
-- **Gemini** を使える環境（Google Cloud の Vertex AI、または Gemini API キー）
-- ISSUE を登録する **GitHub リポジトリ**と、そのアクセス権（`gh auth login` 済み、またはトークン）
-- **Python 3.11〜3.13**、[uv](https://docs.astral.sh/uv/)、agents-cli（`uv tool install google-agents-cli`）、`make`
-
-### 2. 設定する（質問に答えるだけ）
+### 1. Set up and check access
 
 ```bash
-git clone https://github.com/<あなた>/cloud-ops-team && cd cloud-ops-team
-make setup        # 依存関係を入れ、質問に答えて .env を作る（監視するプロジェクト・ISSUE を出すリポジトリ・言語など）
-make doctor       # 設定・Gemini・GitHub・クラウドの権限を点検し、足りないものと直し方を表示
+git clone https://github.com/<you>/cloud-ops-team && cd cloud-ops-team
+make setup     # install dependencies, answer a few questions, write .env
+make doctor    # check config, Gemini, GitHub and cloud access; prints a fix for every gap
 ```
-
-`make doctor` の例（足りない API があると、有効化のコマンドまで教えてくれます）:
 
 ```text
 Cloud access
@@ -144,201 +110,242 @@ Cloud access
 Summary: 22 ok, 2 warnings, 0 failures
 ```
 
-### 3. 手元で試す（お試しモード）
+### 2. Run jobs locally in dry-run mode
 
 ```bash
-make run JOB=error_watch                              # エラー監視を 1 回。AI が何を調べたかが 1 行ずつ出る
-make run JOB=access_watch ARGS="--hours 120"            # 不審アクセス調査
-make run JOB=infrastructure_review                     # インフラ・権限・費用の見直し
-make run JOB=monthly_security_audit ARGS="--kev-days 30"   # セキュリティ診断（数分）
-make run JOB=weekly_pr_review                         # 修正の確認
-make chat                                             # ブラウザで話しかけて試す
+make run JOB=error_watch                                  # streams every tool call; nothing is written
+make run JOB=access_watch ARGS="--hours 120"
+make run JOB=infrastructure_review
+make run JOB=monthly_security_audit ARGS="--kev-days 30"  # takes a few minutes
+make run JOB=weekly_pr_review
+make chat                                                 # talk to the team in the browser
 ```
 
-お試しモード（`OPS_DRY_RUN=true`）なので、GitHub には何も書き込まれず「作る予定の ISSUE」だけが表示されます。
-
-### 4. 自分のプロジェクトの事情を教える（おすすめ）
+Optionally, describe your services, severity policy and known noise so the team can take them into account:
 
 ```bash
 cp config/ops-context.example.md config/ops-context.md
 ```
 
-サービスの役割、重要度の考え方、無視してよいエラーなどを書いておくと、AI がそれを前提に判断します。
-ラベルや手順の変え方、担当やツールの追加方法は [カスタマイズガイド](docs/customization.md) にまとめています。
-
-### 5. 本番で定期実行する（Google Cloud）
+### 3. Deploy to Google Cloud (Cloud Run + Cloud Scheduler)
 
 ```bash
-make gcp-bootstrap    # 初回だけ: API の有効化、AI 用アカウントと閲覧権限、GitHub トークンの保存（入力を求められます）
-make gcp-deploy       # Cloud Run にデプロイ（まずはお試しモードのまま）
-make gcp-schedule     # 週2回・毎週・毎月の定期実行を登録（デプロイ先の URL は自動で見つけます）
-make gcp-logs         # 実行履歴を確認
+make gcp-bootstrap   # once: APIs, runtime service account, read-only roles, GitHub token secret
+make gcp-deploy      # deploys in dry-run mode first
+make gcp-schedule    # creates the scheduled jobs (finds the service URL itself)
+make gcp-logs        # recent runs
 ```
 
-数日分の下書きを見て問題がなければ、`OPS_DRY_RUN=false make gcp-deploy` で実際に ISSUE を登録するようにします。
-詳しい手順と運用（止め方・トークンの更新・ロールバック）は [デプロイ手順書](docs/deployment-gcp.md) にあります。
+When a few days of drafts look right, start filing issues with `OPS_DRY_RUN=false make gcp-deploy`.
+The full guide and runbook (pausing, token rotation, rollback) is in [docs/en/deployment-gcp.md](docs/en/deployment-gcp.md).
 
-### 6. 実行する時間や頻度を変える
+<details>
+<summary><b>Changing schedules</b></summary>
 
-`make jobs` で現在の予定を確認し、変えたい値を付けて `make gcp-schedule` を再実行します。既存の予定が上書きされます。
+`make jobs` shows the current schedules. Re-run `make gcp-schedule` with new values to overwrite them, or put the values in `.env`.
 
-| やりたいこと | コマンド |
+| Goal | Command |
 |---|---|
-| エラー監視を毎時にする | `ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 make gcp-schedule` |
-| エラー監視を 6 時間ごとにする | `ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule` |
-| 平日の朝 9:30 だけにする（月曜は週末分も見る） | `ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72 make gcp-schedule` |
-| 月次診断を 15 日に変える | `MONTHLY_CRON="0 9 15 * *" make gcp-schedule` |
-| 不審アクセス調査を毎朝 9:00 にする | `ACCESS_WATCH_CRON="0 9 * * *" ACCESS_WATCH_HOURS=24 ONLY_JOBS=access-watch make gcp-schedule` |
-| インフラ見直しを金曜 10:00 にする | `INFRASTRUCTURE_REVIEW_CRON="0 10 * * 5" ONLY_JOBS=infrastructure-review make gcp-schedule` |
-| 1 つの予定だけを変える | 上に加えて `ONLY_JOBS=error-watch` |
+| Hourly error watch | `ERROR_WATCH_CRON="0 * * * *" ERROR_WATCH_HOURS=1 make gcp-schedule` |
+| Error watch every 6 hours | `ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule` |
+| Weekdays at 09:30 (Monday covers the weekend) | `ERROR_WATCH_CRON="30 9 * * 1-5" ERROR_WATCH_HOURS=72 make gcp-schedule` |
+| Monthly audit on the 15th | `MONTHLY_CRON="0 9 15 * *" make gcp-schedule` |
+| Daily access watch at 09:00 | `ACCESS_WATCH_CRON="0 9 * * *" ACCESS_WATCH_HOURS=24 ONLY_JOBS=access-watch make gcp-schedule` |
+| Infrastructure review on Fridays at 10:00 | `INFRASTRUCTURE_REVIEW_CRON="0 10 * * 5" ONLY_JOBS=infrastructure-review make gcp-schedule` |
+| Change only one schedule | add `ONLY_JOBS=error-watch` |
 
-いつも同じ設定にしたい場合は、`.env` に書いておけば毎回付ける必要はありません。
-既定の週2回（月曜・木曜）では、長い間隔が木曜から月曜の 96 時間です。`ERROR_WATCH_HOURS` と `ACCESS_WATCH_HOURS` の既定 120 時間は、その間隔に 24 時間の重なりを足したものです。間隔を変えたら、さかのぼる時間も長い方の間隔以上にしてください。
-一時的に止めたいときは `gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1` を実行します（`resume` で再開）。
+With the default Monday/Thursday cadence, the longest gap is the 96 hours from Thursday to Monday. The default 120-hour
+lookback for `ERROR_WATCH_HOURS` and `ACCESS_WATCH_HOURS` adds a 24-hour overlap; if you change the cadence, keep the
+lookback at least as long as the longest gap. To pause a job, run
+`gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1` (`resume` restarts it).
 
-## 仕組み（全体像）
+</details>
+
+## How it works
 
 ```mermaid
 flowchart TB
-    SCH["定期ジョブJSON"] --> R["登録済みジョブ・引数を検証"]
-    Q["あなたの質問"] --> L["対話窓口<br/>5担当から選択"]
+    SCH["Scheduled job JSON"] --> R["Validate registered job and arguments"]
+    Q["Your request"] --> L["Conversation leader<br/>choose from 5 specialists"]
     L --> R
-    R --> C["固定手順で証拠を収集"]
-    C --> A["担当の分析AI<br/>証拠＋必要な追加調査・報告ツールのみ"]
-    C --> P["クラウド別プロバイダー"]
-    A --> G["GitHub ISSUE・レポート"]
-    S["実行時のツール・引数制限"] -.-> A
+    R --> C["Fixed evidence collection"]
+    C --> A["Scoped analysis AI<br/>evidence + follow-up/report tools only"]
+    C --> P["Cloud-specific provider"]
+    A --> G["GitHub issues and reports"]
+    S["Runtime tool/argument checks"] -.-> A
 ```
 
-- **定期ジョブの振り分けと通常の収集はプログラムが実行**します。未知のジョブや不正な引数を拒否し、AIに担当や収集順を選ばせません。
-- **自然言語の依頼**は対話窓口が担当を選び、同じジョブ検証・固定収集・分析へ進みます。担当の受付も別ジョブや対象変更を拒否します。
-- **担当のAIには、その工程で使うツールと説明だけ**を渡します。現在の分析用ツール数は担当ごとに5〜10個で、収集済みの一覧取得や監査は渡しません。未許可の呼び出しや過大な取得条件は実行前にも拒否します。
-- **担当（専門家）**の定義（`app/specialists/`）に加え、引数の規則・固定収集手順・分析範囲・比較評価ケースを一緒に追加します。
-- **共通ツール**はクラウドに依存しない名前（`list_services`、`audit_network` など）で、**プロバイダー**が各クラウドの API に置き換えます。
-- **重複を抑える仕組み**: エラーごとの指紋（フィンガープリント）を ISSUE に埋め込み、既存の ISSUE を検索します。
-  データベースや実行をまたぐ共有ロックは使っていないため、複数実行が重なると重複が起こり得ます。
+- **Scheduled work bypasses LLM routing.** Unknown jobs and invalid arguments are rejected before collection or any model call.
+  Natural-language requests pick a specialist adapter and enter the same validated workflow.
+- **Scoped model context.** Tool descriptions and cloud glossary entries follow the stage scope, and runtime checks
+  reject unauthorized calls and excessive query arguments.
+- **Cloud-neutral capabilities.** Workflows call functions such as `list_services` and `audit_network`; a provider maps them to a cloud.
+- **Issues are the ledger.** A stored fingerprint finds existing issues and counts recurrences after a merge. Issue creation is
+  serialized within one invocation, but there is no shared lock across runs, so overlapping runs can create duplicates.
+- **Issue budgets.** `OPS_MAX_ISSUES_PER_RUN` caps normal issue creation across one invocation, including a `full` run of every job, and
+  resets on the next request. `publish_report` is outside that budget and has no call-count cap. Publishing a new periodic report closes
+  older open reports of the same series as not planned.
+- **Built on [Google ADK](https://adk.dev/)** with [agents-cli](https://github.com/google/agents-cli). A programmatic root serves
+  HTTP/SSE and A2A, and specialist adapters keep streamed tool events for conversations.
 
-詳しくは [仕組みの詳細](docs/architecture.md) を参照してください。
+Routing and tool changes go through a [baseline/candidate comparison gate](tests/eval/routing/README.md) covering route, tools,
+arguments, preconditions and task completion. Unauthorized tool presentation, attempts or executions must stay at zero, and
+missing or incomparable evidence fails closed. Stubbed-model tests validate contracts only; they don't establish live-model accuracy
+or release eligibility. This architecture still needs validation and deployment in your target environment.
 
-### 機能を増やす前の精度確認
+Browser recording/replay, backup creation/restore and the other extensions are planned in
+[Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7) and are not implemented yet.
 
-担当・ツール・引数・前提手順・業務完了を、同じ条件の旧構成と候補で比較する仕組みを用意しています。
-別担当のツールの提示・試行・実行は0件、ケース不足や条件不一致は不合格として扱います。
-代替モデルを使うオフライン試験は経路の検証で、実モデルの精度や公開可能性の証明にはしません。
-手順は [比較評価ガイド](tests/eval/routing/README.md) にあります。この構成変更の実機検証・デプロイは別途必要です。
+Deep dive: [docs/en/architecture.md](docs/en/architecture.md).
 
-ブラウザの座標記録・再生、バックアップ作成・復元、追加の保守業務は [拡張計画 #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7) の実装予定です。
-この構成変更だけで、それらの機能が利用可能になるわけではありません。
+## Safety model
 
-## フォルダ構成
+| The agents do | The agents never do |
+|---|---|
+| **Read** logs, configuration and metrics | Change, restart, delete or deploy cloud resources |
+| **Write** GitHub issues, comments and labels | Merge PRs or change code |
+| Label issues they verified as fixed | Close finding issues (unless `OPS_AUTO_CLOSE_ISSUES=true`) |
+
+- **Dry-run by default.** With `OPS_DRY_RUN=true`, nothing reaches GitHub; you only see the issues that would be filed.
+- **Secrets are redacted.** Tokens, passwords, email and IP addresses found in logs are masked before anything is written.
+- **Least privilege.** The runtime identity has read-only cloud roles. Even if the model misreads an instruction, it has no permission to change your cloud.
+
+## Supported clouds
+
+| Cloud | Status | Logs · services · jobs · DBs · metrics | Security checks |
+|---|---|---|---|
+| Google Cloud | ✅ 20 capabilities; known coverage and classification gaps | Cloud Logging, Cloud Run, Cloud Scheduler, Cloud SQL, Cloud Monitoring, Recommender | Audit/access logs, Cloud Armor, IAM, SA keys, Cloud Run, Cloud SQL, VPC firewall, SCC, Artifact Analysis |
+| AWS | 🚧 Skeleton, contributions welcome | CloudWatch Logs, ECS / Lambda, EventBridge, RDS (planned) | IAM, Security Hub, Inspector, security groups (planned) |
+| Azure | 🚧 Skeleton, contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
+
+Repository posture, CISA KEV, end-of-life checks, web threat research and PR progress review work on every cloud. Without a log
+capability, the weekly review can't verify recurrence, so confirm that separately. Unsupported checks are listed in reports as
+not verified. To add or complete a provider, see [docs/en/providers.md](docs/en/providers.md).
+
+## Customize
+
+| You want to | Do this |
+|---|---|
+| Tell the team what your services do and which errors are noise | `config/ops-context.md` (no code) |
+| Use your own labels, report language or schedules | `.env` (no code) |
+| Change a specialist's procedure or issue format | Edit `INSTRUCTION` in `app/specialists/<name>.py` |
+| Add a tool | Add a function in `app/tools/`, choose its collection/analysis stage, scope and tests |
+| Add a job or a whole specialist | Add the definition, request schema, fixed collection plan, analysis scope and comparison cases |
+| Support another cloud capability | Implement it in `app/providers/<cloud>/` |
+
+Recipes with code: [docs/en/customization.md](docs/en/customization.md).
+
+## Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPS_CLOUD_PROVIDER` | `gcp` | `gcp`, `aws` or `azure` |
+| `OPS_TARGET` / `OPS_TARGET_REGION` | — | Project, account or subscription to monitor, and its region |
+| `GITHUB_REPO` | — | `owner/repo` that receives issues |
+| `OPS_DRY_RUN` | `true` | Preview instead of writing to GitHub |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
+| `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue cap shared within one invocation; resets on the next request and excludes reports |
+| `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` for reports, issues and comments |
+| `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
+| `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: …` | Labels matching your repository |
+| `OPS_CONTEXT_FILE` | `config/ops-context.md` | Project knowledge; the standard deployment does not forward custom paths |
+
+All variables: [docs/en/configuration.md](docs/en/configuration.md).
+
+<details>
+<summary><b>Project layout</b></summary>
 
 ```
 cloud-ops-team/
 ├── app/
-│   ├── specialists/        ★ 担当の定義（指示文・ツール・ジョブ）。_template.py をコピーして追加
-│   ├── tools/              ★ AI が使う調査ツール（クラウド非依存）
-│   ├── providers/          ★ クラウドごとの実装（gcp は実装済み、aws / azure は雛形）
-│   ├── agent.py            ルーター・対話窓口・分析担当の組み立て
-│   ├── routing.py          登録ジョブと引数の検証・直接振り分け
-│   ├── workflows.py        固定収集手順・証拠・分析用ツールの切り分け
-│   ├── tool_scope.py       工程別ツールと引数の実行境界
-│   ├── prompts.py          指示文の組み立て（クラウド名・言語・プロジェクト情報の差し込み）
-│   ├── config.py           .env の読み込み
-│   └── core/ integrations/ 共通部品（フィンガープリント・伏せ字）、GitHub クライアント
-├── config/ops-context.example.md   ★ プロジェクトの事情を書くひな形
-├── scripts/                setup・doctor・run_job・jobs と、gcp/（初期設定・デプロイ・定期実行）
-├── tests/                  unit（オフライン）・integration・eval（LLM 採点）
-├── docs/                   設計・カスタマイズ・プロバイダー・設定・デプロイ（en/ に英語版）
-└── Makefile                すべての操作の入口
+│   ├── specialists/        ★ team members: instruction, tools and jobs (copy _template.py to add one)
+│   ├── tools/              ★ tools the model calls (cloud-neutral)
+│   ├── providers/          ★ one adapter per cloud: gcp (implemented), aws and azure (skeletons)
+│   ├── agent.py            builds the router, conversation leader and analysis agents
+│   ├── routing.py          validates registered jobs and routes them directly
+│   ├── workflows.py        fixed collection, evidence and analysis tool selection
+│   ├── tool_scope.py       per-stage tool and argument execution boundary
+│   ├── prompts.py          renders instructions (cloud, language, project context)
+│   ├── config.py           settings from .env
+│   └── core/ integrations/ fingerprints and redaction; GitHub client
+├── config/ops-context.example.md   ★ template for your project knowledge
+├── scripts/                setup, doctor, run_job, jobs; gcp/ (bootstrap, deploy, schedules, roles)
+├── tests/                  unit (offline), integration, eval (LLM-judged)
+├── docs/                   architecture, customization, providers, configuration, deployment (Japanese; en/: English)
+└── Makefile                entry point for every task
 ```
 
-★ が、自分のプロジェクト向けに調整するときに主に触る場所です。各ファイルの説明は [フォルダ構成の詳細](docs/architecture.md#フォルダ構成) にあります。
+★ marks what you typically change. File-by-file notes: [docs/en/architecture.md](docs/en/architecture.md#folder-structure).
 
-## 主な設定
+</details>
 
-| 設定 | 初期値 | 意味 |
-|---|---|---|
-| `OPS_TARGET` | — | 監視するプロジェクト |
-| `GITHUB_REPO` | — | ISSUE を登録するリポジトリ（`組織名/リポジトリ名`） |
-| `OPS_DRY_RUN` | `true` | `true` はお試しモード（書き込まない）、`false` で本番モード |
-| `OPS_REPORT_LANGUAGE` | `ja` | レポートと ISSUE の言語。`en` で英語 |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | `true` にすると、直ったことを確認した ISSUE を AI がクローズする |
-| `OPS_MAX_ISSUES_PER_RUN` | `10` | 通常起票の実行単位の上限。複数担当で共有し、次の依頼でリセット。レポート起票は対象外 |
-| `OPS_CLOUD_PROVIDER` | `gcp` | 対象のクラウド（`gcp` / `aws` / `azure`） |
-| `OPS_ERROR_LABELS` / `OPS_SECURITY_LABELS` / `OPS_SEVERITY_LABELS` | `bug` / `security` / `severity: high` など | ISSUE に付けるラベル（自分のリポジトリに合わせて変更） |
-| `OPS_CONTEXT_FILE` | `config/ops-context.md` | プロジェクトの事情を書いたファイル。標準デプロイは独自パス設定を渡さない |
+## FAQ
 
-すべての設定は [設定一覧](docs/configuration.md) にあります。
+<details>
+<summary><b>What does it cost?</b></summary>
 
-## 対応しているクラウド
+Mostly Gemini usage. Cloud Run bills only while a request runs and scales to zero in between. The default schedules
+add up to about 27 runs a month: error and access watches twice a week, fix and infrastructure reviews weekly, and the monthly audit.
 
-| クラウド | 状態 |
-|---|---|
-| Google Cloud | ✅ 本ツールの 20 機能を実装。対象サービス・取得条件は [プロバイダーガイド](docs/providers.md) を参照。監査範囲・誤判定には [既知の制約](docs/known-limitations.md) あり |
-| AWS | 🚧 準備中（土台はできており、機能ごとに追加できます） |
-| Azure | 🚧 準備中（同上） |
+</details>
 
-AWS・Azure でも、GitHub リポジトリの診断、脆弱性情報（CISA KEV）の確認、サポート期限の確認、最新の攻撃動向の調査、PR の進捗確認は使えます。
-クラウドログが未対応の場合は再発を検証できないため、修正完了は別途確認してください。
-ログやクラウド設定の診断は、対応が済むまで「未対応のため確認できなかった項目」としてレポートに記載されます。
-追加の方法は [プロバイダー追加ガイド](docs/providers.md) を参照してください。
+<details>
+<summary><b>Can the agents change my code or cloud?</b></summary>
 
-## よくある質問
+No. They have read-only cloud roles. On GitHub they create issues, comments and labels, and close only older periodic reports
+of the same series. Verified findings are closed automatically only when `OPS_AUTO_CLOSE_ISSUES` is enabled.
 
-**お金はかかりますか？**
-主な費用は Gemini の利用料です。Cloud Run は実行中しか課金されず、待機中は 0 台まで縮小します。
-既定の頻度（週2回・毎週・毎月）なら、1 か月の実行は十数回程度です。
+</details>
 
-**AI が勝手にコードやクラウドを直してしまいませんか？**
-直しません。クラウドには閲覧権限しかありません。GitHub では ISSUE・コメント・ラベルを作成し、同じ系列の古い定期レポートだけを対応不要として閉じます。検証済み finding の自動クローズは `OPS_AUTO_CLOSE_ISSUES` が有効なときだけです。
+<details>
+<summary><b>Will a recurring error open a new issue every run?</b></summary>
 
-**もう自分で登録した ISSUE と重複しませんか？**
-登録の前に、リポジトリ内の似た ISSUE を検索する手順があります。AI による類似判断と検索範囲に依存するため、
-人が作成した ISSUE との重複を完全には保証して防げません。
+Usually not. If an open issue with the same fingerprint exists, the run comments on it instead. The cooldown uses the issue's
+update time, and overlapping runs can still create duplicates; see the [known limitations](docs/en/known-limitations.md).
+Issues you filed by hand are searched too, but matching depends on AI similarity and search scope, so duplicates aren't ruled out.
 
-**同じエラーが毎回出ていたら、ISSUE は増えますか？**
-同じ指紋（フィンガープリント）の open ISSUE が見つかれば、通常は既存の ISSUE へのコメントになります。
-クールダウンは ISSUE 全体の更新時刻を基準にします。同時実行では重複起票・コメントが起こり得るため、
-[既知の制約](docs/known-limitations.md) を確認してください。
+</details>
 
-**定期レポートは毎回増えますか？**
-同じ系列（`report_kind`）の新しいレポートを発行すると、前回までの open レポートは対応不要として閉じ、最新の 1 件だけが開いたままになります。
-エラーやセキュリティ指摘の ISSUE はこのクローズの対象ではなく、上の指紋による重複防止のままです。
+<details>
+<summary><b>Can I get output in English?</b></summary>
 
-**自分のプロジェクト向けに機能を足せますか？**
-足せます。担当の定義に、引数検証・固定収集・分析用ツールの範囲・比較評価ケースを合わせて追加します。
-調査ツールの追加、手順やラベルの変更も含めて [カスタマイズガイド](docs/customization.md) に例付きでまとめています。
+Yes. Set `OPS_REPORT_LANGUAGE=en` and reports, issues and comments are written in English.
 
-**英語で出力できますか？**
-`OPS_REPORT_LANGUAGE=en` にすると、レポート・ISSUE・コメントが英語になります。
+</details>
 
-**すぐに止めたいときは？**
-GitHub への書き込みだけを止めるなら、本番の設定を `OPS_DRY_RUN=true` に戻します。
-定期実行そのものを止めるなら、上の `pause` コマンドを使います。手順は [デプロイ手順書](docs/deployment-gcp.md#運用手順) にあります。
+<details>
+<summary><b>How do I stop it quickly?</b></summary>
 
-## 用語集
+To stop GitHub writes, redeploy with `OPS_DRY_RUN=true`. To stop the runs themselves, pause the Cloud Scheduler job:
+`gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1`. The [runbook](docs/en/deployment-gcp.md#runbook)
+has the full procedure.
 
-| 用語 | 意味 |
-|---|---|
-| ISSUE | GitHub 上の「やることリスト」の 1 項目 |
-| PR（プルリクエスト） | コードの変更をまとめて、レビュー・マージするための単位 |
-| お試しモード（dry-run） | 実際には書き込まず、「何をする予定か」だけを表示する動き方 |
-| フィンガープリント | エラーメッセージから日時や ID を取り除いて作る、エラーの種類ごとの識別子 |
-| SRE | サービスを安定して動かし続けることを担当するエンジニアの役割 |
-| CVE / 脆弱性 | ソフトウェアのセキュリティ上の欠陥と、その識別番号 |
-| CISA KEV | 米国 CISA が公開している「実際に悪用が確認された脆弱性」の一覧 |
-| EOL（サポート期限） | ソフトウェアのセキュリティ更新が終わる日 |
-| プロバイダー | 各クラウド（GCP・AWS・Azure）とのやり取りを担当する部品 |
+</details>
 
-## 開発に参加する
+## Contributing
 
-不具合の報告や改善の提案、特に AWS・Azure 対応のコードを歓迎します。[CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
-開発時は `make test`（オフラインのテスト）、`make lint`、`make run`、`make eval` を使います。
-実モデルを呼ぶ `uv run pytest tests/integration -q` はクラウド認証が必要です。HTTP/SSE・A2Aのモデル応答待ち時間は `OPS_E2E_MODEL_TIMEOUT_SECONDS`（既定180秒、1〜900秒）で調整できます。これは無通信時間の制限で、性能保証ではありません。
+Issues and pull requests are welcome, especially AWS and Azure capabilities. Start with [CONTRIBUTING.en.md](CONTRIBUTING.en.md)
+([日本語](CONTRIBUTING.md)), and report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-モデルへのHTTP通信はHTTPXを使い、接続・読み取りなど各待機の無通信時間を60秒で制限します。SDKがタイムアウト・接続エラー・再試行対象のHTTPエラーを既存の最大5試行（初回を含む）で再試行します。正常でも60秒応答がない要求は再送され得ます。ストリーム開始後の読み取り失敗やエージェント全体は再試行しないため、報告ツールの再実行を防ぎます。これは処理全体の60秒制限ではなく、バックオフと複数のモデル呼び出しを含むジョブは長くかかる場合があります。
-セキュリティ上の問題は公開の ISSUE ではなく、[SECURITY.md](SECURITY.md) の手順で非公開に報告してください。
+```bash
+make test    # offline unit tests
+make lint
+make eval    # LLM-judged evaluation
+uv run pytest tests/integration -q   # live model; requires cloud credentials
+```
 
-## ライセンス
+<details>
+<summary><b>Model timeouts and retries</b></summary>
 
-[Apache License 2.0](LICENSE)。Google の agents-cli が生成したファイル（Google LLC、Apache-2.0）を含みます。
+- `OPS_E2E_MODEL_TIMEOUT_SECONDS` (default 180 s, range 1–900) bounds the idle read wait for HTTP/SSE and A2A integration tests.
+  It limits idle time and is not a performance guarantee.
+- Model HTTP calls use HTTPX with a 60-second idle timeout per connect/read wait. The SDK retries timeouts, connection errors and
+  retryable HTTP errors up to five attempts including the first, so a healthy request silent for 60 seconds may be resent.
+- Reads after a stream starts and whole agent runs are not retried, so report tools are never replayed. This is not a 60-second
+  job deadline: backoff and multiple model calls can make a job take longer.
+
+</details>
+
+## License
+
+[Apache License 2.0](LICENSE). Some files originate from the agents-cli scaffold (Copyright Google LLC, Apache-2.0).

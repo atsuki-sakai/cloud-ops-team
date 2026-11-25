@@ -59,12 +59,12 @@ make eval                                # 振る舞いの評価（LLM が採点
 
 ## ドキュメントの言語
 
-ドキュメントは **日本語がメイン、英語がサブ** です。
+README は **英語がメイン** です。それ以外のドキュメントは **日本語がメイン、英語がサブ** です。
 
-| 日本語（メイン） | 英語 |
+| 日本語 | 英語 |
 |---|---|
-| `README.md` | `README.en.md` |
-| `docs/*.md` | `docs/en/*.md` |
+| `README.ja.md` | `README.md`（メイン） |
+| `docs/*.md`（メイン） | `docs/en/*.md` |
 | `CONTRIBUTING.md` | `CONTRIBUTING.en.md` |
 | `CHANGELOG.md` | `CHANGELOG.en.md` |
 
