@@ -5,7 +5,7 @@
 ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue)
 ![Built with Google ADK](https://img.shields.io/badge/built%20with-Google%20ADK-4285F4)
 
-**An AI operations team for your cloud.** Five specialist agents watch production errors and suspicious access daily,
+**An AI operations team for your cloud.** Five specialist agents watch production errors and suspicious access twice a week,
 review infrastructure weekly, audit security monthly and verify merged fixes weekly. They report through GitHub issues.
 Programs validate registered jobs and gather evidence through fixed procedures before a scoped AI analysis stage runs.
 
@@ -17,11 +17,12 @@ The current version provides evidence for human review. PR identity, audit cover
 have unresolved defects. Read the [known limitations](docs/en/known-limitations.md) before enabling writes, and start with
 `OPS_DRY_RUN=true` and `OPS_AUTO_CLOSE_ISSUES=false`. Disabling automatic closure still allows verification labels and
 comments when writes are enabled; inspect their evidence before accepting a fix as complete.
+Periodic reports are separate: when writes are enabled, publishing a new report closes older open reports of the same series as not planned.
 
 | Job | Default schedule | Agent | What it does |
 |---|---|---|---|
-| `error_watch` | daily 08:00 | SRE | Groups error logs by fingerprint, correlates them with 5xx rates, failing scheduled jobs and recent deployments, and files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate |
-| `access_watch` | daily 08:30 | Access investigator | Reviews the last 24 hours of audit logs, HTTP 401/403 and probe paths, and Cloud Armor denials. Separates suspicious signals from confirmed compromise and reports evidence, confidence and coverage gaps |
+| `error_watch` | Monday and Thursday 08:00 | SRE | Groups the last 120 hours of error logs by fingerprint, correlates them with 5xx rates, failing scheduled jobs and recent deployments, and files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate |
+| `access_watch` | Monday and Thursday 08:30 | Access investigator | Reviews the last 120 hours of audit logs, HTTP 401/403 and probe paths, and Cloud Armor denials. Separates suspicious signals from confirmed compromise and reports evidence, confidence and coverage gaps. Only the latest periodic report stays open |
 | `infrastructure_review` | Mondays 10:00 | Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits; proposes changes with impact, risk, validation and rollback steps |
 | `monthly_security_audit` | 1st of the month | Cloud security | Reviews IAM, long-lived credentials, compute, databases, network rules, security services, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel; files critical and high findings plus a monthly report |
 | `weekly_pr_review` | Mondays 09:00 | Release manager | Checks open issues and unverified issues closed within 30 days, including automatic closure by `closes #N`: linked PRs, CI and recurrence. Marks verified fixes or stale open issues and publishes a weekly report |
@@ -91,7 +92,7 @@ git clone https://github.com/<you>/cloud-ops-team && cd cloud-ops-team
 make setup                       # install, then answer a few questions to create .env
 make doctor                      # check configuration, Gemini, GitHub and cloud access — prints a fix for every gap
 make run JOB=error_watch         # run one job locally and watch every tool call (dry-run: nothing is written)
-make run JOB=access_watch ARGS="--hours 24"   # investigate suspicious access
+make run JOB=access_watch ARGS="--hours 120"  # investigate suspicious access
 make run JOB=infrastructure_review          # review cost, permissions and configuration
 cp config/ops-context.example.md config/ops-context.md   # optional: describe your services, severity policy, known noise
 ```

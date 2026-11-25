@@ -22,7 +22,7 @@
 #   OPS_REPORT_LANGUAGE   [ja]                       ja | en
 #   OPS_MODEL             [gemini-3.8-flash]
 #   OPS_STACK_KEYWORDS    [provider defaults]        comma separated
-#   OPS_MAX_ISSUES_PER_RUN [10]  OPS_ERROR_LOOKBACK_HOURS [24]  OPS_RECURRENCE_COOLDOWN_HOURS [24]
+#   OPS_MAX_ISSUES_PER_RUN [10]  OPS_ERROR_LOOKBACK_HOURS [120]  OPS_RECURRENCE_COOLDOWN_HOURS [24]
 #   OPS_TIMEZONE          [Asia/Tokyo]
 #   OPS_ERROR_LABELS / OPS_SECURITY_LABELS / OPS_SEVERITY_LABELS   [app defaults] issue labels
 #   OPS_TRIGGER_AUDIENCE  [service URL]             OIDC audience the scheduler uses (ADK verifies tokens)

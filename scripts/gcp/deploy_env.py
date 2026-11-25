@@ -8,6 +8,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+from app.config import DEFAULT_WATCH_LOOKBACK_HOURS
+
 
 def build_env(env: Mapping[str, str]) -> dict[str, str]:
     """Preserve values verbatim while excluding local credentials and paths."""
@@ -28,7 +30,7 @@ def build_env(env: Mapping[str, str]) -> dict[str, str]:
         "OPS_REPORT_LANGUAGE": "ja",
         "OPS_MODEL": "gemini-3.8-flash",
         "OPS_MAX_ISSUES_PER_RUN": "10",
-        "OPS_ERROR_LOOKBACK_HOURS": "24",
+        "OPS_ERROR_LOOKBACK_HOURS": str(DEFAULT_WATCH_LOOKBACK_HOURS),
         "OPS_RECURRENCE_COOLDOWN_HOURS": "24",
         "OPS_TIMEZONE": "Asia/Tokyo",
     }

@@ -635,11 +635,17 @@ async def _sample(args) -> dict[str, Any]:
         and config.github_repo == fixture["repository"]
     )
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
-        import google.auth
+        if args.mode == "runtime_stubbed":
+            # Scripted samples never call Vertex. ADC discovery reaches the
+            # metadata server after ModelOnlyEgress is installed, and that
+            # blocked request aborts the child before it can write a trace.
+            os.environ["GOOGLE_CLOUD_PROJECT"] = "routing-recorder"
+        else:
+            import google.auth
 
-        _, adc_project = google.auth.default()
-        if adc_project:
-            os.environ["GOOGLE_CLOUD_PROJECT"] = adc_project
+            _, adc_project = google.auth.default()
+            if adc_project:
+                os.environ["GOOGLE_CLOUD_PROJECT"] = adc_project
     record: dict[str, Any] = {
         "case_id": case["case_id"],
         "sample": args.child_sample,

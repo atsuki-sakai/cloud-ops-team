@@ -25,7 +25,7 @@ __PROVIDER__ の__TARGET_LABEL__「__TARGET__」のログで修正の効果も�
    c. PR がない → open ISSUE 作成から 14 日以上経過していれば add_issue_labels(number, ["ops:stale"]) と comment_on_issue で状況確認を依頼する。closedなら未検証と報告し停滞ラベルを付けない。
       それ未満は「未着手」として記録する。
 4. list_recent_pull_requests(days) で期間内にマージされた PR 全体を確認し、closes_issues に含まれる ISSUE（人間が起票したものも含む）を一覧化する。
-5. publish_report(kind="weekly", title="週次運用レビュー YYYY-Www", body=...) でレポートを発行する。
+5. publish_report(kind="weekly", title="週次運用レビュー YYYY-Www", body=...) でレポートを発行する。同じ kind の前回の open レポートは publish_report が対応不要として閉じる。
 
 時間とツール呼び出しの予算: get_pull_request / get_issue は必要なものだけ（合計 10 回まで）、search_issues は 3 回まで、ツール呼び出しは合計 30 回以内、全体で 5 分以内を目安にする。
 

@@ -116,7 +116,7 @@ __JOB_TABLE__
 
 ## 進め方
 1. 担当のジョブ受付ツールを呼ぶ。requestはJSON文字列のみで、jobと当該ジョブの整数パラメータだけを含める。
-   例: {"job":"error_watch","hours":24}、{"job":"monthly_security_audit","kev_days":30}。
+   例: {"job":"error_watch","hours":__LOOKBACK__}、{"job":"monthly_security_audit","kev_days":30}。
    hoursは1〜168、daysは1〜90、kev_daysは1〜365。省略した値は登録済みの既定値が使われる。
    自然文・目的・制約・対象・リポジトリ・dry_run等のフィールドを追加しない。他担当のjob、full、未登録jobは渡さない。
 2. 担当の受付が同じ検証・固定収集・限定ツールでの分析を実行する。対象や時刻・dry_runもその固定収集で確認する。
@@ -183,7 +183,7 @@ unknownは応答未確認。200・302でも漏えい成功、401・404でも遮�
 存在しないHTTPメソッド・URL・応答コード・操作の正当性を補完しない。
 high/criticalは既存案件を最大3回検索し、未起票のみkind="security"で起票する。
 fingerprint="<check_id>:<resource>"をそのまま使用し日付・件数を加えない。serviceはresource、search_textは空文字。
-medium以下はレポートへまとめ、最後に不審アクセス日次調査レポートを発行する。
+medium以下はレポートへまとめ、最後に publish_report(kind="access", title="不審アクセス調査 YYYY-MM-DD", body=...) を発行する。同じ kind の前回の open レポートはツールが対応不要として閉じる。close_issue は使わない。
 """,
     "infrastructure_review": """
 収集済みの最適化推薦・権限・認証情報・ワークロード・DB・ネットワーク・監視設定の証拠を照合する。
@@ -211,7 +211,7 @@ security案件は変更ファイル・本文と推奨対応の対応、mainのCI
 open PRはレビュー・チェック結果とともに対応中として記録する。
 PR未作成のopen案件で14日以上経過したものは停滞ラベルと確認コメント、それ未満は未着手とする。
 closed案件に修正PRがない場合は未検証と報告し、停滞ラベルを付けない。再発や証拠不足ならclosedでも検証済みにしない。
-get_pull_request/get_issueは合計最大10回、既存案件検索は最大3回。最後に週次運用レビューを発行する。
+get_pull_request/get_issueは合計最大10回、既存案件検索は最大3回。最後に publish_report(kind="weekly", title="週次運用レビュー YYYY-Www", body=...) を発行する。同じ kind の前回の open レポートはツールが対応不要として閉じる。
 """,
 }
 

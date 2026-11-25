@@ -61,12 +61,21 @@ def test_template_specialist_is_valid_but_not_registered() -> None:
     assert _template.SPECIALIST.name not in {s.name for s in SPECIALISTS}
 
 
+def _longer_weekday_gap_hours(cron: str) -> int:
+    days = sorted(int(part) for part in cron.split()[4].split(","))
+    gaps = []
+    for index, day in enumerate(days):
+        nxt = days[(index + 1) % len(days)]
+        gaps.append(((nxt - day) % 7 or 7) * 24)
+    return max(gaps)
+
+
 def test_default_schedules_match_the_documented_ones() -> None:
     schedules = {job["key"]: job for job in scheduled_jobs({})}
-    assert schedules["error-watch"]["cron"] == "0 8 * * *"
+    assert schedules["error-watch"]["cron"] == "0 8 * * 1,4"
     assert json.loads(schedules["error-watch"]["payload"]) == {
         "job": "error_watch",
-        "hours": 24,
+        "hours": 120,
     }
     assert json.loads(schedules["weekly-pr-review"]["payload"]) == {
         "job": "weekly_pr_review",
@@ -76,15 +85,71 @@ def test_default_schedules_match_the_documented_ones() -> None:
         "job": "monthly_security_audit",
         "kev_days": 30,
     }
-    assert schedules["access-watch"]["cron"] == "30 8 * * *"
+    assert schedules["access-watch"]["cron"] == "30 8 * * 1,4"
     assert json.loads(schedules["access-watch"]["payload"]) == {
         "job": "access_watch",
-        "hours": 24,
+        "hours": 120,
     }
     assert schedules["infrastructure-review"]["cron"] == "0 10 * * 1"
     assert json.loads(schedules["infrastructure-review"]["payload"]) == {
         "job": "infrastructure_review",
     }
+
+
+def test_twice_weekly_lookback_covers_the_longer_gap(monkeypatch) -> None:
+    from app.config import DEFAULT_WATCH_LOOKBACK_HOURS, load_config
+
+    monkeypatch.delenv("OPS_ERROR_LOOKBACK_HOURS", raising=False)
+    assert load_config().error_lookback_hours == DEFAULT_WATCH_LOOKBACK_HOURS
+    schedules = {job["key"]: job for job in scheduled_jobs({})}
+    for key in ("error-watch", "access-watch"):
+        cron = schedules[key]["cron"]
+        hours = json.loads(schedules[key]["payload"])["hours"]
+        assert cron.split()[4] == "1,4"
+        assert hours == DEFAULT_WATCH_LOOKBACK_HOURS
+        assert _longer_weekday_gap_hours(cron) == 96
+        assert hours >= _longer_weekday_gap_hours(cron)
+        assert hours <= 168
+
+
+def test_periodic_report_instructions_keep_distinct_series() -> None:
+    from app import prompts
+
+    by_name = {specialist.name: specialist for specialist in SPECIALISTS}
+    access = prompts.instruction_for(by_name["access_watch"], phase="analysis")(None)
+    infra = prompts.instruction_for(by_name["infrastructure_review"], phase="analysis")(
+        None
+    )
+    audit = prompts.instruction_for(by_name["security_audit"], phase="analysis")(None)
+    review = prompts.instruction_for(by_name["pr_review"], phase="analysis")(None)
+    assert 'publish_report(kind="access"' in access
+    assert "不審アクセス調査" in access
+    assert 'publish_report(kind="infrastructure"' in infra
+    assert 'publish_report(kind="security"' in audit
+    assert 'publish_report(kind="weekly"' in review
+    assert f'"hours":{prompts.CONFIG.error_lookback_hours}' in prompts.root_instruction(
+        None
+    )
+
+
+def test_deploy_env_uses_the_twice_weekly_lookback() -> None:
+    from app.config import DEFAULT_WATCH_LOOKBACK_HOURS
+
+    spec = importlib.util.spec_from_file_location(
+        "ops_deploy_env", ROOT / "scripts" / "gcp" / "deploy_env.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    env = module.build_env(
+        {
+            "PROJECT_ID": "p",
+            "TARGET_PROJECT": "t",
+            "TARGET_REGION": "asia-northeast1",
+            "GITHUB_REPO": "owner/repo",
+        }
+    )
+    assert env["OPS_ERROR_LOOKBACK_HOURS"] == str(DEFAULT_WATCH_LOOKBACK_HOURS)
 
 
 def test_schedule_overrides_from_environment() -> None:

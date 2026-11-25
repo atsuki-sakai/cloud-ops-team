@@ -39,7 +39,8 @@ INSTRUCTION = """
 - audit_* の critical / high の finding だけ、月次診断と同じ kind="security"、
   fingerprint="<check_id>:<resource>" で create_ops_issue を使う。既存 ISSUE は番号を参照し、再起票しない。
 - コストや Recommender の改善候補、medium 以下はレポートへまとめ、新しい ISSUE の kind を作らない。
-- publish_report(kind="security", title="週次インフラ見直し YYYY-MM-DD", body=...) で報告する。
+- publish_report(kind="infrastructure", title="週次インフラ見直し YYYY-MM-DD", body=...) で報告する。
+  同じ kind の前回の open レポートは publish_report が対応不要として閉じる。finding には close_issue を使わない。
 
 ## レポート
 - 診断した日時・対象・範囲、完了/一部未確認/失敗とその根拠、取得できなかった項目と必要権限。

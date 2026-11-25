@@ -299,6 +299,269 @@ def test_raw_accept_preserves_complete_text_including_valid_json(monkeypatch, bo
     ) == (True, {"raw": body})
 
 
+def _report(number, report_kind, title, **meta):
+    return _issue(
+        number,
+        {
+            "kind": "report",
+            "report_kind": report_kind,
+            "provider": "gcp",
+            "target": "prod",
+            **meta,
+        },
+        title=title,
+        html_url=f"https://github.com/test/repo/issues/{number}",
+    )
+
+
+def test_publish_report_closes_only_the_same_series(monkeypatch):
+    monkeypatch.setattr(
+        issues,
+        "CONFIG",
+        dataclasses.replace(
+            issues.CONFIG,
+            dry_run=False,
+            auto_close_issues=False,
+            report_language="ja",
+        ),
+    )
+    monkeypatch.setattr(issues, "_ensure_labels", lambda labels: (True, []))
+    rows = [
+        _report(3, "access", "[ops/report] 不審アクセス調査 2026-11-17"),
+        _report(4, "security", "[ops/report] 不審アクセス日次調査 2026-11-18"),
+        _report(5, "security", "[ops/report] 月次セキュリティ診断 2026-11"),
+        _report(6, "infrastructure", "[ops/report] 週次インフラ見直し 2026-11-17"),
+        _report(7, "security", "[ops/report] 週次インフラ見直し 2026-11-10"),
+        _report(8, "weekly", "[ops/report] 週次運用レビュー"),
+        _issue(
+            9,
+            {
+                "kind": "error",
+                "fingerprint": "abc",
+                "provider": "gcp",
+                "target": "prod",
+            },
+            title="[ops/error] boom",
+        ),
+        _report(
+            10,
+            "access",
+            "[ops/report] 不審アクセス調査 other",
+            target="staging",
+        ),
+    ]
+    calls = []
+
+    def fake_rest(method, path, **kwargs):
+        calls.append((method, path, kwargs.get("json"), kwargs.get("params")))
+        if method == "GET" and path.endswith("/issues"):
+            assert kwargs["params"]["state"] == "open"
+            assert "ops:report" in kwargs["params"]["labels"]
+            return True, rows
+        if method == "GET":
+            number = int(path.rsplit("/", 1)[-1])
+            return True, next(row for row in rows if row["number"] == number)
+        if method == "POST" and path.endswith("/issues"):
+            return True, {
+                "number": 20,
+                "html_url": "https://github.com/test/repo/issues/20",
+            }
+        if method == "POST" and path.endswith("/comments"):
+            return True, {}
+        if method == "PATCH":
+            return True, {}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    context = SimpleNamespace(state={})
+    access = issues.publish_report(
+        "access", "不審アクセス調査 2026-11-24", "本文", context
+    )
+    assert access["status"] == "created" and access["close_status"] == "ok"
+    assert {row["number"] for row in access["superseded"]} == {3, 4}
+    created = next(
+        item for item in calls if item[0] == "POST" and item[1].endswith("/issues")
+    )
+    assert created[2]["labels"] == ["ops-agent", "ops:report", "ops:security"]
+    assert '"report_kind": "access"' in created[2]["body"]
+    comments = [
+        item
+        for item in calls
+        if item[0] == "POST" and str(item[1]).endswith("/comments")
+    ]
+    patches = [item for item in calls if item[0] == "PATCH"]
+    assert [item[1] for item in patches] == [
+        "/repos/test/repo/issues/3",
+        "/repos/test/repo/issues/4",
+    ]
+    assert all(
+        item[2] == {"state": "closed", "state_reason": "not_planned"}
+        for item in patches
+    )
+    assert len(comments) == 2
+    for comment in comments:
+        assert "対応不要としてクローズ" in comment[2]["body"]
+        assert "#20" in comment[2]["body"]
+        assert "https://github.com/test/repo/issues/20" in comment[2]["body"]
+    assert context.state == {}
+
+    calls.clear()
+    monthly = issues.publish_report(
+        "security", "月次セキュリティ診断 2026-11", "本文", context
+    )
+    assert {row["number"] for row in monthly["superseded"]} == {5}
+    calls.clear()
+    infra = issues.publish_report(
+        "infrastructure", "週次インフラ見直し 2026-11-24", "本文", context
+    )
+    assert {row["number"] for row in infra["superseded"]} == {6, 7}
+
+
+def test_publish_report_dry_run_previews_series_closure_without_writes(monkeypatch):
+    monkeypatch.setattr(
+        issues,
+        "CONFIG",
+        dataclasses.replace(issues.CONFIG, dry_run=True, report_language="ja"),
+    )
+    rows = [_report(3, "weekly", "[ops/report] 週次運用レビュー")]
+
+    def fake_rest(method, path, **kwargs):
+        assert method == "GET"
+        assert path.endswith("/issues")
+        return True, rows
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    out = issues.publish_report("weekly", "週次", "本文", SimpleNamespace(state={}))
+    assert out["status"] == "dry_run"
+    assert out["action"] == "create_report"
+    assert out["would_supersede"] == [3]
+
+
+def test_publish_report_does_not_create_when_series_listing_fails(monkeypatch):
+    def fake_rest(method, path, **kwargs):
+        assert method == "GET"
+        return False, {"status": "permission_denied", "http_status": 403, "page": 1}
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    out = issues.publish_report("weekly", "週次", "本文", SimpleNamespace(state={}))
+    assert out["status"] == "permission_denied"
+    assert out["error"]["page"] == 1
+
+
+@pytest.mark.parametrize("failed_step", ["comment", "close"])
+def test_superseded_report_is_not_closed_before_its_comment(monkeypatch, failed_step):
+    monkeypatch.setattr(issues, "_ensure_labels", lambda labels: (True, []))
+    rows = [_report(3, "weekly", "[ops/report] 週次運用レビュー")]
+    writes = []
+
+    def fake_rest(method, path, **kwargs):
+        if method == "GET" and path.endswith("/issues"):
+            return True, rows
+        if method == "GET":
+            return True, rows[0]
+        if method == "POST" and path.endswith("/issues"):
+            return True, {
+                "number": 20,
+                "html_url": "https://github.com/test/repo/issues/20",
+            }
+        writes.append((method, path))
+        if failed_step == "comment" and path.endswith("/comments"):
+            return False, {"status": "error", "http_status": 503}
+        if failed_step == "close" and method == "PATCH":
+            return False, {"status": "error", "http_status": 503}
+        return True, {}
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    out = issues.publish_report("weekly", "週次", "本文", SimpleNamespace(state={}))
+    assert out["status"] == "created"
+    assert out["number"] == 20
+    assert out["close_status"] == "incomplete"
+    assert out["superseded"] == [
+        {
+            "number": 3,
+            "status": "error",
+            "failed_step": failed_step,
+            "error": {"status": "error", "http_status": 503},
+        }
+    ]
+    if failed_step == "comment":
+        assert writes == [("POST", "/repos/test/repo/issues/3/comments")]
+    else:
+        assert writes == [
+            ("POST", "/repos/test/repo/issues/3/comments"),
+            ("PATCH", "/repos/test/repo/issues/3"),
+        ]
+
+
+def test_open_finding_gets_a_recurrence_comment_and_stays_open(monkeypatch):
+    monkeypatch.setattr(
+        issues,
+        "CONFIG",
+        dataclasses.replace(issues.CONFIG, dry_run=False, report_language="ja"),
+    )
+    existing = _issue(
+        11,
+        {
+            "fingerprint": "wanted",
+            "kind": "error",
+            "provider": "gcp",
+            "target": "prod",
+        },
+        updated_at="2020-01-01T00:00:00Z",
+        html_url="https://github.com/test/repo/issues/11",
+    )
+    methods = []
+
+    def fake_rest(method, path, **kwargs):
+        methods.append((method, path))
+        if method == "GET" and path.endswith("/issues"):
+            return True, [existing] if kwargs["params"]["state"] == "open" else []
+        if method == "POST" and path.endswith("/comments"):
+            assert "再発を検知" in kwargs["json"]["body"]
+            return True, {}
+        raise AssertionError("fingerprint de-dupe must not create or close an issue")
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    out = _create(SimpleNamespace(state={}))
+    assert out["status"] == "updated_existing"
+    assert out["number"] == 11
+    assert [method for method, _ in methods] == ["GET", "POST"]
+    assert all(method != "PATCH" for method, _ in methods)
+
+
+def test_supersede_comment_follows_the_report_language(monkeypatch):
+    monkeypatch.setattr(
+        issues,
+        "CONFIG",
+        dataclasses.replace(issues.CONFIG, dry_run=False, report_language="en"),
+    )
+    monkeypatch.setattr(issues, "_ensure_labels", lambda labels: (True, []))
+    rows = [_report(3, "weekly", "[ops/report] weekly")]
+
+    def fake_rest(method, path, **kwargs):
+        if method == "GET" and path.endswith("/issues"):
+            return True, rows
+        if method == "GET":
+            return True, rows[0]
+        if method == "POST" and path.endswith("/issues"):
+            return True, {
+                "number": 21,
+                "html_url": "https://github.com/test/repo/issues/21",
+            }
+        if method == "POST" and path.endswith("/comments"):
+            assert "not planned" in kwargs["json"]["body"]
+            assert "https://github.com/test/repo/issues/21" in kwargs["json"]["body"]
+            return True, {}
+        if method == "PATCH":
+            assert kwargs["json"]["state_reason"] == "not_planned"
+            return True, {}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(issues, "gh_rest", fake_rest)
+    out = issues.publish_report("weekly", "weekly", "body", SimpleNamespace(state={}))
+    assert out["close_status"] == "ok"
+
+
 def test_raw_accept_still_returns_http_errors_and_normal_json_is_parsed(monkeypatch):
     monkeypatch.setattr(
         github.httpx,

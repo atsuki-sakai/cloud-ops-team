@@ -1,17 +1,18 @@
-"""Daily, read-only investigation of suspicious access signals."""
+"""Twice-weekly, read-only investigation of suspicious access signals."""
 
 from __future__ import annotations
 
+from app.config import DEFAULT_WATCH_LOOKBACK_HOURS
 from app.specialists.base import Job, Specialist
 from app.tools import ACCESS_WATCH_TOOLS
 
 INSTRUCTION = """
-あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の不審アクセス・攻撃の兆候を毎日調査する担当です。
+あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の不審アクセス・攻撃の兆候を週2回（月曜・木曜）調査する担当です。
 読み取り専用の定期調査です。即時検知や攻撃遮断を提供するものではありません。
 
 ## 手順
 1. get_run_context で現在時刻と dry_run を確認する。
-2. investigate_access(hours) を1回呼ぶ。hours は依頼値、無ければ24。許容範囲は整数1〜168時間。
+2. investigate_access(hours) を1回呼ぶ。hours は依頼値、無ければ __LOOKBACK__。許容範囲は整数1〜168時間。
 3. window・coverage・limitations を確認し、API失敗、権限不足、ページ上限、未解析・省略を診断不足として明記する。
    ログの無効・未設定・サンプリング・到着遅延の可能性を説明する。ゼロ件を安全や攻撃なしと言い換えない。
 4. findings を件数、期間、カテゴリ、主体参照、リソース参照・resource_hint に基づき整理する。
@@ -23,9 +24,10 @@ INSTRUCTION = """
 5. high / critical は search_issues で既存案件を確認（最大3回）。同種があれば番号を記録する。
    未起票なら create_ops_issue(kind="security", fingerprint="<check_id>:<resource>", severity=..., service=<resource>, search_text="")。
    ツールの安定したcheck_idとresourceをそのまま使用し、日付や件数をfingerprintに加えない。重複判定とDRY_RUNを尊重する。
-6. medium以下は日次レポートにまとめる。最後に publish_report(kind="security", title="不審アクセス日次調査 YYYY-MM-DD", body=...)。
+6. medium以下は定期レポートにまとめる。最後に publish_report(kind="access", title="不審アクセス調査 YYYY-MM-DD", body=...)。
+   同じ kind の前回の open レポートは publish_report が対応不要として閉じる。close_issue は使わない。
 
-## ISSUE と日次レポート
+## ISSUE と定期レポート
 - 対象期間、確認できたログ種別、調査不足、ゼロ件の場合の収集状況未確認
 - 兆候の一覧: check_id / severity / 対象・主体参照 / カテゴリ / 件数 / 初回・最終時刻
 - 観測事実と仮説、仮説の判定に必要な未取得の証拠。根拠なく確度を付けない
@@ -41,17 +43,19 @@ INSTRUCTION = """
 
 SPECIALIST = Specialist(
     name="access_watch",
-    role="毎日の不審アクセス・攻撃兆候のログ調査と対応提案",
+    role="週2回（月曜・木曜）の不審アクセス・攻撃兆候のログ調査と対応提案",
     description="アクセス調査担当: __PROVIDER__ の監査ログ、HTTP認証拒否・探索パス、WAF拒否を読み取り専用で調査し、証拠と調査不足を報告する。高リスク候補はIssue化し、封じ込めは提案のみ行う。",
     instruction=INSTRUCTION,
     tools=ACCESS_WATCH_TOOLS,
     jobs=(
         Job(
             name="access_watch",
-            params={"hours": "data.hours があればそれ、無ければ24"},
-            schedule="30 8 * * *",
+            params={
+                "hours": f"data.hours があればそれ、無ければ{DEFAULT_WATCH_LOOKBACK_HOURS}"
+            },
+            schedule="30 8 * * 1,4",
             schedule_key="access-watch",
-            scheduled_params={"hours": 24},
+            scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
             cron_env="ACCESS_WATCH_CRON",
             param_env={"hours": "ACCESS_WATCH_HOURS"},
         ),

@@ -1,7 +1,7 @@
 # Architecture
 
 cloud-ops-team runs the routine operations work of a cloud environment with a small team of AI agents:
-an **error watch**, daily **access investigation**, weekly **infrastructure review**, a **monthly security audit**,
+an **error watch**, twice-weekly **access investigation**, weekly **infrastructure review**, a **monthly security audit**,
 and a **weekly fix review** that verifies whether merged pull requests fixed the issues.
 Humans (often with AI coding tools) implement the fixes; the agents never change the cloud.
 
@@ -17,8 +17,8 @@ Humans (often with AI coding tools) implement the fixes; the agents never change
 ```mermaid
 flowchart LR
     subgraph Agents["cloud-ops-team (automated)"]
-        EW["error_watch<br/>daily: detect and analyse errors"]
-        AW["access_watch<br/>daily: investigate access"]
+        EW["error_watch<br/>twice a week: detect and analyse errors"]
+        AW["access_watch<br/>twice a week: investigate access"]
         IR["infrastructure_review<br/>weekly: cost, permissions and configuration"]
         SA["security_audit<br/>monthly: posture, CVEs, EOL, threats"]
         PR["pr_review<br/>weekly: verify merged fixes"]
@@ -88,7 +88,7 @@ cloud-ops-team/
 │   ├── specialists/              ★ one module per team member
 │   │   ├── base.py               Specialist and Job types
 │   │   ├── error_watch.py        error watch: instruction, tools, jobs
-│   │   ├── access_watch.py       daily suspicious access investigation
+│   │   ├── access_watch.py       twice-weekly suspicious access investigation
 │   │   ├── infrastructure_review.py  weekly cost, IAM and configuration review
 │   │   ├── security_audit.py     monthly security audit
 │   │   ├── pr_review.py          weekly fix verification
@@ -204,18 +204,18 @@ The scheduler posts a Pub/Sub-push-shaped body to ADK's trigger endpoint:
 
 ```text
 POST /apps/app/trigger/pubsub      Authorization: Bearer <OIDC token of the invoker service account>
-{"message": {"data": "<base64 of {"job":"error_watch","hours":24}>", "attributes": {...}},
+{"message": {"data": "<base64 of {"job":"error_watch","hours":120}>", "attributes": {...}},
  "subscription": "projects/<project>/subscriptions/cloud-ops-error-watch"}
 ```
 
 ADK (`trigger_sources=["pubsub"]`) decodes it and runs `ScheduledRouter` with
-`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
+`{"data": {"job": "error_watch", "hours": 120}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
 `user_id`.
 
 | `job` | Parameters | Default schedule (configurable) | Specialist |
 |---|---|---|---|
-| `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`) | daily 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
-| `access_watch` | `hours` (24) | daily 08:30 (`ACCESS_WATCH_CRON`, `ACCESS_WATCH_HOURS`) | access_watch |
+| `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`, default 120) | Monday and Thursday 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
+| `access_watch` | `hours` (120) | Monday and Thursday 08:30 (`ACCESS_WATCH_CRON`, `ACCESS_WATCH_HOURS`) | access_watch |
 | `infrastructure_review` | — | Monday 10:00 (`INFRASTRUCTURE_REVIEW_CRON`) | infrastructure_review |
 | `weekly_pr_review` | `days` (7) | Monday 09:00 (`WEEKLY_CRON`) | pr_review |
 | `monthly_security_audit` | `kev_days` (30) | 1st of the month 09:00 (`MONTHLY_CRON`) | security_audit |
@@ -274,7 +274,7 @@ sequenceDiagram
 
 Scheduled analysis does not need an LLM routing call or the already-completed inventory tools.
 The final report is a session event; a successful trigger response does not establish that all required checks completed.
-If daily monitoring files no issue and its instance terminates, the explanation of an incomplete investigation can be lost.
+If a scheduled watch files no issue and its instance terminates, the explanation of an incomplete investigation can be lost.
 
 ## 7. Issue lifecycle
 
@@ -303,6 +303,7 @@ stateDiagram-v2
 - Body: Summary / Impact / Evidence / Root cause / Recommended fix / How to verify, followed by a hidden
   `<!-- ops-meta: {...} -->` block.
 - Language: `OPS_REPORT_LANGUAGE` (`ja` or `en`) controls issue text, comments and reports.
+- Periodic reports: `publish_report` files an `ops:report` issue, then closes older open reports with the same `report_kind`, provider and target as `not_planned`. The comment links the new issue. This close does not consult `OPS_AUTO_CLOSE_ISSUES`. `OPS_DRY_RUN=true` writes nothing. Finding issues (`create_ops_issue`) stay on fingerprint de-duplication and are not closed here. Series ids are `access`, `infrastructure`, `security` and `weekly`. Access and infrastructure reports filed earlier as `security` stay in their own series when the title contains the prescribed phrase (`不審アクセス` or `インフラ見直し`). The monthly audit does not close those titles.
 
 ## 8. De-duplication without a database
 
@@ -374,7 +375,7 @@ Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 - Runs: request logs of the trigger endpoint (latency = run time)
 - What the agents did: Cloud Trace via OpenTelemetry (`otel_to_cloud=True`, message content not captured), ADK session API while
   the instance is alive, or `scripts/run_job.py` locally (prints every tool call with timestamps)
-- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports. Daily monitoring does not always
+- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports. A scheduled watch does not always
   publish a report issue. HTTP success with no issue does not distinguish a clean run from an incomplete investigation.
   Durable results and coverage are part of the [improvement plan](known-limitations.md).
 - Model exposure: `model_tool_presentation` JSON logs record each analysis call's actual tool names/count and schema/description character counts. Prompts, schema text, arguments and results are not written into these records.

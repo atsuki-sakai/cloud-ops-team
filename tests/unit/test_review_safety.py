@@ -85,10 +85,12 @@ def test_issue_and_report_outbound_fields_are_redacted(monkeypatch, dry_run, rep
     monkeypatch.setattr(issues, "_ensure_labels", lambda _: (True, []))
     writes = []
 
-    def post(method, path, *, json):
+    def post(method, path, **kwargs):
+        if method == "GET":
+            return True, []
         assert not dry_run
         assert method == "POST"
-        writes.append(json)
+        writes.append(kwargs["json"])
         return True, {"number": 7, "html_url": "https://example.invalid/7"}
 
     monkeypatch.setattr(issues, "gh_rest", post)

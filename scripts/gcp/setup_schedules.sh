@@ -11,8 +11,10 @@
 #     ./scripts/setup_schedules.sh
 #
 # Everything is configurable with environment variables (defaults in brackets):
-#   ERROR_WATCH_CRON   ["0 8 * * *"]   error watch schedule (daily 08:00). e.g. "0 * * * *" for hourly
-#   ERROR_WATCH_HOURS  [24]            look-back window of each error watch run; match it to the interval
+#   ERROR_WATCH_CRON   ["0 8 * * 1,4"] error watch (Monday and Thursday 08:00). e.g. "0 * * * *" for hourly
+#   ERROR_WATCH_HOURS  [120]           look-back window. The longer Mon/Thu gap is 96h; 120h overlaps it
+#   ACCESS_WATCH_CRON  ["30 8 * * 1,4"] access watch (Monday and Thursday 08:30)
+#   ACCESS_WATCH_HOURS [120]           look-back window; keep it at least as long as the longer gap
 #   WEEKLY_CRON        ["0 9 * * 1"]   weekly issue / PR review (Monday 09:00)
 #   WEEKLY_DAYS        [7]
 #   MONTHLY_CRON       ["0 9 1 * *"]   monthly security audit (1st day 09:00)

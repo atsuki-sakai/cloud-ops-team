@@ -1,7 +1,7 @@
 # アーキテクチャ
 
 cloud-ops-team は、クラウド環境の定常的な運用保守を小さな AI エージェントチームで回します。
-本番エラーを調査する **エラー監視**、毎日の **不審アクセス調査**、毎週の **インフラ見直し**、
+本番エラーを調査する **エラー監視**、週2回の **不審アクセス調査**、毎週の **インフラ見直し**、
 **月次セキュリティ診断**、マージされた PR の修正を確かめる **週次レビュー** の 5 つです。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
 
 - フレームワーク: [ADK](https://adk.dev/) 2.x（Python）、[agents-cli](https://github.com/google/agents-cli) でスキャフォールド
@@ -17,8 +17,8 @@ English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [
 ```mermaid
 flowchart LR
     subgraph Agents["cloud-ops-team（自動）"]
-        EW["error_watch<br/>毎日: エラー検知・原因分析"]
-        AW["access_watch<br/>毎日: 不審アクセス調査"]
+        EW["error_watch<br/>週2回: エラー検知・原因分析"]
+        AW["access_watch<br/>週2回: 不審アクセス調査"]
         IR["infrastructure_review<br/>週次: 費用・権限・構成見直し"]
         SA["security_audit<br/>月次: 設定・CVE・EOL・脅威動向"]
         PR["pr_review<br/>週次: マージ済み修正の検証"]
@@ -87,7 +87,7 @@ cloud-ops-team/
 │   ├── specialists/              ★ 担当（専門家）の定義。1 ファイル 1 担当
 │   │   ├── base.py               Specialist / Job の型
 │   │   ├── error_watch.py        エラー監視（指示文・ツール・ジョブ）
-│   │   ├── access_watch.py       毎日の不審アクセス調査
+│   │   ├── access_watch.py       週2回の不審アクセス調査
 │   │   ├── infrastructure_review.py  週次の費用・権限・構成見直し
 │   │   ├── security_audit.py     月次セキュリティ診断
 │   │   ├── pr_review.py          週次の修正確認
@@ -207,12 +207,12 @@ POST /apps/app/trigger/pubsub      Authorization: Bearer <呼び出し用 SA の
 ```
 
 ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセッションで
-`{"data": {"job": "error_watch", "hours": 24}, "attributes": {...}}` を`ScheduledRouter`に渡して実行します。`subscription` はセッションの `user_id` になります。
+`{"data": {"job": "error_watch", "hours": 120}, "attributes": {...}}` を`ScheduledRouter`に渡して実行します。`subscription` はセッションの `user_id` になります。
 
 | `job` | パラメータ | 既定の周期（変更可） | 担当 |
 |---|---|---|---|
-| `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`） | 毎日 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
-| `access_watch` | `hours`（24） | 毎日 08:30（`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS`） | access_watch |
+| `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`、既定 120） | 月曜・木曜 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
+| `access_watch` | `hours`（120） | 月曜・木曜 08:30（`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS`） | access_watch |
 | `infrastructure_review` | — | 月曜 10:00（`INFRASTRUCTURE_REVIEW_CRON`） | infrastructure_review |
 | `weekly_pr_review` | `days`（7） | 月曜 09:00（`WEEKLY_CRON`） | pr_review |
 | `monthly_security_audit` | `kev_days`（30） | 毎月 1 日 09:00（`MONTHLY_CRON`） | security_audit |
@@ -272,7 +272,7 @@ sequenceDiagram
 担当を選ぶモデル呼び出しと、収集済みの一覧取得ツールは定期実行の分析工程にありません。
 
 最終レポートはセッションのイベントです。trigger の成功応答は「必要な項目をすべて調査できた」という意味ではありません。
-日次監視で起票がなく、セッションを持つインスタンスが終了すると、調査不能の説明も失われる場合があります。
+定期監視で起票がなく、セッションを持つインスタンスが終了すると、調査不能の説明も失われる場合があります。
 
 ## 7. ISSUE のライフサイクル
 
@@ -299,6 +299,7 @@ stateDiagram-v2
   `OPS_SEVERITY_LABELS`・`OPS_ERROR_LABELS`・`OPS_SECURITY_LABELS` で自分のリポジトリに合わせられます。リポジトリにないラベルは自動で作成されます。
 - 本文: 概要 / 影響範囲 / 証跡 / 原因分析 / 推奨対応 / 確認方法 の順に書き、末尾に非表示の `<!-- ops-meta: {...} -->` を付けます。
 - 言語: `OPS_REPORT_LANGUAGE`（`ja` / `en`）で ISSUE・コメント・レポートの言語を切り替えます。
+- 定期レポート: `publish_report` は `ops:report` の ISSUE を作り、同じ `report_kind`・同じプロバイダーと監視対象の前回 open レポートを `not_planned` で閉じます。コメントは新しい ISSUE へのリンクです。このクローズは `OPS_AUTO_CLOSE_ISSUES` を見ません。`OPS_DRY_RUN=true` のときは書きません。finding（`create_ops_issue`）は指紋の重複防止のままで、対象外です。系列はアクセス調査が `access`、インフラ見直しが `infrastructure`、月次診断が `security`、週次レビューが `weekly` です。系列を分ける前に `security` で起票されたアクセス／インフラのレポートは、タイトルの定型句（「不審アクセス」「インフラ見直し」）でそれぞれの系列に含めます。月次診断はそれらのタイトルを閉じません。
 
 ## 8. データベースなしの重複排除
 
@@ -370,7 +371,7 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 - **エージェントが何をしたか**: OpenTelemetry 経由の Cloud Trace（`otel_to_cloud=True`、メッセージ本文は記録しません）、
   インスタンスが生きている間は ADK のセッション API、ローカルでは `scripts/run_job.py`（すべてのツール呼び出しを時刻付きで表示）で確認します。
 - **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。週次・月次のレポートもここに残ります。
-  日次監視は必ずレポート ISSUE を作るわけではありません。HTTP 成功・起票なしだけでは、異常なしと調査不能を区別できません。
+  定期監視は必ずレポート ISSUE を作るわけではありません。HTTP 成功・起票なしだけでは、異常なしと調査不能を区別できません。
   実行結果と確認範囲の永続保存は [改善計画](known-limitations.md) に含めています。
 - **モデルへの提示範囲**: 分析呼び出しごとの`model_tool_presentation`構造化ログに、実際のツール名・件数・schemaと説明の文字数を記録します。この記録にプロンプト・schema本文・引数・結果本文は含めません。
 

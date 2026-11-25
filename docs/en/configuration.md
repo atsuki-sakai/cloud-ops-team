@@ -32,7 +32,7 @@ Provider-specific fallbacks when `OPS_TARGET` / `OPS_TARGET_REGION` are not set:
 | Variable | Default | Description |
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | Never write to GitHub; tools return previews of what they would create |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close issues it verified (otherwise it labels `ops:verified` and comments) |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close findings it verified (otherwise it labels `ops:verified` and comments). Replacing a periodic report does not consult this flag |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | New-issue cap for `create_ops_issue`, shared across one invocation (including `full`) and reset on the next standard-router request; `publish_report` is excluded |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | Skip recurrence comments within this interval of an issue's `updated_at`. Human edits affect the interval, and this does not guarantee one post across multiple instances |
 
@@ -52,7 +52,7 @@ Distinguishing a reference PR from a fixing PR has [known limitations](known-lim
 | Variable | Default | Description |
 |---|---|---|
 | `OPS_REPORT_LANGUAGE` | `ja` | Language of reports, issues and comments: `ja` or `en` |
-| `OPS_ERROR_LOOKBACK_HOURS` | `24` | Default error-watch window when a job does not pass `hours` |
+| `OPS_ERROR_LOOKBACK_HOURS` | `120` | Default error-watch window when a job does not pass `hours`. Covers the longer twice-weekly gap (96 hours) |
 | `OPS_TIMEZONE` | `Asia/Tokyo` | Time zone of timestamps in reports |
 | `OPS_STACK_KEYWORDS` | provider defaults + common OS / runtimes | Comma-separated keywords that filter CISA KEV entries and focus web threat research |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model of every agent |
@@ -102,8 +102,8 @@ All server entry points enforce the same registered job contract. `hours` must b
 
 | Variable | Default | Description |
 |---|---|---|
-| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * *` / `24` | Error watch (daily at 08:00) and its look-back window — keep the window equal to the interval |
-| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * *` / `24` | Access investigation (daily at 08:30); keep the look-back window at least as long as the interval |
+| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | Error watch (Monday and Thursday at 08:00). The longer gap is 96 hours (Thursday 08:00 to Monday 08:00); 120 hours adds a 24-hour overlap |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | Access investigation (Monday and Thursday at 08:30); keep the look-back window at least as long as the longer gap |
 | `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | Infrastructure, cost and permissions review (Mondays at 10:00) |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | Weekly issue and PR review |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | Monthly security audit |
@@ -136,7 +136,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 A longer look-back retrieves the same errors again. Existing issues are searched by fingerprint, but simultaneous runs can
 still create duplicates. Avoid overlapping runs and inspect issues and recurrence comments. A larger window also costs more tokens.
 
-`ACCESS_WATCH_HOURS` sets the scheduled job's `hours`. For a manual run, use `make run JOB=access_watch ARGS="--hours 24"`.
+`ACCESS_WATCH_HOURS` sets the scheduled job's `hours`. For a manual run, use `make run JOB=access_watch ARGS="--hours 120"`.
 Re-run `make gcp-schedule` after changing the cron variables or `TZ_NAME`. `OPS_TIMEZONE` formats report timestamps;
 `TZ_NAME` controls the scheduler, so keeping them aligned makes operations easier.
 
