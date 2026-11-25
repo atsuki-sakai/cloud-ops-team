@@ -22,24 +22,31 @@ language retains a separate, scoped conversation leader.
 """
 
 import asyncio
-from collections.abc import Mapping
+import json
+import logging
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import aclosing
 
-from google.adk.agents import Agent
+from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.apps import App
+from google.adk.events import Event
 from google.adk.models import Gemini
 from google.genai import types
+from pydantic import Field
 
 from app import prompts
 from app.config import CONFIG
+from app.core.check_decisions import analysis_failed_report
 from app.model import OpsGemini
 from app.providers import get_provider
 from app.routing import ScheduledJobAdapter, ScheduledRouter, conversation_tool_guard
 from app.specialists import SPECIALISTS
 from app.specialists.base import Job, Specialist
 from app.tool_scope import build_tool_scope
-from app.workflows import prepare_job
+from app.workflows import PreparedJob, prepare_job
 
+logger = logging.getLogger(__name__)
 MODEL = CONFIG.model
 CLOUD = get_provider().profile.display_name
 
@@ -76,12 +83,92 @@ def build_specialist(specialist: Specialist, *, phase: str = "legacy") -> Agent:
     )
 
 
+def _report_event(ctx, author: str, text: str) -> Event:
+    return Event(
+        invocation_id=ctx.invocation_id,
+        author=author,
+        content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
+    )
+
+
+class FixedReportAgent(BaseAgent):
+    """Returns a code-rendered report; used when no investigation is needed."""
+
+    report: str
+
+    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+        yield _report_event(ctx, self.name, self.report)
+
+
+class VerdictGuardAgent(BaseAgent):
+    """Runs the analysis agent but keeps the code verdicts in the final report.
+
+    The model's report is appended to the fixed verdict summary, so it cannot
+    replace a failed check with a success. If the analysis fails, the verdicts
+    are still reported with the cause marked as unverified.
+    """
+
+    analysis: BaseAgent = Field(exclude=True)
+    verdict_summary: str
+    failure_report: str
+
+    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+        final = ""
+        try:
+            async with aclosing(self.analysis.run_async(ctx)) as events:
+                async for event in events:
+                    if event.error_code:
+                        raise RuntimeError("analysis returned an error event")
+                    if event.is_final_response() and event.content:
+                        final = "".join(
+                            part.text
+                            for part in event.content.parts or []
+                            if part.text and not part.thought
+                        )
+                        if final:
+                            # The combined report below replaces this final text.
+                            continue
+                    yield event
+        except Exception as exc:
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "ops_analysis_failed",
+                        "invocation_id": ctx.invocation_id,
+                        "agent": self.name,
+                        "error_type": type(exc).__name__,
+                    }
+                )
+            )
+            yield _report_event(ctx, self.name, self.failure_report)
+            return
+        if not final:
+            yield _report_event(ctx, self.name, self.failure_report)
+            return
+        yield _report_event(ctx, self.name, f"{self.verdict_summary}\n\n---\n\n{final}")
+
+
+def _job_agent(prepared: PreparedJob) -> BaseAgent:
+    specialist = prepared.analysis_specialist
+    if prepared.fixed_report is not None:
+        return FixedReportAgent(name=specialist.name, report=prepared.fixed_report)
+    analysis = build_specialist(specialist, phase="analysis")
+    if prepared.verdict_summary is None:
+        return analysis
+    return VerdictGuardAgent(
+        name=specialist.name,
+        analysis=analysis,
+        verdict_summary=prepared.verdict_summary,
+        failure_report=analysis_failed_report(prepared.evidence),
+    )
+
+
 async def build_scheduled_agent(
     specialist: Specialist, job: Job, params: Mapping[str, int]
-) -> Agent:
+) -> BaseAgent:
     """Collect required evidence without blocking the server's event loop."""
     prepared = await asyncio.to_thread(prepare_job, specialist, job, params)
-    return build_specialist(prepared.analysis_specialist, phase="analysis")
+    return _job_agent(prepared)
 
 
 def build_job_adapter(specialist: Specialist) -> ScheduledJobAdapter:

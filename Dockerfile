@@ -26,6 +26,13 @@ COPY ./config ./config
 
 RUN uv sync --frozen
 
+# Browser scenarios need Playwright and Chromium (about 400 MB more). HTTP
+# scenarios work without them; browser ones then report checker_error.
+ARG INSTALL_BROWSER=false
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+      uv sync --frozen --extra browser && uv run playwright install --with-deps chromium; \
+    fi
+
 ARG AGENT_VERSION=0.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}
 

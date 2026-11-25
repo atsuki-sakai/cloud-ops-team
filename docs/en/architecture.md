@@ -2,7 +2,9 @@
 
 cloud-ops-team runs the routine operations work of a cloud environment with a small team of AI agents:
 an **error watch**, twice-weekly **access investigation**, weekly **infrastructure review**, a **monthly security audit**,
-and a **weekly fix review** that verifies whether merged pull requests fixed the issues.
+a **weekly fix review** that verifies whether merged pull requests fixed the issues, **service checks** that replay
+registered scenarios against public URLs, and **post-deployment verification** of the revision actually serving traffic
+(the last two: [service checks](service-checks.md)).
 Humans (often with AI coding tools) implement the fixes; the agents never change the cloud.
 
 - Framework: [Agent Development Kit (ADK)](https://adk.dev/) 2.x for Python, scaffolded with [agents-cli](https://github.com/google/agents-cli)
@@ -22,6 +24,8 @@ flowchart LR
         IR["infrastructure_review<br/>weekly: cost, permissions and configuration"]
         SA["security_audit<br/>monthly: posture, CVEs, EOL, threats"]
         PR["pr_review<br/>weekly: verify merged fixes"]
+        SC["service_check<br/>scheduled: replay scenarios, incidents and recovery"]
+        DV["deploy_verification<br/>after deploys: verify the serving revision"]
     end
     subgraph Humans["Humans (+ AI coding tools)"]
         H1["Triage the issue"]
@@ -31,6 +35,7 @@ flowchart LR
     EW -- "[ops/error] issue" --> H1
     AW & IR -- "evidence, proposals and coverage gaps" --> H1
     SA -- "[ops/security] issue + monthly report" --> H1
+    SC & DV -- "[ops/error] issue (AI investigates anomalies only)" --> H1
     H1 --> H2
     H2 -- "merge" --> PR
     PR -- "ops:verified + weekly report" --> H3
@@ -46,7 +51,7 @@ comment and add labels; closing an issue requires `OPS_AUTO_CLOSE_ISSUES=true`.
 flowchart TB
     JSON["Scheduled JSON · run_sse · A2A"] --> R["ScheduledRouter<br/>validate registered job and arguments"]
     NL["Natural language"] --> R
-    R -->|"natural language only"| L["conversation_leader<br/>select one of 5 specialist adapters"]
+    R -->|"natural language only"| L["conversation_leader<br/>select one of 7 specialist adapters"]
     L --> D["Specialist adapter<br/>revalidate strict job JSON"]
     R -->|"registered job"| W["Fixed collection<br/>app/workflows.py"]
     D --> W

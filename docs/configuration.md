@@ -67,6 +67,12 @@ English: [docs/en/configuration.md](en/configuration.md)
 
 どの ISSUE にも、チームが内部で使う `ops-agent` と、`ops:error` / `ops:security` / `ops:report` のいずれかのラベルが必ず付きます。
 
+### 稼働確認のシナリオ
+
+| 変数 | 既定値 | 説明 |
+|---|---|---|
+| `OPS_SERVICE_CHECKS_FILE` | `config/service-checks.json` | 稼働確認・デプロイ後検証で再生するシナリオ。無ければ「未設定」と報告します。形式は [稼働確認](service-checks.md)。イメージに含まれるため秘密情報を書かないでください。標準デプロイはこの変数を転送しないため、Cloud Run では既定のパスを使います |
+
 ### 定期実行の呼び出しの認証（サーバー）
 
 | 変数 | 既定値 | 説明 |
@@ -97,7 +103,7 @@ A2A を使う場合は [デプロイ手順](deployment-gcp.md) に従って配�
 どの値も上書きできます。`make gcp-schedule` を再実行すると反映され、既存のジョブはそのまま更新されます。
 
 登録済みジョブは全サーバー入口で同じ引数検証を通ります。`hours`は1〜168、週次レビューの`days`は1〜90、
-月次診断の`kev_days`は1〜365の整数です。JSONの数値文字列・bool・未知の項目・対象やリポジトリの上書きを拒否し、
+月次診断の`kev_days`は1〜365、稼働確認の`attempts`は1〜5、デプロイ後検証の`minutes`は5〜1440の整数です。JSONの数値文字列・bool・未知の項目・対象やリポジトリの上書きを拒否し、
 範囲外の値を別の値へ丸めて実行しません。対話から選んだ担当も、同じ検証と固定収集へ進みます。
 
 | 変数 | 既定値 | 説明 |
@@ -105,6 +111,8 @@ A2A を使う場合は [デプロイ手順](deployment-gcp.md) に従って配�
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | エラー監視（月曜・木曜 8:00）と、さかのぼる時間。長い間隔は木曜 8:00 から月曜 8:00 の 96 時間で、120 時間はそこに 24 時間の重なりを足したものです |
 | `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | 不審アクセス調査（月曜・木曜 8:30）と、さかのぼる時間。調査窓は長い方の間隔以上にしてください |
 | `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | インフラ・費用・権限の見直し（毎週月曜 10:00） |
+| `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | 未設定（手動のみ） / `2` | 登録シナリオによる稼働確認と、失敗を確定する最大試行回数。例: `*/15 * * * *`。[稼働確認](service-checks.md) |
+| `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | 未設定 / `60` | デプロイ後検証。通常はデプロイ完了時に起動し、定期実行は任意 |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | 週次の ISSUE・PR レビュー |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | 月次セキュリティ診断 |
 | `<SCHEDULE_KEY>_CRON` | ジョブの既定値 | 自分で追加したジョブ用。例: スケジュールキーが `deploy-watch` なら `DEPLOY_WATCH_CRON` |

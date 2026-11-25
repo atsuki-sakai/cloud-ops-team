@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "Copy to config/service-checks.json and replace the hosts, URLs and expected texts with your service. No secrets: this file ships in the container image.",
+  "allowed_hosts": ["www.example.com", "api.example.com"],
+  "control_url": "https://www.gstatic.com/generate_204",
+  "run_budget_seconds": 240,
+  "defaults": {
+    "attempts": 2,
+    "attempt_interval_seconds": 5,
+    "timeout_seconds": 15,
+    "max_total_ms": 30000,
+    "fail_on_http_5xx": true,
+    "max_console_errors": -1
+  },
+  "deploy": {
+    "min_requests": 30,
+    "error_ratio_factor": 2.0,
+    "error_ratio_min_increase": 0.01,
+    "min_new_5xx": 3,
+    "latency_p95_factor": 1.5,
+    "latency_p95_min_increase_ms": 200
+  },
+  "maintenance": [
+    {
+      "start": "2026-12-01T01:00:00+09:00",
+      "end": "2026-12-01T03:00:00+09:00",
+      "scenarios": ["search-flow"],
+      "reason": "Planned database upgrade"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "api-health",
+      "description": "The API answers with a healthy body, not only HTTP 200.",
+      "service": "api",
+      "critical": true,
+      "steps": [
+        {
+          "url": "https://api.example.com/healthz",
+          "headers": {"accept": "application/json"},
+          "expect": {
+            "status": [200],
+            "content_type": "application/json",
+            "json": [
+              {"path": "status", "equals": "ok"},
+              {"path": "database", "equals": "ok"}
+            ],
+            "max_latency_ms": 2000
+          }
+        }
+      ]
+    },
+    {
+      "id": "top-page",
+      "service": "web",
+      "critical": true,
+      "steps": [
+        {
+          "url": "https://www.example.com/",
+          "expect": {
+            "status": [200],
+            "text_contains": ["空室を検索"],
+            "text_absent": ["エラーが発生しました", "Internal Server Error"],
+            "max_latency_ms": 3000
+          }
+        }
+      ]
+    },
+    {
+      "id": "search-flow",
+      "description": "Recorded user path: open, type a keyword, click search by its recorded coordinates, see results.",
+      "service": "web",
+      "runner": "browser",
+      "critical": true,
+      "side_effects": "none",
+      "browser": {
+        "viewport": {"width": 1280, "height": 800},
+        "device_scale_factor": 1,
+        "locale": "ja-JP",
+        "timezone": "Asia/Tokyo",
+        "color_scheme": "light",
+        "is_mobile": false
+      },
+      "steps": [
+        {"action": "goto", "url": "https://www.example.com/", "wait_until": "load", "expect": {"title_contains": "Example"}},
+        {"action": "fill", "selector": "input[name=keyword]", "value": "京都"},
+        {"action": "click", "x": 640, "y": 320, "expect_target": "button[type=submit]"},
+        {
+          "action": "expect",
+          "expect": {
+            "url_prefix": "https://www.example.com/search",
+            "selector_visible": [".search-result"],
+            "min_count": [{"selector": ".search-result", "count": 1}],
+            "text_absent": ["該当する施設はありません"],
+            "max_latency_ms": 8000
+          }
+        }
+      ]
+    }
+  ]
+}

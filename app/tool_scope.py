@@ -36,6 +36,8 @@ _BOUNDS = {
     "max_findings": (1, 200),
     "issue_number": (1, 2**31 - 1),
     "pr_number": (1, 2**31 - 1),
+    "attempts": (1, 5),
+    "minutes": (5, 1440),
 }
 _LIMITS = {
     "list_error_logs": 200,

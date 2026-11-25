@@ -36,6 +36,8 @@ JOB_PARAMETER_BOUNDS: dict[str, dict[str, tuple[int, int]]] = {
     "pr_review": {"days": (1, 90)},
     "access_watch": {"hours": (1, 168)},
     "infrastructure_review": {},
+    "service_check": {"attempts": (1, 5)},
+    "deploy_verification": {"minutes": (5, 1440)},
 }
 
 

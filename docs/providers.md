@@ -73,6 +73,7 @@ class AwsProvider(CloudProvider):
 | `list_databases` | `()` | エラー監視、セキュリティ診断、インフラ見直し |
 | `get_request_error_rates` | `(hours: int)` | エラー監視 |
 | `get_alerting_setup` | `()` | エラー監視、セキュリティ診断、インフラ見直し |
+| `list_recent_rollouts` | `(minutes: int)` | デプロイ後検証 |
 | `audit_iam` | `()` | セキュリティ診断、不審アクセス調査、インフラ見直し |
 | `audit_credentials` | `()` | セキュリティ診断、インフラ見直し |
 | `audit_compute` | `()` | セキュリティ診断、インフラ見直し |
@@ -135,6 +136,11 @@ class AwsProvider(CloudProvider):
 
 **`get_alerting_setup`**: `{"status", "alert_policy_count", "alert_policies": [{"display_name", "enabled", "conditions",
 "notification_channels"}], "uptime_check_count", "uptime_checks": [...]}`。
+
+**`list_recent_rollouts`**: `{"status", "complete", "window_minutes", "rollouts": [{"service"（必須）, "service_uri", "revision"（必須）,
+"create_time"（必須）, "ready"（必須）, "traffic": [{"revision", "percent", "tag", "uri"}]（必須。実際の配信状態）, "superseded",
+"metrics": {"status", "before": {"start", "end", "requests", "5xx", "p95_ms"}, "after": {...}}}], "errors", "truncated"}`。
+`metrics.after` は新リビジョンだけ、`before` はデプロイ直前の旧リビジョンだけを集計します。取得できない値は推測せず `status` で示します。
 
 **監査（`audit_*`）**: `app.core.findings.result(...)` の形で返します。
 

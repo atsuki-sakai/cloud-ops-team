@@ -69,6 +69,12 @@ Distinguishing a reference PR from a fixing PR has [known limitations](known-lim
 
 Every issue also gets `ops-agent` and `ops:error` / `ops:security` / `ops:report`, which the team relies on.
 
+### Service check scenarios
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OPS_SERVICE_CHECKS_FILE` | `config/service-checks.json` | Scenarios replayed by service checks and deployment verification; reported as not configured when missing. Format: [service checks](service-checks.md). It ships in the image, so keep secrets out. The standard deployment does not forward this variable; use the default path on Cloud Run |
+
 ### Trigger authentication (server)
 
 | Variable | Default | Description |
@@ -98,13 +104,15 @@ if you use A2A, follow the [deployment guide](deployment-gcp.md) to set it after
 Scheduler jobs are generated from the jobs declared by the specialists in `app/specialists/` — `make jobs` lists them.
 Every value can be overridden; re-run `make gcp-schedule` to apply (existing jobs are updated in place).
 
-All server entry points enforce the same registered job contract. `hours` must be an integer in 1–168, weekly review `days` in 1–90, and monthly audit `kev_days` in 1–365. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
+All server entry points enforce the same registered job contract. `hours` must be an integer in 1–168, weekly review `days` in 1–90, monthly audit `kev_days` in 1–365, service check `attempts` in 1–5 and deployment verification `minutes` in 5–1440. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
 
 | Variable | Default | Description |
 |---|---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | Error watch (Monday and Thursday at 08:00). The longer gap is 96 hours (Thursday 08:00 to Monday 08:00); 120 hours adds a 24-hour overlap |
 | `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | Access investigation (Monday and Thursday at 08:30); keep the look-back window at least as long as the longer gap |
 | `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | Infrastructure, cost and permissions review (Mondays at 10:00) |
+| `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | unset (manual only) / `2` | Scenario-based service checks and the maximum attempts that confirm a failure, e.g. `*/15 * * * *`. See [service checks](service-checks.md) |
+| `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | unset / `60` | Post-deployment verification. Normally triggered when a deployment finishes; a schedule is optional |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | Weekly issue and PR review |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | Monthly security audit |
 | `<SCHEDULE_KEY>_CRON` | job default | Jobs you add, e.g. `DEPLOY_WATCH_CRON` for schedule key `deploy-watch` |

@@ -35,6 +35,7 @@ OBSERVABILITY_CAPABILITIES: tuple[str, ...] = (
     "list_databases",
     "get_request_error_rates",
     "get_alerting_setup",
+    "list_recent_rollouts",
 )
 SECURITY_CAPABILITIES: tuple[str, ...] = (
     "audit_iam",
@@ -143,6 +144,9 @@ class CloudProvider:
 
     def get_alerting_setup(self) -> dict[str, Any]:
         return self._not_supported("get_alerting_setup")
+
+    def list_recent_rollouts(self, minutes: int) -> dict[str, Any]:
+        return self._not_supported("list_recent_rollouts")
 
     # -------------------------------------------------------------- security
     def audit_iam(self) -> dict[str, Any]:

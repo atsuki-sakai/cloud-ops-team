@@ -17,6 +17,7 @@ Suggested mapping (boto3 client.method):
 | list_databases | rds.describe_db_instances / describe_db_clusters (engine, engine_version) |
 | get_request_error_rates | cloudwatch.get_metric_data (ALB HTTPCode_Target_5XX_Count, API Gateway 5XXError) |
 | get_alerting_setup | cloudwatch.describe_alarms, route53.list_health_checks |
+| list_recent_rollouts | ecs.describe_services(deployments, rolloutState), lambda alias routing, cloudwatch.get_metric_data per target group / version |
 | audit_iam | iam.get_account_summary, get_credential_report, list_attached_*_policies (AdministratorAccess), accessanalyzer.list_findings |
 | audit_credentials | iam.list_users + list_access_keys + get_access_key_last_used |
 | audit_compute | ecs task definitions (plain-text secret env), lambda function config, public ALB listeners |
@@ -46,6 +47,7 @@ PROFILE = ProviderProfile(
         "list_databases": "RDS / Aurora",
         "get_request_error_rates": "CloudWatch メトリクス（ALB / API Gateway の 5XX）",
         "get_alerting_setup": "CloudWatch アラーム / Route 53 ヘルスチェック",
+        "list_recent_rollouts": "ECS デプロイ / Lambda エイリアスの配分と CloudWatch 指標の前後比較（未実装）",
         "audit_iam": "IAM（ルートユーザー・AdministratorAccess・IAM Access Analyzer）",
         "audit_credentials": "IAM ユーザーのアクセスキー",
         "audit_compute": "ECS / Lambda / App Runner（公開・実行ロール・平文環境変数）",

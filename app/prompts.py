@@ -117,7 +117,7 @@ __JOB_TABLE__
 ## 進め方
 1. 担当のジョブ受付ツールを呼ぶ。requestはJSON文字列のみで、jobと当該ジョブの整数パラメータだけを含める。
    例: {"job":"error_watch","hours":__LOOKBACK__}、{"job":"monthly_security_audit","kev_days":30}。
-   hoursは1〜168、daysは1〜90、kev_daysは1〜365。省略した値は登録済みの既定値が使われる。
+   hoursは1〜168、daysは1〜90、kev_daysは1〜365、attemptsは1〜5、minutesは5〜1440。省略した値は登録済みの既定値が使われる。
    自然文・目的・制約・対象・リポジトリ・dry_run等のフィールドを追加しない。他担当のjob、full、未登録jobは渡さない。
 2. 担当の受付が同じ検証・固定収集・限定ツールでの分析を実行する。対象や時刻・dry_runもその固定収集で確認する。
    この窓口にクラウド調査ツールやget_run_contextはない。証拠収集を自分で再計画しない。
@@ -199,6 +199,20 @@ web_threat_researchが公開されている場合だけ、対象スタックと�
 同じ原因は統合し、公開設定等が意図的である証拠がなければ正当性は未確認とする。
 critical/highは既存案件の検索を最大3回行い、未起票のみkind="security"、fingerprint="<check_id>:<resource>"で起票する。
 medium以下はレポートへまとめ、診断範囲・欠落・EOL・保守保留・関連する脅威の出典を含む月次レポートを発行する。
+""",
+    "service_check": """
+収集済みの run_service_checks（シナリオごとの outcome・試行・失敗ステップ）と、decision.transitions（継続中 ISSUE との照合結果）を正本として読む。
+判定をやり直したり pass へ書き換えたりしない。flaky の初回失敗、inconclusive・checker_error・maintenance・not_run の未確認範囲を省略しない。
+new_incident・ongoing・unstable・recovered・orphaned のシナリオだけを、許可された追加調査（ログ・デプロイ履歴）で調べる。
+new_incident と ongoing は kind="error"、fingerprint=シナリオの fingerprint、search_text="" で create_ops_issue を使う（重複と間隔はツールが判定）。
+recovered と unstable は issue_number へ comment_on_issue で記録し、クローズしない。transient・unverified・not_checked は起票しない。
+orphaned（登録が消えたシナリオの open ISSUE）はレポートで人間に確認を依頼する。最終レポートの冒頭にはプログラムの判定表が自動で付く。
+""",
+    "deploy_verification": """
+収集済みの verify_recent_deployments（ロールアウトごとの verdict・トラフィック%・候補 URL・指標比較・シナリオ結果）を正本として読む。
+PR マージやビルド完了をデプロイ済みの根拠にしない。metrics_evaluated=false の比較は未評価とし、before / after の期間と件数を併記する。
+failed・regressed・not_ready だけを許可された追加調査（デプロイ履歴・ログ）で調べ、kind="error"、fingerprint=ロールアウトの fingerprint で起票する。
+not_serving と unverified はレポートだけに書く。切り戻し・トラフィック変更は提案に留める。最終レポートの冒頭にはプログラムの判定表が自動で付く。
 """,
     "pr_review": """
 収集済みのチーム起票open案件・直近30日以内にclosedとなった未検証案件と、直近PR/CI情報から調査を開始する。

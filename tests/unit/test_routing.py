@@ -107,6 +107,9 @@ async def run_request(router, text, *, state=None):
         ("security_audit", "security_audit", {"kev_days": 8}),
         ("monthly_security_audit", "security_audit", {"kev_days": 8}),
         ("infrastructure_review", "infrastructure_review", {}),
+        ("service_check", "service_check", {"attempts": 3}),
+        ("deploy_verification", "deploy_verification", {"minutes": 30}),
+        ("post_deploy_check", "deploy_verification", {"minutes": 30}),
     ],
 )
 @pytest.mark.parametrize("enveloped", [False, True])
@@ -182,6 +185,8 @@ async def test_full_is_explicit_validated_and_runs_in_registration_order():
         ("pr_review", "pr_review", {"days": 6}),
         ("access_watch", "access_watch", {"hours": 4}),
         ("infrastructure_review", "infrastructure_review", {}),
+        ("service_check", "service_check", {"attempts": 2}),
+        ("deploy_verification", "deploy_verification", {"minutes": 60}),
     ]
     report = events[-1].content.parts[0].text
     assert all(f"### {name}" in report for name, _, _ in calls)
@@ -642,20 +647,18 @@ async def test_full_has_one_shared_issue_cap_and_new_invocation_resets_it(monkey
             )
         ]
         assert events[-1].error_code is None
-        results = [
-            result for _, result in observed[run_index * 5 : (run_index + 1) * 5]
-        ]
+        jobs = len(SPECIALISTS)
+        window = slice(run_index * jobs, (run_index + 1) * jobs)
+        results = [result for _, result in observed[window]]
         assert [result["status"] for result in results].count("dry_run") == 1
-        assert [result["status"] for result in results].count("skipped") == 4
+        assert [result["status"] for result in results].count("skipped") == jobs - 1
         assert results[0]["action"] == "create"
-        assert all(
-            budget is budgets[run_index * 5]
-            for budget in budgets[run_index * 5 : (run_index + 1) * 5]
-        )
-        assert budgets[run_index * 5].issues_created == 1
+        assert all(budget is budgets[run_index * jobs] for budget in budgets[window])
+        assert budgets[run_index * jobs].issues_created == 1
         assert current_run_budget() is None
-    assert budgets[0] is not budgets[5]
-    assert budgets[0].invocation_id != budgets[5].invocation_id
+    jobs = len(SPECIALISTS)
+    assert budgets[0] is not budgets[jobs]
+    assert budgets[0].invocation_id != budgets[jobs].invocation_id
 
 
 class ParallelDelegationModel(BaseLlm):
@@ -715,9 +718,11 @@ async def test_parallel_conversation_adapters_share_the_invocation_issue_cap(
     )
     events = await run_request(router, "各担当で調査してください")
     assert events[-1].error_code is None
-    assert len(observed) == 5 and len(model.requests) == 2
+    assert len(observed) == len(SPECIALISTS) and len(model.requests) == 2
     assert [result["status"] for _, result in observed].count("dry_run") == 1
-    assert [result["status"] for _, result in observed].count("skipped") == 4
+    assert [result["status"] for _, result in observed].count("skipped") == (
+        len(SPECIALISTS) - 1
+    )
     assert budgets[0] is not None and all(budget is budgets[0] for budget in budgets)
     assert budgets[0].issues_created == 1
     assert current_run_budget() is None

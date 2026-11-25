@@ -74,6 +74,7 @@ Rules:
 | `list_databases` | `()` | error watch, security audit, infrastructure review |
 | `get_request_error_rates` | `(hours: int)` | error watch |
 | `get_alerting_setup` | `()` | error watch, security audit, infrastructure review |
+| `list_recent_rollouts` | `(minutes: int)` | deployment verification |
 | `audit_iam` | `()` | security audit, access investigation, infrastructure review |
 | `audit_credentials` | `()` | security audit, infrastructure review |
 | `audit_compute` | `()` | security audit, infrastructure review |
@@ -136,6 +137,11 @@ newest first.
 
 **`get_alerting_setup`** — `{"status", "alert_policy_count", "alert_policies": [{"display_name", "enabled", "conditions",
 "notification_channels"}], "uptime_check_count", "uptime_checks": [...]}`.
+
+**`list_recent_rollouts`** — `{"status", "complete", "window_minutes", "rollouts": [{"service" (required), "service_uri", "revision" (required),
+"create_time" (required), "ready" (required), "traffic": [{"revision", "percent", "tag", "uri"}] (required; the actual serving state), "superseded",
+"metrics": {"status", "before": {"start", "end", "requests", "5xx", "p95_ms"}, "after": {...}}}], "errors", "truncated"}`.
+`metrics.after` covers only the new revision and `before` only the previous revisions just before the deployment. Report missing values through `status`; never estimate them.
 
 **Audits (`audit_*`)** — `app.core.findings.result(...)`:
 

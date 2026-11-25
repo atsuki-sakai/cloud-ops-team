@@ -738,6 +738,8 @@
           "pr_review",
           "access_watch",
           "infrastructure_review",
+          "service_check",
+          "deploy_verification",
           "get_run_context"
         ]
       },
@@ -773,6 +775,8 @@
           "pr_review",
           "access_watch",
           "infrastructure_review",
+          "service_check",
+          "deploy_verification",
           "get_run_context"
         ]
       },
@@ -826,6 +830,8 @@
           "pr_review",
           "access_watch",
           "infrastructure_review",
+          "service_check",
+          "deploy_verification",
           "get_run_context"
         ]
       },
@@ -910,6 +916,8 @@
           "pr_review",
           "access_watch",
           "infrastructure_review",
+          "service_check",
+          "deploy_verification",
           "get_run_context"
         ]
       },
@@ -1134,6 +1142,210 @@
           ],
           "requires_facts": []
         }
+      ]
+    },
+    {
+      "case_id": "scheduled_service_check_failure",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "service_check",
+          "attempts": 2
+        },
+        "attributes": {}
+      },
+      "fixture": "service-check-failure-v1",
+      "routes": [
+        "service_check"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "run_service_checks",
+          "list_ops_issues"
+        ],
+        "analysis": [
+          "list_error_logs",
+          "get_log_context",
+          "list_deployments",
+          "find_existing_ops_issue",
+          "create_ops_issue",
+          "comment_on_issue",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "run_service_checks",
+          "arguments": {
+            "attempts": 2
+          }
+        },
+        {
+          "tool": "list_ops_issues",
+          "arguments": {
+            "state": "open",
+            "kind": "error"
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "alias_post_deploy_check_regressed",
+      "category": "scheduled",
+      "input": {
+        "data": {
+          "job": "post_deploy_check",
+          "minutes": 30
+        },
+        "attributes": {}
+      },
+      "fixture": "deploy-regressed-v1",
+      "routes": [
+        "deploy_verification"
+      ],
+      "allowed_tools": {
+        "collect": [
+          "get_run_context",
+          "verify_recent_deployments"
+        ],
+        "analysis": [
+          "list_error_logs",
+          "get_log_context",
+          "list_deployments",
+          "find_existing_ops_issue",
+          "create_ops_issue",
+          "comment_on_issue",
+          "get_collected_evidence"
+        ]
+      },
+      "required_calls": [
+        {
+          "tool": "get_run_context",
+          "arguments": {}
+        },
+        {
+          "tool": "verify_recent_deployments",
+          "arguments": {
+            "minutes": 30
+          }
+        }
+      ],
+      "completion_statuses": [
+        "complete"
+      ],
+      "completion_facts": [
+        "evidence_checked",
+        "report_ready"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated"
+      ],
+      "preconditions": [
+        {
+          "before_tool": "create_ops_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "comment_on_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "publish_report",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        },
+        {
+          "before_tool": "close_issue",
+          "requires_tools": [
+            "get_run_context"
+          ],
+          "requires_facts": []
+        }
+      ]
+    },
+    {
+      "case_id": "invalid_service_check_attempts",
+      "category": "rejection",
+      "input": {
+        "data": {
+          "job": "service_check",
+          "attempts": 9
+        }
+      },
+      "fixture": "healthy-readonly-v1",
+      "routes": [
+        null
+      ],
+      "allowed_tools": {
+        "collect": [],
+        "analysis": [],
+        "conversation": []
+      },
+      "required_calls": [],
+      "completion_statuses": [
+        "refused",
+        "clarification",
+        "unsupported"
+      ],
+      "completion_facts": [
+        "request_rejected"
+      ],
+      "forbidden_facts": [
+        "cloud_mutated",
+        "report_ready"
       ]
     }
   ]

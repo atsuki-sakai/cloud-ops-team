@@ -135,6 +135,16 @@ The current setup does not propagate the caller authenticated by Cloud Run into 
 
 **Temporary measure:** Limit usage to one trusted operational principal instead of using it as a shared A2A service requiring isolation between users. **Proposed improvement:** Bind verified caller identity to sessions and enforce ownership when retrieving or resuming sessions and tasks. Do not trust self-declared headers as authentication evidence.
 
+### R03: Service check state lives only in issues and logs
+
+Scope: [service checks](service-checks.md), [decisions](../../app/core/check_decisions.py)
+
+Incidents and recoveries are decided against the fingerprints of open issues, and every scenario verdict is logged as the structured `ops_service_check` event.
+Without the persistent run store ([#8](https://github.com/atsuki-sakai/cloud-ops-team/issues/8)), consecutive failure counts, missed scheduled runs and screenshots are not stored.
+A run that cannot read GitHub cannot decide recovery and reports it as unverified. Overlap prevention is per instance only.
+
+**Workaround:** keep Scheduler retries at zero and alert on missing `ops_service_check` events with a log-based metric. **Plan:** store verdicts, evidence and schedules in the #8 run store and detect missed runs and failed saves.
+
 ## Improvement order and structure
 
 | Order | Items | Direction |

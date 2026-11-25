@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app import tools
+from app.core import check_decisions
 from app.core.redact import redact_obj
 from app.core.timeutil import parse_time, utcnow
 from app.routing import normalize_job_params
@@ -35,8 +36,22 @@ class CollectionStep:
 
 @dataclass(frozen=True)
 class PreparedJob:
+    """Evidence plus the analysis scope.
+
+    ``fixed_report`` is set when code decided that no model investigation is
+    needed; ``verdict_summary`` is the code verdict every final report keeps.
+    """
+
     analysis_specialist: Specialist
     evidence: dict[str, Any]
+    fixed_report: str | None = None
+    verdict_summary: str | None = None
+
+
+_DECISIONS = {
+    "service_check": check_decisions.service_check_decision,
+    "deploy_verification": check_decisions.deploy_decision,
+}
 
 
 def collection_steps(
@@ -81,6 +96,17 @@ def collection_steps(
         return (
             context,
             CollectionStep("investigate_access", {"hours": params["hours"]}),
+        )
+    if job_name == "service_check":
+        return (
+            context,
+            CollectionStep("run_service_checks", {"attempts": params["attempts"]}),
+            CollectionStep("list_ops_issues", {"state": "open", "kind": "error"}),
+        )
+    if job_name == "deploy_verification":
+        return (
+            context,
+            CollectionStep("verify_recent_deployments", {"minutes": params["minutes"]}),
         )
     if job_name == "infrastructure_review":
         return (
@@ -216,6 +242,8 @@ def prepare_job(
             }
         if job.name == "pr_review" and step.name == "list_ops_issues":
             raw = _pr_review_candidates(raw)
+        if job.name == "service_check" and step.name == "list_ops_issues":
+            raw = check_decisions.service_incidents(raw)
         value = _bounded_result(raw)
         if step.name == "get_run_context":
             context_valid = (
@@ -280,6 +308,9 @@ def prepare_job(
             "Missing, failed or truncated sources must remain unverified in the report.",
         ],
     }
+    decide = _DECISIONS.get(job.name)
+    if decide is not None:
+        evidence["decision"] = decide(checks, collection_failed=not context_valid)
     evidence["sha256"] = hashlib.sha256(
         json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
@@ -312,4 +343,28 @@ def prepare_job(
             *(tool for tool in specialist.tools if tool.__name__ not in collected),
         ],
     )
-    return PreparedJob(analysis_specialist=analysis, evidence=evidence)
+    if decide is None:
+        return PreparedJob(analysis_specialist=analysis, evidence=evidence)
+    summary = check_decisions.verdict_summary(evidence)
+    fixed = (
+        None
+        if evidence["decision"]["analysis_required"]
+        else check_decisions.fixed_report(evidence)
+    )
+    logger.info(
+        json.dumps(
+            {
+                "event": "ops_check_decision",
+                "job": job.name,
+                "analysis_required": evidence["decision"]["analysis_required"],
+                "reason": evidence["decision"].get("reason"),
+                "sha256": evidence["sha256"],
+            }
+        )
+    )
+    return PreparedJob(
+        analysis_specialist=analysis,
+        evidence=evidence,
+        fixed_report=fixed,
+        verdict_summary=summary,
+    )

@@ -2,7 +2,8 @@
 
 cloud-ops-team は、クラウド環境の定常的な運用保守を小さな AI エージェントチームで回します。
 本番エラーを調査する **エラー監視**、週2回の **不審アクセス調査**、毎週の **インフラ見直し**、
-**月次セキュリティ診断**、マージされた PR の修正を確かめる **週次レビュー** の 5 つです。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
+**月次セキュリティ診断**、マージされた PR の修正を確かめる **週次レビュー**、登録シナリオを公開 URL で再生する
+**稼働確認**、配信中のリビジョンを確かめる **デプロイ後検証** の 7 つです（後の 2 つは [稼働確認](service-checks.md)）。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
 
 - フレームワーク: [ADK](https://adk.dev/) 2.x（Python）、[agents-cli](https://github.com/google/agents-cli) でスキャフォールド
 - モデル: Gemini（既定 `gemini-3.8-flash`、`OPS_MODEL` で変更）
@@ -22,6 +23,8 @@ flowchart LR
         IR["infrastructure_review<br/>週次: 費用・権限・構成見直し"]
         SA["security_audit<br/>月次: 設定・CVE・EOL・脅威動向"]
         PR["pr_review<br/>週次: マージ済み修正の検証"]
+        SC["service_check<br/>定期: シナリオ再生・障害と復旧"]
+        DV["deploy_verification<br/>デプロイ後: 配信リビジョンの検証"]
     end
     subgraph Humans["人間（＋AI コーディング）"]
         H1["ISSUE を確認し対応方針を決める"]
@@ -31,6 +34,7 @@ flowchart LR
     EW -- "[ops/error] ISSUE" --> H1
     AW & IR -- "証拠・推奨案・調査の限界" --> H1
     SA -- "[ops/security] ISSUE + 月次レポート" --> H1
+    SC & DV -- "[ops/error] ISSUE（異常時のみ AI 調査）" --> H1
     H1 --> H2
     H2 -- "マージ" --> PR
     PR -- "ops:verified + 週次レポート" --> H3
@@ -46,7 +50,7 @@ GitHub に対しても、行うのは ISSUE の作成・コメント・ラベル
 flowchart TB
     JSON["定期JSON・run_sse・A2A"] --> R["ScheduledRouter<br/>登録ジョブと引数を検証"]
     NL["自然言語"] --> R
-    R -->|"自然言語のみ"| L["conversation_leader<br/>5担当の受付から選択"]
+    R -->|"自然言語のみ"| L["conversation_leader<br/>7担当の受付から選択"]
     L --> D["担当別adapter<br/>厳密なjob JSONを再検証"]
     R -->|"登録済みjob"| W["固定収集<br/>app/workflows.py"]
     D --> W

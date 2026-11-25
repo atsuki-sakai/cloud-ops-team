@@ -35,8 +35,14 @@ KNOWN_ROUTES = {
     "pr_review",
     "access_watch",
     "infrastructure_review",
+    "service_check",
+    "deploy_verification",
 }
-ALIASES = {"weekly_pr_review": "pr_review", "monthly_security_audit": "security_audit"}
+ALIASES = {
+    "weekly_pr_review": "pr_review",
+    "monthly_security_audit": "security_audit",
+    "post_deploy_check": "deploy_verification",
+}
 
 
 def verify_recorder_source(expected: str | None) -> None:
@@ -479,6 +485,10 @@ def _scripted_job_request(payload: dict[str, Any] | str, requested: str) -> str:
             request["days"] = 7
         elif requested == "security_audit":
             request["kev_days"] = 30
+        elif requested == "service_check":
+            request["attempts"] = 2
+        elif requested == "deploy_verification":
+            request["minutes"] = 60
     return json.dumps(request, ensure_ascii=False)
 
 

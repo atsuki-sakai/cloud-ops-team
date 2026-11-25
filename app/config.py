@@ -133,6 +133,7 @@ class OpsConfig:
     severity_labels: dict[str, tuple[str, ...]] | None = None
     context_file: str = "config/ops-context.md"
     issue_label: str = "ops-agent"
+    service_checks_file: str = "config/service-checks.json"
 
     @property
     def tz(self) -> ZoneInfo:
@@ -179,6 +180,9 @@ def load_config() -> OpsConfig:
         security_labels=_label_list("OPS_SECURITY_LABELS", DEFAULT_SECURITY_LABELS),
         severity_labels=_label_map("OPS_SEVERITY_LABELS", DEFAULT_SEVERITY_LABELS),
         context_file=(os.getenv("OPS_CONTEXT_FILE") or "config/ops-context.md").strip(),
+        service_checks_file=(
+            os.getenv("OPS_SERVICE_CHECKS_FILE") or "config/service-checks.json"
+        ).strip(),
     )
 
 

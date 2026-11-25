@@ -9,6 +9,8 @@ not hit client read timeouts, and a tracing plugin shows what the specialists
     uv run python scripts/run_job.py monthly_security_audit --kev-days 30
     uv run python scripts/run_job.py access_watch --hours 24
     uv run python scripts/run_job.py infrastructure_review
+    uv run python scripts/run_job.py service_check --attempts 2
+    uv run python scripts/run_job.py deploy_verification --minutes 30
     uv run python scripts/run_job.py --text "直近のエラーを見て"
 """
 
@@ -82,11 +84,13 @@ async def main() -> None:
         "job",
         nargs="?",
         default="error_watch",
-        help="error_watch | access_watch | infrastructure_review | weekly_pr_review | monthly_security_audit | full",
+        help="error_watch | access_watch | infrastructure_review | weekly_pr_review | monthly_security_audit | service_check | deploy_verification | full",
     )
     parser.add_argument("--hours", type=int)
     parser.add_argument("--days", type=int)
     parser.add_argument("--kev-days", type=int)
+    parser.add_argument("--attempts", type=int)
+    parser.add_argument("--minutes", type=int)
     parser.add_argument(
         "--text", help="free-form message instead of a JSON job payload"
     )
@@ -102,6 +106,10 @@ async def main() -> None:
             data["days"] = args.days
         if args.kev_days:
             data["kev_days"] = args.kev_days
+        if args.attempts:
+            data["attempts"] = args.attempts
+        if args.minutes:
+            data["minutes"] = args.minutes
         message = json.dumps({"data": data, "attributes": {}}, ensure_ascii=False)
 
     adk_app = App(name="app", root_agent=root_agent, plugins=[DevTracePlugin()])

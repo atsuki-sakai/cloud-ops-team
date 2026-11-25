@@ -72,6 +72,8 @@ ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # 6 時�
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | エラー監視の予定 / さかのぼる時間 |
 | `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | 不審アクセス調査の予定 / さかのぼる時間（既定: 月曜・木曜 08:30 / 120 時間） |
 | `INFRASTRUCTURE_REVIEW_CRON` | インフラ見直し（既定: 毎週月曜 10:00） |
+| `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | 稼働確認（既定: 手動のみ / 最大 2 回試行）。[稼働確認](service-checks.md) |
+| `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | デプロイ後検証（既定: デプロイ時に起動 / 60 分） |
 | `WEEKLY_CRON` / `WEEKLY_DAYS` | 週次の修正確認 |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | 月次のセキュリティ診断 |
 | `<ジョブキー>_CRON` | 自分で追加したジョブ（例: `DEPLOY_WATCH_CRON`） |
@@ -252,7 +254,7 @@ if job_name == "weekly_error_review":
 5. **実行境界と評価**: 未許可ツール・対象の越境・取得量/期間の上限・部分取得をオフライン試験し、前後比較へ混同ケースも追加。
 
 定義からスケジュールや対話受付の候補は生成されますが、受付契約や固定収集が未定義なら実行を拒否します。
-単にツール一覧を増やす追加方法は使いません。ブラウザ記録・再生やデプロイ後検証等の新担当は[拡張計画 #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7)で管理しています。
+単にツール一覧を増やす追加方法は使いません。稼働確認とデプロイ後検証は [稼働確認](service-checks.md) のシナリオファイルで対象を追加します。操作の記録 UI などの残りの拡張は[拡張計画 #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7)で管理しています。
 
 ## 8. AWS / Azure の機能を実装する
 

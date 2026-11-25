@@ -50,7 +50,8 @@ ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # every 6
 ```
 
 Built-in overrides: `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS`, `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS`,
-`INFRASTRUCTURE_REVIEW_CRON`, `WEEKLY_CRON` / `WEEKLY_DAYS`, `MONTHLY_CRON` / `MONTHLY_KEV_DAYS`.
+`INFRASTRUCTURE_REVIEW_CRON`, `WEEKLY_CRON` / `WEEKLY_DAYS`, `MONTHLY_CRON` / `MONTHLY_KEV_DAYS`,
+`SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` (manual only by default) and `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` (normally triggered by deployments; see [service checks](service-checks.md)).
 Access review defaults to Monday and Thursday at 08:30 with a 120-hour window; infrastructure review defaults to Mondays at 10:00 (Asia/Tokyo). Error watch defaults to Monday and Thursday at 08:00 with the same 120-hour window.
 Jobs you add get `<SCHEDULE_KEY>_CRON` (e.g. `DEPLOY_WATCH_CRON`). `ONLY_JOBS=error-watch` limits an update to some jobs.
 
@@ -160,7 +161,7 @@ Copy `app/specialists/_template.py` and register it in `SPECIALISTS`, then compl
 4. **Decision/report requirements:** evidence-reading instructions, gaps, duplicate handling and dry-run semantics.
 5. **Execution boundary and evaluation:** offline rejection tests for unauthorized tools, foreign scope, excessive queries and partial evidence, plus baseline/candidate confusion cases.
 
-Schedules and conversation candidates derive from definitions, but undefined request schemas/workflows fail closed. Do not grow every tool list. Browser recording/replay and post-deploy verification specialists remain in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7).
+Schedules and conversation candidates derive from definitions, but undefined request schemas/workflows fail closed. Do not grow every tool list. Service checks and post-deployment verification take new targets through the scenario file in [service checks](service-checks.md); the remaining extensions, such as a recording UI, stay in [Issue #7](https://github.com/atsuki-sakai/cloud-ops-team/issues/7).
 
 ## 8. Implement AWS / Azure capabilities
 

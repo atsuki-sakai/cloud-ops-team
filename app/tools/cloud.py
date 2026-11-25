@@ -123,6 +123,21 @@ def list_deployments(service_name: str, limit: int) -> dict:
     return _call("list_deployments", service_name=service_name, limit=limit)
 
 
+def list_recent_rollouts(minutes: int) -> dict:
+    """List deployments of the last ``minutes`` minutes with their serving state.
+
+    For each new revision: readiness, the traffic it actually receives (percent,
+    tags and candidate URLs) and its own request count, 5xx and p95 latency
+    compared with the previous revisions just before the deployment.
+    (GCP: Cloud Run + Cloud Monitoring; AWS: ECS / Lambda aliases;
+    Azure: Container Apps revisions.)
+
+    Args:
+        minutes: Look-back window in minutes (5-1440).
+    """
+    return _call("list_recent_rollouts", minutes=minutes)
+
+
 def list_scheduled_jobs() -> dict:
     """List scheduled jobs with their last attempt status; failing jobs are
     flagged with ``failing: true``.

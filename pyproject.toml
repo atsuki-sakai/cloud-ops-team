@@ -33,6 +33,11 @@ eval = [
     "google-adk[eval]>=2.9.2,<3.0.0",
     "google-cloud-aiplatform[evaluation]>=1.156.0,<3.0.0"
 ]
+# Browser scenarios (runner "browser"). After installing, run
+# `uv run playwright install --with-deps chromium`.
+browser = [
+    "playwright>=1.49.0,<2.0.0",
+]
 lint = [
     "ruff>=0.4.6,<1.0.0",
     "ty>=0.0.1a0",

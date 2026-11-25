@@ -7,6 +7,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Service checks** (`service_check`) replay registered HTTP and browser scenarios against public URLs, and **post-deployment verification** (`deploy_verification`, alias `post_deploy_check`) judges the revision actually serving traffic by its traffic split and its own metrics against the previous revisions ([#10](https://github.com/atsuki-sakai/cloud-ops-team/issues/10)).
+  Code decides pass/fail from expected results, confirms failures with retries while keeping the first failure of flaky runs, separates site, reachability and checker failures, uses an off-target control to detect checker outages, honours maintenance windows, verifies the target under recorded click coordinates, catches 5xx seen by the page, and leaves metric comparisons with too few samples unevaluated.
+  Healthy runs return a fixed report without calling a model; only anomalies and recoveries reach the AI investigation, and a failed analysis cannot lose the verdict table. See [service checks](docs/en/service-checks.md).
+- New cloud capability `list_recent_rollouts` (GCP: Cloud Run `trafficStatuses` and Cloud Monitoring metrics grouped by `revision_name`).
+
 ### Changed
 - The README is now **English-first** with a refreshed layout: `README.md` is English and the Japanese version is `README.ja.md` (`README.en.md` was removed). `docs/*.md`, `CONTRIBUTING.md` and `CHANGELOG.md` remain Japanese-first.
 - Corrected outdated defaults left in the Japanese README (a daily error watch and a dozen or so runs a month) to the current Monday/Thursday watches and about 27 scheduled runs a month.
