@@ -124,7 +124,7 @@ curl -fsS -X POST "$AGENT_URL/apps/app/trigger/pubsub" \
 ## What is not covered
 
 - Results cover the checker location (the Cloud Run region), network, browser conditions and recorded steps only; not every user's experience or unrecorded pages.
-- The persistent run store ([#8](https://github.com/atsuki-sakai/cloud-ops-team/issues/8)) is not connected. Consecutive counts and missed scheduled runs are checked by people from issues and logs. Screenshots and traces are not stored.
+- With `OPS_EXECUTION_DB_PATH` set, collected verdicts and the input of code-only decisions are saved in the [run ledger](execution-history.md). Consecutive counts and missed scheduled runs are not detected automatically; people check issues, logs and the ledger. Screenshots and traces are not stored.
 - There is no recording UI yet ([#9](https://github.com/atsuki-sakai/cloud-ops-team/issues/9)); scenarios are written as JSON.
 - Overlap prevention is per instance. Avoid concurrent runs across instances with zero Scheduler retries and the Cloud Run settings.
 - Scenarios on tagged candidate URLs, checks with saved authentication and automatic rollback are out of scope (rollback is only proposed).

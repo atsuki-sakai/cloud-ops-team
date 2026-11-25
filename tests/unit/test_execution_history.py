@@ -936,3 +936,48 @@ async def test_parallel_adapters_isolate_run_context_and_stop_flags(
             other = next(e.run.run_id for e in contexts.values() if e is not execution)
             assert other not in str(bodies)
     outer.finish("interrupted", reason="cancelled")
+
+
+@pytest.mark.asyncio
+async def test_model_free_service_check_is_recorded_as_a_code_decision(
+    history, monkeypatch
+):
+    from app import agent as agent_module
+
+    def no_model():
+        raise AssertionError("a healthy service check must not build a model")
+
+    monkeypatch.setattr(agent_module, "_model", no_model)
+    healthy = {
+        "status": "ok",
+        "complete": True,
+        "scenarios": [
+            {
+                "id": "top-page",
+                "version": "v1",
+                "fingerprint": "service_check:top-page",
+                "outcome": "pass",
+                "severity": "info",
+                "attempts_made": 1,
+            }
+        ],
+    }
+    fake_collectors(
+        monkeypatch,
+        history,
+        overrides={
+            "run_service_checks": healthy,
+            "list_ops_issues": {"status": "ok", "issues": []},
+        },
+    )
+    events = await run_request(
+        agent_module.build_scheduled_agent, '{"job":"service_check"}'
+    )
+    assert events[-1].error_code is None
+    run_id, job, status = stored_runs(history)[0]
+    assert (job, status) == ("service_check", "succeeded")
+    bodies = evidence_bodies(history, run_id)
+    assert "decided/code_verdict" in bodies
+    assert "presented/get_collected_evidence" not in bodies
+    outcome = json.loads(bodies["execution_outcome"][0][1])
+    assert not outcome["evidence_unpresented"]

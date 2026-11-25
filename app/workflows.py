@@ -390,6 +390,14 @@ def prepare_job(
         if evidence["decision"]["analysis_required"]
         else check_decisions.fixed_report(evidence)
     )
+    if fixed is not None and execution is not None:
+        # Code consumed the whole evidence to decide that no investigation is
+        # needed; record it as the decision input instead of leaving the run
+        # marked as evidence never read. Incomplete sources still mark partial.
+        execution.record_json(
+            "decided/code_verdict", evidence, incomplete=_incomplete(evidence)
+        )
+        execution.evidence_read_required = False
     logger.info(
         json.dumps(
             {
