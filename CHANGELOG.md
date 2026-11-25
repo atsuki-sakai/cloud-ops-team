@@ -7,6 +7,12 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 
 ## [Unreleased]
 
+### 追加
+- 登録シナリオ（HTTP / ブラウザ）を公開 URL で再生する **稼働確認**（`service_check`）と、実際に配信中のリビジョン・トラフィック配分・新旧リビジョン別の指標で判定する **デプロイ後検証**（`deploy_verification`、別名 `post_deploy_check`）を追加しました（[#10](https://github.com/atsuki-sakai/cloud-ops-team/issues/10)）。
+  期待結果による判定、再試行による失敗の確定と flaky の初回失敗の保持、サイト側・到達性・検査基盤の失敗の区別、外部疎通による検査側障害の判別、保守時間、座標クリックの対象確認、ページ内の 5xx 検知、標本不足の未評価化をコードで行います。
+  正常時はモデルを呼ばずに固定レポートを返し、異常・復旧時だけ AI が調査します。AI の調査が失敗しても判定表は失われません。詳細: [稼働確認](docs/service-checks.md)
+- クラウド機能 `list_recent_rollouts` を追加しました（GCP: Cloud Run の `trafficStatuses` と `revision_name` 別の Cloud Monitoring 指標）。
+
 ### 変更
 - README を **英語メイン** に切り替え、構成を刷新しました。`README.md` が英語、日本語版は `README.ja.md` です（`README.en.md` は廃止）。`docs/*.md`・`CONTRIBUTING.md`・`CHANGELOG.md` は引き続き日本語メインです。
 - 日本語 README に残っていた古い既定（毎朝のエラー監視、月十数回の実行）を、現在の既定（月曜・木曜の監視、月約 27 回の定期実行）に合わせました。

@@ -15,6 +15,7 @@ Suggested mapping:
 | list_databases | azure-mgmt-postgresqlflexibleservers / mysqlflexibleservers / sql (engine, version) |
 | get_request_error_rates | MetricsQueryClient (Http5xx, requests/failed) |
 | get_alerting_setup | azure-mgmt-monitor alert rules, Application Insights availability tests |
+| list_recent_rollouts | Container Apps revisions (trafficWeight), MetricsQueryClient per revision |
 | audit_iam | azure-mgmt-authorization role assignments (Owner/Contributor at subscription scope, guests) |
 | audit_credentials | Microsoft Graph applications/servicePrincipals password & key credentials (expiry, age) |
 | audit_compute | App Service / Container Apps: public ingress, managed identity, plain-text app settings |
@@ -44,6 +45,7 @@ PROFILE = ProviderProfile(
         "list_databases": "Azure Database for PostgreSQL/MySQL / Azure SQL",
         "get_request_error_rates": "Azure Monitor メトリクス（Http5xx / requests/failed）",
         "get_alerting_setup": "Azure Monitor アラートルール / 可用性テスト",
+        "list_recent_rollouts": "Container Apps リビジョンのトラフィック配分と Azure Monitor 指標の前後比較（未実装）",
         "audit_iam": "Azure RBAC ロール割り当て（Owner/Contributor・ゲスト）",
         "audit_credentials": "サービスプリンシパルのシークレット・証明書",
         "audit_compute": "App Service / Container Apps（公開・マネージド ID・平文アプリ設定）",

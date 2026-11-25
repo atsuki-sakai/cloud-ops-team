@@ -320,6 +320,84 @@
         }
       ],
       "estimated_savings_status": "unknown"
+    },
+    "run_service_checks": {
+      "status": "ok",
+      "complete": true,
+      "run_id": "fixture-run",
+      "trigger": "service_check",
+      "suite_version": "fixture-suite",
+      "started_at": "2026-10-16T00:00:00Z",
+      "finished_at": "2026-10-16T00:00:01Z",
+      "control": {
+        "status": "ok",
+        "status_code": 204,
+        "latency_ms": 20
+      },
+      "summary": {
+        "pass": 1,
+        "flaky": 0,
+        "fail": 0,
+        "inconclusive": 0,
+        "checker_error": 0,
+        "maintenance": 0,
+        "not_run": 0
+      },
+      "scenarios": [
+        {
+          "id": "top-page",
+          "version": "fixture0000000001",
+          "service": "web",
+          "environment": "production",
+          "critical": true,
+          "fingerprint": "service_check:top-page",
+          "conditions": {
+            "runner": "http"
+          },
+          "target_urls": [
+            "https://www.example.com/"
+          ],
+          "outcome": "pass",
+          "severity": "info",
+          "attempts": [
+            {
+              "attempt": 1,
+              "started_at": "2026-10-16T00:00:00Z",
+              "passed": true,
+              "elapsed_ms": 110,
+              "steps_passed": 1,
+              "steps_total": 1
+            }
+          ],
+          "attempts_made": 1,
+          "attempts_allowed": 2,
+          "latency_ms": {
+            "first": 120,
+            "max": 120
+          }
+        }
+      ],
+      "limitations": [
+        "Results describe the checker's region, network and browser conditions, not every user's experience."
+      ]
+    },
+    "verify_recent_deployments": {
+      "status": "ok",
+      "complete": true,
+      "run_id": "fixture-deploy",
+      "trigger": "deploy_verification",
+      "window_minutes": 60,
+      "suite_version": "fixture-suite",
+      "checked_at": "2026-10-16T00:00:00Z",
+      "control": {
+        "status": "ok"
+      },
+      "rollout_count": 0,
+      "rollouts": [],
+      "truncated": false,
+      "limitations": [
+        "A merged pull request or finished build is not treated as deployed; only serving revisions are verified."
+      ]
     }
   },
   "offline_plans": {
@@ -409,6 +487,30 @@
         "tool": "audit_databases",
         "arguments": {}
       }
+    ],
+    "service_check": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "run_service_checks",
+        "arguments": {
+          "attempts": 2
+        }
+      }
+    ],
+    "deploy_verification": [
+      {
+        "tool": "get_run_context",
+        "arguments": {}
+      },
+      {
+        "tool": "verify_recent_deployments",
+        "arguments": {
+          "minutes": 30
+        }
+      }
     ]
   },
   "scenarios": {
@@ -459,6 +561,160 @@
             "complete": true,
             "observed_entries": 0
           }
+        ]
+      }
+    },
+    "service-check-failure-v1": {
+      "run_service_checks": {
+        "status": "ok",
+        "complete": true,
+        "run_id": "fixture-run",
+        "trigger": "service_check",
+        "suite_version": "fixture-suite",
+        "started_at": "2026-10-16T00:00:00Z",
+        "finished_at": "2026-10-16T00:00:01Z",
+        "control": {
+          "status": "ok",
+          "status_code": 204,
+          "latency_ms": 20
+        },
+        "summary": {
+          "pass": 0,
+          "flaky": 0,
+          "fail": 1,
+          "inconclusive": 0,
+          "checker_error": 0,
+          "maintenance": 0,
+          "not_run": 0
+        },
+        "scenarios": [
+          {
+            "id": "top-page",
+            "version": "fixture0000000001",
+            "service": "web",
+            "environment": "production",
+            "critical": true,
+            "fingerprint": "service_check:top-page",
+            "conditions": {
+              "runner": "http"
+            },
+            "target_urls": [
+              "https://www.example.com/"
+            ],
+            "outcome": "fail",
+            "severity": "high",
+            "failure": "http_status",
+            "failed_step": {
+              "index": 0,
+              "action": "request",
+              "name": ""
+            },
+            "attempts": [
+              {
+                "attempt": 1,
+                "started_at": "2026-10-16T00:00:00Z",
+                "passed": false,
+                "elapsed_ms": 120,
+                "steps_passed": 0,
+                "steps_total": 1,
+                "failure": "http_status",
+                "detail": "status 503 not in expected set"
+              },
+              {
+                "attempt": 2,
+                "started_at": "2026-10-16T00:00:05Z",
+                "passed": false,
+                "elapsed_ms": 118,
+                "steps_passed": 0,
+                "steps_total": 1,
+                "failure": "http_status",
+                "detail": "status 503 not in expected set"
+              }
+            ],
+            "attempts_made": 2,
+            "attempts_allowed": 2,
+            "latency_ms": {
+              "first": 120,
+              "max": 120
+            }
+          }
+        ],
+        "limitations": [
+          "Results describe the checker's region, network and browser conditions, not every user's experience."
+        ]
+      },
+      "list_ops_issues": {
+        "status": "ok",
+        "count": 0,
+        "issues": []
+      }
+    },
+    "deploy-regressed-v1": {
+      "verify_recent_deployments": {
+        "status": "ok",
+        "complete": true,
+        "run_id": "fixture-deploy",
+        "trigger": "deploy_verification",
+        "window_minutes": 30,
+        "suite_version": "fixture-suite",
+        "checked_at": "2026-10-16T00:00:00Z",
+        "control": {
+          "status": "ok"
+        },
+        "rollout_count": 1,
+        "rollouts": [
+          {
+            "service": "web",
+            "revision": "web-00042-abc",
+            "create_time": "2026-10-15T23:30:00Z",
+            "ready": true,
+            "traffic_percent": 100,
+            "candidate_urls": [],
+            "service_uri": "https://web-fixture.a.run.app",
+            "verdict": "regressed",
+            "reasons": [
+              "the new revision's own metrics regressed: error_rate"
+            ],
+            "metrics": {
+              "before": {
+                "start": "2026-10-15T23:00:00Z",
+                "end": "2026-10-15T23:30:00Z",
+                "requests": 1200,
+                "5xx": 2,
+                "5xx_ratio": 0.0017,
+                "p95_ms": 210.0
+              },
+              "after": {
+                "start": "2026-10-15T23:30:00Z",
+                "end": "2026-10-16T00:00:00Z",
+                "requests": 900,
+                "5xx": 45,
+                "5xx_ratio": 0.05,
+                "p95_ms": 230.0
+              },
+              "min_requests": 30,
+              "error_ratio_threshold": 0.0117,
+              "regressions": [
+                "error_rate"
+              ],
+              "verdict": "regressed"
+            },
+            "metrics_evaluated": true,
+            "scenarios": [
+              {
+                "id": "top-page",
+                "version": "fixture0000000001",
+                "outcome": "pass",
+                "attempts_made": 1
+              }
+            ],
+            "fingerprint": "deploy_verification:web:web-00042-abc",
+            "needs_analysis": true
+          }
+        ],
+        "truncated": false,
+        "limitations": [
+          "A merged pull request or finished build is not treated as deployed; only serving revisions are verified."
         ]
       }
     }

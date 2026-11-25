@@ -5,6 +5,7 @@
 - ``repo``: repository security posture (GitHub)
 - ``issues``: issue / PR tools (GitHub), dry-run aware
 - ``context``: run context (time, provider, flags)
+- ``service_checks``: registered scenario checks and post-deployment verification
 """
 
 from app.tools.cloud import (
@@ -46,6 +47,7 @@ from app.tools.issues import (
     search_issues,
 )
 from app.tools.repo import get_repo_security_posture
+from app.tools.service_checks import run_service_checks, verify_recent_deployments
 from app.tools.threat_intel import check_eol_status, fetch_cisa_kev, web_threat_research
 
 ERROR_WATCH_TOOLS = [
@@ -132,11 +134,36 @@ INFRASTRUCTURE_REVIEW_TOOLS = [
     publish_report,
 ]
 
+SERVICE_CHECK_TOOLS = [
+    get_run_context,
+    run_service_checks,
+    list_ops_issues,
+    list_error_logs,
+    get_log_context,
+    list_deployments,
+    find_existing_ops_issue,
+    create_ops_issue,
+    comment_on_issue,
+]
+
+DEPLOY_VERIFICATION_TOOLS = [
+    get_run_context,
+    verify_recent_deployments,
+    list_error_logs,
+    get_log_context,
+    list_deployments,
+    find_existing_ops_issue,
+    create_ops_issue,
+    comment_on_issue,
+]
+
 __all__ = [
     "ACCESS_WATCH_TOOLS",
+    "DEPLOY_VERIFICATION_TOOLS",
     "ERROR_WATCH_TOOLS",
     "INFRASTRUCTURE_REVIEW_TOOLS",
     "PR_REVIEW_TOOLS",
     "SECURITY_AUDIT_TOOLS",
+    "SERVICE_CHECK_TOOLS",
     "get_run_context",
 ]

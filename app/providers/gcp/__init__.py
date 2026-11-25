@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.providers.base import CloudProvider, ProviderProfile
-from app.providers.gcp import access, optimization
+from app.providers.gcp import access, optimization, rollouts
 from app.providers.gcp import observability as obs
 from app.providers.gcp import security as sec
 
@@ -31,6 +31,7 @@ PROFILE = ProviderProfile(
         "list_databases": "Cloud SQL インスタンス",
         "get_request_error_rates": "Cloud Monitoring の Cloud Run request_count（5xx / 4xx）",
         "get_alerting_setup": "Cloud Monitoring のアラートポリシーと Uptime Check",
+        "list_recent_rollouts": "Cloud Run の直近リビジョン・トラフィック配分・タグ URL と、リビジョン別 request_count / request_latencies の前後比較",
         "audit_iam": "プロジェクトの IAM ポリシー（公開プリンシパル・基本ロール・強権限ロール・監査ログ）",
         "audit_credentials": "サービスアカウントのユーザー管理鍵",
         "audit_compute": "Cloud Run（公開設定・実行 SA・平文の秘密っぽい環境変数・イメージ固定・デプロイ鮮度）",
@@ -84,6 +85,9 @@ class GcpProvider(CloudProvider):
 
     def get_alerting_setup(self) -> dict[str, Any]:
         return obs.get_alerting_setup()
+
+    def list_recent_rollouts(self, minutes: int) -> dict[str, Any]:
+        return rollouts.list_recent_rollouts(minutes)
 
     # security
     def audit_iam(self) -> dict[str, Any]:

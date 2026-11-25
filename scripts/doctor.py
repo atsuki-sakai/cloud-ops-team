@@ -308,6 +308,7 @@ def check_cloud(quick: bool) -> list[Check]:
         "get_request_error_rates": {"hours": 1},
         "list_security_findings": {"max_findings": 1},
         "investigate_access": {"hours": 1},
+        "list_recent_rollouts": {"minutes": 60},
     }
     names = [
         c

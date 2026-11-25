@@ -56,11 +56,16 @@ def _fake_collectors(monkeypatch, job, params, overrides=None):
         "pr_review",
         "access_watch",
         "infrastructure_review",
+        "service_check",
+        "deploy_verification",
     ],
 )
 def test_fixed_collectors_bind_real_signatures_and_are_in_specialist_scope(name):
     specialist, job = _job(name)
-    params = {key: {"hours": 24, "days": 7, "kev_days": 30}[key] for key in job.params}
+    params = {
+        key: {"hours": 24, "days": 7, "kev_days": 30, "attempts": 2, "minutes": 60}[key]
+        for key in job.params
+    }
     names = {tool.__name__ for tool in specialist.tools}
     for step in collection_steps(job.name, params):
         assert step.name in names
@@ -75,11 +80,16 @@ def test_fixed_collectors_bind_real_signatures_and_are_in_specialist_scope(name)
         "pr_review",
         "access_watch",
         "infrastructure_review",
+        "service_check",
+        "deploy_verification",
     ],
 )
 def test_collects_once_and_removes_fixed_collectors_from_model_tools(monkeypatch, name):
     specialist, job = _job(name)
-    params = {key: {"hours": 24, "days": 7, "kev_days": 30}[key] for key in job.params}
+    params = {
+        key: {"hours": 24, "days": 7, "kev_days": 30, "attempts": 2, "minutes": 60}[key]
+        for key in job.params
+    }
     seen = _fake_collectors(monkeypatch, job, params)
     prepared = prepare_job(specialist, job, params)
     steps = collection_steps(job.name, params)
