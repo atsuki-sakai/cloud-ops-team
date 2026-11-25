@@ -42,6 +42,8 @@ merged fix actually stopped the error. cloud-ops-team does that legwork on a sch
 | `infrastructure_review` | Mon 10:00 | 🧰 Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits. Each proposal comes with impact, risk, validation and rollback steps. |
 | `monthly_security_audit` | 1st of the month | 🛡️ Cloud security | Covers IAM, long-lived credentials, compute, databases, network rules, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel. Critical and high findings become issues, and everything goes into a monthly report. |
 | `weekly_pr_review` | Mon 09:00 | ✅ Release manager | Checks open issues, plus unverified issues closed within 30 days (including auto-closed via `closes #N`), against linked PRs, CI and recurrence. Labels verified fixes and stale issues and publishes a weekly report. |
+| `service_check` | Off (set `SERVICE_CHECK_CRON`) | 🩺 Service checker | Replays registered HTTP and browser scenarios against your public URLs and judges them in code by expected results, with confirming retries. Files, updates and records recovery of `[ops/error]` issues; healthy runs need no model call. [Details](docs/en/service-checks.md) |
+| `deploy_verification` | After each deploy | 🚦 Deploy verifier | Verifies the revision actually serving traffic: readiness, traffic split, production scenarios and the new revision's own error rate and p95 latency against the previous revisions. |
 
 Schedules default to `Asia/Tokyo`. You can also just ask, for example *"investigate suspicious access"*,
 *"review infrastructure waste and permissions"* or *"what is the PR status?"*.
@@ -118,6 +120,7 @@ make run JOB=access_watch ARGS="--hours 120"
 make run JOB=infrastructure_review
 make run JOB=monthly_security_audit ARGS="--kev-days 30"  # takes a few minutes
 make run JOB=weekly_pr_review
+make run JOB=service_check ARGS="--attempts 2"            # needs config/service-checks.json
 make chat                                                 # talk to the team in the browser
 ```
 
@@ -166,7 +169,7 @@ lookback at least as long as the longest gap. To pause a job, run
 ```mermaid
 flowchart TB
     SCH["Scheduled job JSON"] --> R["Validate registered job and arguments"]
-    Q["Your request"] --> L["Conversation leader<br/>choose from 5 specialists"]
+    Q["Your request"] --> L["Conversation leader<br/>choose from 7 specialists"]
     L --> R
     R --> C["Fixed evidence collection"]
     C --> A["Scoped analysis AI<br/>evidence + follow-up/report tools only"]
