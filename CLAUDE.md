@@ -2,15 +2,16 @@
 
 ## This project: cloud-ops-team
 
-- Runtime: `app/agent.py` exports `cloud_ops_team`, a programmatic `ScheduledRouter` shared by HTTP/SSE, Pub/Sub-shaped and A2A requests. Registered JSON jobs bypass LLM routing; only natural-language requests enter `conversation_leader` and its five job adapters. Each adapter validates strict job JSON and uses the same fixed workflow.
+- Runtime: `app/agent.py` exports `cloud_ops_team`, a programmatic `ScheduledRouter` shared by HTTP/SSE, Pub/Sub-shaped and A2A requests. Registered JSON jobs bypass LLM routing; only natural-language requests enter `conversation_leader` and its seven job adapters. Each adapter validates strict job JSON and uses the same fixed workflow.
 - Collection and analysis: `app/workflows.py` collects registered evidence once, then removes those collectors from the analysis tool list and adds `get_collected_evidence`. `app/tool_scope.py` enforces stage-specific names/arguments in callbacks and callable wrappers; `app/prompts.py` limits glossary/context and replaces collection instructions with analysis steps. Never expose the entire registry to a model.
 - Specialists are defined in `app/specialists/` and registered in `SPECIALISTS`. Adding a specialist or job also requires its `JOB_PARAMETER_BOUNDS` contract, fixed `collection_steps`, analysis scope/instructions and comparison cases. Undefined contracts fail closed. Recipes: `docs/customization.md`.
 - Agent-facing tools live in `app/tools/` and must stay cloud-neutral; cloud specifics belong in `app/providers/<cloud>/`
   behind the `CloudProvider` contract (`app/providers/base.py`). Read `docs/architecture.md` and `docs/providers.md` first.
 - Never add a tool that changes cloud resources. GitHub writes must honour `CONFIG.dry_run`.
 - Do not change `app/core/fingerprint.py` formulas (golden tests protect open issues from being re-filed).
-- Documentation is Japanese-first: `README.md`, `docs/*.md`, `CONTRIBUTING.md`, `CHANGELOG.md` are Japanese and
-  `README.en.md`, `docs/en/*.md`, `CONTRIBUTING.en.md`, `CHANGELOG.en.md` are English. Update both languages together
+- The README is English-first: `README.md` is English and `README.ja.md` is Japanese. Other documentation is Japanese-first:
+  `docs/*.md`, `CONTRIBUTING.md`, `CHANGELOG.md` are Japanese and `docs/en/*.md`, `CONTRIBUTING.en.md`, `CHANGELOG.en.md`
+  are English. Update both languages together
   (`SECURITY.md` and `.github/` templates are bilingual in one file).
 - Fast checks: `make test` and `make lint`. Run a job locally: `make run JOB=<job>` (`agents-cli run` has a fixed 120 s
   read timeout). Check access: `make doctor`.

@@ -7,6 +7,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The README is now **English-first** with a refreshed layout: `README.md` is English and the Japanese version is `README.ja.md` (`README.en.md` was removed). `docs/*.md`, `CONTRIBUTING.md` and `CHANGELOG.md` remain Japanese-first.
+- Corrected outdated defaults left in the Japanese README (a daily error watch and a dozen or so runs a month) to the current Monday/Thursday watches and about 27 scheduled runs a month.
+
 ### Fixed
 - Recorded the real Yadora dedicated-SA build/push, promotion to a named revision at 100%, authenticated read paths and serving digest/source SHA. Default Compute SA Editor removal remains on hold.
 - Stage the fixed profile's recorded source privately and apply its checked ignore there instead of using `--ignore-file`, which SDK 568.0.0 rejects for `run deploy`. The original checkout/generic profile, complete upload attestation and traffic guards are retained.

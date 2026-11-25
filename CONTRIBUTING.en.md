@@ -61,8 +61,9 @@ languages of the limitation and affected guides to match the implementation.
 ## Pull requests
 
 1. Open an issue first for larger changes (a new provider, a new specialist) so we can agree on the shape.
-2. Keep PRs focused; update docs and the changelog (Unreleased) in the same PR. Documentation is Japanese-first:
-   `docs/*.md`, `README.md`, `CHANGELOG.md` are Japanese and `docs/en/*.md`, `README.en.md`, `CHANGELOG.en.md` are English.
+2. Keep PRs focused; update docs and the changelog (Unreleased) in the same PR. The README is English-first
+   (`README.md` is English, `README.ja.md` is Japanese); other documentation is Japanese-first: `docs/*.md`, `CONTRIBUTING.md`,
+   `CHANGELOG.md` are Japanese and `docs/en/*.md`, `CONTRIBUTING.en.md`, `CHANGELOG.en.md` are English.
    Update both languages (if you can only write one, say so in the PR and a maintainer will translate).
 3. CI must be green (lint, types, unit tests).
 4. Describe how you tested it — for providers, which capabilities you ran against a real account in dry-run mode.
