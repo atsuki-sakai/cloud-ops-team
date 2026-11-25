@@ -444,8 +444,9 @@ class ScheduledJobAdapter(ScheduledRouter):
     tool, so collector/analysis events remain visible in the parent's stream.
     """
 
-    mode: Literal["single_turn"] = "single_turn"
-    allow_full: Literal[False] = False
+    # Narrowed on purpose: an adapter is always single-turn and never runs full.
+    mode: Literal["single_turn"] = "single_turn"  # ty: ignore[incompatible-mutable-override]
+    allow_full: Literal[False] = False  # ty: ignore[incompatible-mutable-override]
 
     async def _run_impl(
         self, *, ctx: Context, node_input: Any
