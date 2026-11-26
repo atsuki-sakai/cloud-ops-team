@@ -21,6 +21,7 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 - 日本語 README に残っていた古い既定（毎朝のエラー監視、月十数回の実行）を、現在の既定（月曜・木曜の監視、月約 27 回の定期実行）に合わせました。
 
 ### 修正
+- `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` のデプロイで、Cloud Run が新しいリビジョンに書き込むサービスの ingress 注釈（`run.googleapis.com/ingress`）を実行設定の差分と判定し、昇格が止まる問題を直しました。基準サービスの ingress と同じ値の場合だけ比較から除き、違う値は今までどおり止めます。
 - Yadora 向け専用 Build SA の実 build / push、新 revision への100%切替、認証付き読取経路、稼働 digest / source SHA の本番記録を追加しました。既定 Compute SA の Editor 削除は保留しています。
 - SDK 568.0.0 の `run deploy` が受理しない `--ignore-file` を使わず、固定 profile の記録 source を一時領域へ展開して専用 ignore を適用するようにしました。元 checkout と通常 profile は保持し、全 upload attestation と traffic guard は維持します。
 - Yadora 限定 profile で既存 revision pin が残る場合も、実 build・source・digest・Ready・runtime を検証して revision 名へ100%切り替えるようにしました。etag 競合時は停止し、既存候補の再 build をしない plan-only 既定の resume と、base bytes を保つ専用 source ignore を追加しました。余剰 Ruff cache は例外受容しません。
