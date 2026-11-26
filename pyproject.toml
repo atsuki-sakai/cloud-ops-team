@@ -48,6 +48,16 @@ lint = [
     "codespell>=2.2.0,<3.0.0",
 ]
 
+[tool.uv]
+# Security floors for transitive dependencies (Yadora#1791). They are not
+# imported by app/; these lower bounds only stop a future re-lock from
+# resolving the vulnerable versions again.
+constraint-dependencies = [
+    "authlib>=1.9.9",          # google-adk: CVE-2026-96760 and later JOSE/OAuth fixes
+    "certifi>=2026.10.19",     # httpx/requests CA bundle: GHSA-6q48-6c7w-9gw2
+    "pyasn1>=0.6.5",           # google-auth via pyasn1-modules: CVE-2026-119194..119197
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"
