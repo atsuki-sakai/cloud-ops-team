@@ -8,6 +8,9 @@
 - ``service_checks``: registered scenario checks and post-deployment verification
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from app.tools.cloud import (
     audit_compute,
     audit_credentials,
@@ -50,7 +53,7 @@ from app.tools.repo import get_repo_security_posture
 from app.tools.service_checks import run_service_checks, verify_recent_deployments
 from app.tools.threat_intel import check_eol_status, fetch_cisa_kev, web_threat_research
 
-ERROR_WATCH_TOOLS = [
+ERROR_WATCH_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     summarize_error_groups,
     list_error_logs,
@@ -68,7 +71,7 @@ ERROR_WATCH_TOOLS = [
     comment_on_issue,
 ]
 
-SECURITY_AUDIT_TOOLS = [
+SECURITY_AUDIT_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     audit_iam,
     audit_credentials,
@@ -90,7 +93,7 @@ SECURITY_AUDIT_TOOLS = [
     publish_report,
 ]
 
-PR_REVIEW_TOOLS = [
+PR_REVIEW_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     list_ops_issues,
     get_issue,
@@ -106,7 +109,7 @@ PR_REVIEW_TOOLS = [
     publish_report,
 ]
 
-ACCESS_WATCH_TOOLS = [
+ACCESS_WATCH_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     investigate_access,
     list_security_findings,
@@ -117,7 +120,7 @@ ACCESS_WATCH_TOOLS = [
     publish_report,
 ]
 
-INFRASTRUCTURE_REVIEW_TOOLS = [
+INFRASTRUCTURE_REVIEW_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     list_optimization_recommendations,
     list_services,
@@ -134,7 +137,7 @@ INFRASTRUCTURE_REVIEW_TOOLS = [
     publish_report,
 ]
 
-SERVICE_CHECK_TOOLS = [
+SERVICE_CHECK_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     run_service_checks,
     list_ops_issues,
@@ -146,7 +149,7 @@ SERVICE_CHECK_TOOLS = [
     comment_on_issue,
 ]
 
-DEPLOY_VERIFICATION_TOOLS = [
+DEPLOY_VERIFICATION_TOOLS: list[Callable[..., Any]] = [
     get_run_context,
     verify_recent_deployments,
     list_error_logs,

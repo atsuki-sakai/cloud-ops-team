@@ -12,17 +12,20 @@ import datetime as dt
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
 from app import tools
 from app.core import check_decisions
+from app.core.audit import log_event
+from app.core.errors import tool_error
+from app.core.evidence import is_incomplete
 from app.core.redact import redact_obj
 from app.core.timeutil import parse_time, utcnow
 from app.execution_history import current_execution
 from app.routing import normalize_job_params
-from app.specialists.base import Job, Specialist
+from app.specialists.base import Job, Specialist, tool_name
 
 MAX_RESULT_CHARACTERS = 16_000
 MAX_EVIDENCE_CHARACTERS = 64_000
@@ -159,13 +162,10 @@ def _bounded_result(value: Any, limit: int = MAX_RESULT_CHARACTERS) -> dict[str,
             json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
         )
         if not isinstance(clean, dict):
-            raise ValueError("Collector must return an object")
+            raise TypeError("Collector must return an object")
         encoded = json.dumps(clean, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError, OverflowError):
-        return {
-            "status": "error",
-            "message": "Collector returned invalid structured data",
-        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        return tool_error(exc, message="Collector returned invalid structured data")
     if len(encoded) <= limit:
         return clean
     return {
@@ -178,30 +178,29 @@ def _bounded_result(value: Any, limit: int = MAX_RESULT_CHARACTERS) -> dict[str,
     }
 
 
-def _incomplete(value: Any) -> bool:
-    if isinstance(value, dict):
-        status = value.get("status")
-        if value.get("complete") is False or (
-            isinstance(status, str)
-            and status
-            in {
-                "partial",
-                "error",
-                "not_supported",
-                "permission_denied",
-                "auth_error",
-                "api_disabled",
-                "not_found",
-                "rate_limited",
-                "invalid_input",
-                "validation_error",
-            }
-        ):
-            return True
-        return any(_incomplete(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_incomplete(v) for v in value)
-    return False
+# Job-specific narrowing of a collector's raw result before bounding.
+_RESULT_FILTERS: dict[tuple[str, str], Callable[[Any], Any]] = {
+    ("pr_review", "list_ops_issues"): _pr_review_candidates,
+    ("service_check", "list_ops_issues"): check_decisions.service_incidents,
+}
+
+
+def _encoded(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+
+def _collect(step: CollectionStep, *, context_valid: bool) -> tuple[Any, bool]:
+    """Run one registered collector; return ``(raw, executed)``."""
+    if not context_valid:
+        return {
+            "status": "error",
+            "message": "Collection skipped: target context is unavailable",
+        }, False
+    try:
+        return getattr(tools, step.name)(**step.arguments), True
+    except Exception as exc:  # noqa: BLE001 -- collector boundary: one failing source must not stop the job
+        # Exception strings can contain credentials or request URLs.
+        return tool_error(exc, message="Collector failed"), True
 
 
 def prepare_job(
@@ -217,7 +216,7 @@ def prepare_job(
         raise ValueError("Job is not registered to this specialist")
     params = normalize_job_params(job, params)
     steps = collection_steps(job.name, params)
-    original = {tool.__name__: tool for tool in specialist.tools}
+    original = {tool_name(tool): tool for tool in specialist.tools}
     if any(step.name not in original for step in steps):
         raise ValueError("Collection workflow uses a tool outside the specialist scope")
     checks: dict[str, dict[str, Any]] = {}
@@ -228,25 +227,11 @@ def prepare_job(
     execution = current_execution()
     if execution is not None:
         execution.evidence_read_required = True
+    collected = {step.name for step in steps}
     for step in steps:
         if execution is not None:
             execution.ensure_active()
-        executed = context_valid
-        if context_valid:
-            try:
-                raw = getattr(tools, step.name)(**step.arguments)
-            except Exception as exc:
-                # Exception strings can contain credentials or request URLs.
-                raw = {
-                    "status": "error",
-                    "message": "Collector failed",
-                    "error_type": type(exc).__name__,
-                }
-        else:
-            raw = {
-                "status": "error",
-                "message": "Collection skipped: target context is unavailable",
-            }
+        raw, executed = _collect(step, context_valid=context_valid)
         if execution is not None:
             execution.ensure_active()
             if step.name == "get_run_context" and (
@@ -266,39 +251,39 @@ def prepare_job(
             # Save the acquired payload before job-specific filtering and bounds.
             # Storage failures deliberately sit outside the collector's try block.
             execution.record_json(
-                f"collector/{step.name}", raw, incomplete=_incomplete(raw)
+                f"collector/{step.name}", raw, incomplete=is_incomplete(raw)
             )
-        if job.name == "pr_review" and step.name == "list_ops_issues":
-            raw = _pr_review_candidates(raw)
-        if job.name == "service_check" and step.name == "list_ops_issues":
-            raw = check_decisions.service_incidents(raw)
-        value = _bounded_result(raw)
+        result_filter = _RESULT_FILTERS.get((job.name, step.name))
+        if result_filter is not None:
+            raw = result_filter(raw)
+        value: dict[str, Any] = _bounded_result(raw)
         if step.name == "get_run_context":
             context_valid = (
                 isinstance(value.get("target"), str)
                 and bool(value["target"].strip())
-                and not _incomplete(value)
+                and not is_incomplete(value)
             )
             if not context_valid:
                 value = {
                     "status": "error",
                     "message": "Target context is unavailable or invalid",
                 }
-            permitted = {item.name for item in steps}
             for key in ("capabilities", "unsupported_capabilities"):
                 if isinstance(value.get(key), list):
-                    value[key] = [name for name in value[key] if name in permitted]
-        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+                    value[key] = [name for name in value[key] if name in collected]
+        encoded = _encoded(value)
         if used + len(encoded) > MAX_EVIDENCE_CHARACTERS:
             value = {
                 "status": "partial",
                 "complete": False,
                 "message": "Total evidence size limit reached",
             }
-        used += len(json.dumps(value, ensure_ascii=False, allow_nan=False))
+            encoded = _encoded(value)
+        used += len(encoded)
         checks[step.name] = value
+        incomplete = is_incomplete(value)
         if execution is not None:
-            execution.partial |= _incomplete(value)
+            execution.partial |= incomplete
         calls.append(
             {
                 "tool": step.name,
@@ -309,23 +294,22 @@ def prepare_job(
         )
         # Fixed arguments contain only registered periods/limits, never source
         # text. Keep observed payloads and exception messages out of audit logs.
-        logger.info(
-            json.dumps(
-                {
-                    "event": "ops_collection",
-                    "phase": "collect",
-                    "job": job.name,
-                    "specialist": specialist.name,
-                    "tool": step.name,
-                    "arguments": dict(step.arguments),
-                    "executed": executed,
-                    "incomplete": _incomplete(value),
-                }
-            )
+        log_event(
+            logger,
+            "ops_collection",
+            phase="collect",
+            job=job.name,
+            specialist=specialist.name,
+            tool=step.name,
+            arguments=dict(step.arguments),
+            executed=executed,
+            incomplete=incomplete,
         )
     context = checks.pop("get_run_context")
-    evidence = {
-        "status": "partial" if _incomplete(checks) or _incomplete(context) else "ok",
+    evidence: dict[str, Any] = {
+        "status": "partial"
+        if is_incomplete(checks) or is_incomplete(context)
+        else "ok",
         "phase": "collect",
         "job": job.name,
         "specialist": specialist.name,
@@ -344,17 +328,14 @@ def prepare_job(
     evidence["sha256"] = hashlib.sha256(
         json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
-    logger.info(
-        json.dumps(
-            {
-                "event": "ops_evidence",
-                "phase": "collect",
-                "job": job.name,
-                "status": evidence["status"],
-                "sha256": evidence["sha256"],
-                "characters": len(json.dumps(evidence, ensure_ascii=False)),
-            }
-        )
+    log_event(
+        logger,
+        "ops_evidence",
+        phase="collect",
+        job=job.name,
+        status=evidence["status"],
+        sha256=evidence["sha256"],
+        characters=len(json.dumps(evidence, ensure_ascii=False)),
     )
 
     def get_collected_evidence() -> dict:
@@ -368,18 +349,17 @@ def prepare_job(
             execution.record_json(
                 "presented/get_collected_evidence",
                 result,
-                incomplete=_incomplete(result),
+                incomplete=is_incomplete(result),
                 presented=True,
             )
             execution.evidence_read_required = False
         return result
 
-    collected = {step.name for step in steps}
     analysis = replace(
         specialist,
         tools=[
             get_collected_evidence,
-            *(tool for tool in specialist.tools if tool.__name__ not in collected),
+            *(tool for tool in specialist.tools if tool_name(tool) not in collected),
         ],
     )
     if decide is None:
@@ -395,19 +375,16 @@ def prepare_job(
         # needed; record it as the decision input instead of leaving the run
         # marked as evidence never read. Incomplete sources still mark partial.
         execution.record_json(
-            "decided/code_verdict", evidence, incomplete=_incomplete(evidence)
+            "decided/code_verdict", evidence, incomplete=is_incomplete(evidence)
         )
         execution.evidence_read_required = False
-    logger.info(
-        json.dumps(
-            {
-                "event": "ops_check_decision",
-                "job": job.name,
-                "analysis_required": evidence["decision"]["analysis_required"],
-                "reason": evidence["decision"].get("reason"),
-                "sha256": evidence["sha256"],
-            }
-        )
+    log_event(
+        logger,
+        "ops_check_decision",
+        job=job.name,
+        analysis_required=evidence["decision"]["analysis_required"],
+        reason=evidence["decision"].get("reason"),
+        sha256=evidence["sha256"],
     )
     return PreparedJob(
         analysis_specialist=analysis,

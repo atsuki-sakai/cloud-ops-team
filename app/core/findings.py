@@ -11,9 +11,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.payloads import Payload, failure_result
 from app.core.redact import redact
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def normalize_severity(severity: str) -> str:
+    """Known severities pass through; anything else counts as ``medium``."""
+    return severity if severity in SEVERITIES else "medium"
 
 
 def finding(
@@ -27,7 +33,7 @@ def finding(
     """Build one normalized finding (``detail`` is redacted)."""
     return {
         "check_id": check_id,
-        "severity": severity if severity in SEVERITIES else "medium",
+        "severity": normalize_severity(severity),
         "title": title,
         "resource": resource,
         "detail": redact(detail),
@@ -51,9 +57,6 @@ def result(
     }
 
 
-def error_result(check: str, payload: dict[str, Any], hint: str = "") -> dict[str, Any]:
+def error_result(check: str, payload: Payload, hint: str = "") -> dict[str, Any]:
     """Turn an API error payload into an audit result the model can report."""
-    out = {"status": payload.get("status", "error"), "check": check, "error": payload}
-    if hint:
-        out["hint"] = hint
-    return out
+    return failure_result(payload, check=check, **({"hint": hint} if hint else {}))

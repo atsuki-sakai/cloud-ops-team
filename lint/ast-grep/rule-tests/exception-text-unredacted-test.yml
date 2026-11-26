@@ -1,0 +1,45 @@
+id: exception-text-unredacted
+valid:
+  - |
+    try:
+        call()
+    except Exception as exc:
+        return tool_error(exc, provider="gcp")
+  - |
+    try:
+        call()
+    except Exception as exc:
+        return {"status": "error", "message": error_message(exc)}
+  - |
+    try:
+        call()
+    except Exception as exc:
+        logger.warning("collector failed: %s", type(exc).__name__)
+  - |
+    try:
+        call()
+    except ValueError as exc:
+        raise ConfigError("bad config") from exc
+  - |
+    try:
+        call()
+    except Exception as exc:
+        text = redact(str(exc))
+  - |
+    value = str(e)
+invalid:
+  - |
+    try:
+        call()
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:300]}
+  - |
+    try:
+        call()
+    except httpx.HTTPError as exc:
+        return False, {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+  - |
+    try:
+        call()
+    except Exception as e:
+        logger.error(repr(e))

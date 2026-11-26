@@ -38,28 +38,84 @@ eval = [
 browser = [
     "playwright>=1.49.0,<2.0.0",
 ]
+# Exact pins: a linter upgrade changes which code the edit hook rejects, so it
+# must land in its own PR together with the cleanup it requires
+# (docs/code-quality.md).
 lint = [
-    "ruff>=0.4.6,<1.0.0",
-    "ty>=0.0.1a0",
+    "ruff==0.17.6",
+    "ty==0.0.107",
+    "ast-grep-cli==0.44.1",
     "codespell>=2.2.0,<3.0.0",
 ]
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# The edit hook passes explicit paths; keep excludes authoritative for them too.
+force-exclude = true
 
+# Single source of truth for Python rules: CI, `make lint` and the Claude Code
+# edit hook (scripts/quality/hook.py) all read this table. Rationale and fix
+# guidance per family live in docs/code-quality.md and
+# .claude/skills/python-quality/SKILL.md.
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle
-    "F",   # pyflakes
-    "W",   # pycodestyle warnings
-    "I",   # isort
-    "C",  # flake8-comprehensions
-    "B",   # flake8-bugbear
-    "UP", # pyupgrade
-    "RUF", # ruff specific rules
+    "E",     # pycodestyle
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "C",     # flake8-comprehensions
+    "B",     # flake8-bugbear (B904: re-raise with `from`)
+    "UP",    # pyupgrade
+    "RUF",   # ruff specific rules
+    "S",     # flake8-bandit: security
+    "BLE",   # blind `except Exception`
+    "TRY",   # exception handling style
+    "ANN",   # mandatory type annotations
+    "ASYNC", # blocking calls inside async code
+    "PERF",  # avoidable slow loops
+    "SIM",   # simplifications
+    "RET",   # return consistency
+    "PTH",   # pathlib over os.path
+    "TID",   # banned imports
+    "DTZ",   # timezone-aware datetimes
+    "G",     # logging format
+    "LOG",   # logging misuse
+    "T20",   # print
+    "PIE",   # misc pitfalls
+    "PGH",   # blanket noqa / type: ignore
+    "FURB",  # modern idioms
+    "FBT001", "FBT002", # boolean positional parameters
+    "ERA",   # commented-out code
+    "PLE",   # pylint errors
+    "PLW",   # pylint warnings
 ]
-ignore = ["E501", "C901", "B006", "RUF001", "RUF002", "RUF003"] # ignore line too long, too complex, fullwidth punctuation in Japanese strings
+ignore = [
+    "E501",    # line length is the formatter's job
+    "C901",    # complexity is reviewed by humans
+    "RUF001", "RUF002", "RUF003", # fullwidth punctuation in Japanese strings
+    "TRY003",  # messages at the raise site are the project style
+    "TRY301",  # raising inside try to reuse one handler is intentional
+    "ANN401",  # ADK payloads are dynamic; ty checks the rest
+    "N818",    # exception class names are part of the public surface
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101", "S105", "S106", "S108", "S603", "S607", "S310", # asserts and fixtures
+    "ANN", "FBT", "PLW", "T20", "TRY", "BLE001", "ARG", "TID251",
+    "PERF", "ASYNC", # test loops and temp-file checks are not production paths
+]
+"scripts/**" = ["T201", "S603", "S607", "ANN", "BLE001", "FBT"]
+# Frozen formula: fingerprints de-duplicate open issues (golden tests).
+"app/core/fingerprint.py" = ["S324", "FURB167"]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true
+mypy-init-return = true
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"requests".msg = "Use httpx with an explicit timeout (project HTTP client)."
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "frontend"]
@@ -69,19 +125,29 @@ known-first-party = ["app", "frontend"]
 # See: https://docs.astral.sh/ty/
 
 [tool.ty.environment]
-python-version = "3.10"
+python-version = "3.11"
 
 [tool.ty.src]
 exclude = [".venv/**"]
 
+[tool.ty.analysis]
+# Optional "browser" extra (playwright) is not installed in the lint environment.
+allowed-unresolved-imports = ["playwright.**"]
+
 [tool.ty.rules]
-# Ignore common issues with third-party libraries and dynamic code patterns
-import-not-found = "ignore"
+# Strict for app/: every rule keeps its default (error) level, deprecations too.
+deprecated = "error"
+
+# Tests and scripts build fakes and parse loose JSON; keep them on the
+# third-party-tolerant profile so the strict profile stays meaningful for app/.
+[[tool.ty.overrides]]
+include = ["tests/**", "scripts/**"]
+
+[tool.ty.overrides.rules]
 missing-attribute = "ignore"
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 invalid-explicit-return = "ignore"
-possibly-missing-attribute = "ignore"
 missing-union-attribute = "ignore"
 not-subscriptable = "ignore"
 deprecated = "ignore"

@@ -14,18 +14,25 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequen
 from contextlib import aclosing
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.context import Context
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 from google.genai import types
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.config import CONFIG
+from app.core.audit import log_event
+from app.core.jsonutil import unique_pairs_hook
+from app.core.redact import redact
 from app.core.run_budget import invocation_budget
-from app.execution_history import begin_execution, bind_execution
+from app.execution_history import (
+    ExecutionHistory,
+    begin_execution,
+    bind_execution,
+)
 from app.specialists.base import Job, Specialist
 
 logger = logging.getLogger(__name__)
@@ -71,13 +78,9 @@ JobRunnerFactory = Callable[
 ]
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise JobRequestError("Duplicate JSON fields are not allowed.")
-        result[key] = value
-    return result
+_unique_object = unique_pairs_hook(
+    JobRequestError, "Duplicate JSON fields are not allowed."
+)
 
 
 def _reject_constant(_value: str) -> None:
@@ -196,7 +199,8 @@ def parse_job_request(
     return tuple(_normalize_job(specialist, job, data) for specialist, job in jobs)
 
 
-def _text(event: Event) -> str:
+def event_text(event: Event) -> str:
+    """Visible text of an event (thoughts excluded); empty without content."""
     return (
         "".join(
             part.text
@@ -205,6 +209,16 @@ def _text(event: Event) -> str:
         )
         if event.content
         else ""
+    )
+
+
+def text_event(invocation_id: str, author: str, text: str, **fields: Any) -> Event:
+    """A model-role text event; ``fields`` (e.g. ``error_code``) pass through as given."""
+    return Event(
+        invocation_id=invocation_id,
+        author=author,
+        content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
+        **fields,
     )
 
 
@@ -242,32 +256,17 @@ class ScheduledRouter(Agent):
                 ctx.user_content, self.specialists, allow_full=self.allow_full
             )
         except JobRequestError as exc:
-            self._audit(ctx, "job_rejected", code="invalid_job_request")
-            yield self._result(
-                ctx,
-                json.dumps({"status": "rejected", "reason": str(exc)}),
-                error_code="invalid_job_request",
-            )
+            yield self._rejected(ctx, redact(str(exc)))
             return
         if jobs is None:
             if self.conversation_agent is None:
-                self._audit(ctx, "job_rejected", code="invalid_job_request")
-                yield self._result(
-                    ctx,
-                    json.dumps(
-                        {
-                            "status": "rejected",
-                            "reason": "A JSON job request is required.",
-                        }
-                    ),
-                    error_code="invalid_job_request",
-                )
+                yield self._rejected(ctx, "A JSON job request is required.")
                 return
             final_text = ""
             async with aclosing(self.conversation_agent.run_async(ctx)) as events:
                 async for event in events:
-                    if event.is_final_response() and _text(event):
-                        final_text = _text(event)
+                    if event.is_final_response() and event_text(event):
+                        final_text = event_text(event)
                     yield event
             if final_text:
                 yield self._result(ctx, final_text)
@@ -323,63 +322,39 @@ class ScheduledRouter(Agent):
                             if (
                                 not event.partial
                                 and event.is_final_response()
-                                and _text(event)
+                                and event_text(event)
                             ):
-                                report = _text(event)
+                                report = event_text(event)
                             yield event
                     if not report.strip():
                         raise RuntimeError("The selected job produced no final report.")
                     if execution is not None:
                         execution.ensure_active()
-                        status = (
-                            "report_failed"
-                            if execution.report_failed
-                            else "partial"
-                            if execution.partial or execution.evidence_read_required
-                            else "succeeded"
-                        )
                         execution.finish(
-                            status, report=report, reason="stream_completed"
+                            execution.completed_status(),
+                            report=report,
+                            reason="stream_completed",
                         )
             except (asyncio.CancelledError, GeneratorExit):
                 if execution is not None:
-                    try:
-                        execution.finish("interrupted", reason="cancelled")
-                    except Exception:
-                        self._audit(
-                            ctx, "history_failed", code="history_finalization_failed"
-                        )
+                    self._finish_best_effort(ctx, execution, "interrupted", "cancelled")
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- job boundary: one failed job becomes an error result
                 if execution is not None:
-                    try:
-                        execution.finish(
-                            "timed_out" if isinstance(exc, TimeoutError) else "failed",
-                            reason="deadline"
-                            if isinstance(exc, TimeoutError)
-                            else "execution_error",
-                        )
-                    except Exception:
-                        self._audit(
-                            ctx, "history_failed", code="history_finalization_failed"
-                        )
+                    timed_out = isinstance(exc, TimeoutError)
+                    self._finish_best_effort(
+                        ctx,
+                        execution,
+                        "timed_out" if timed_out else "failed",
+                        "deadline" if timed_out else "execution_error",
+                    )
                 self._audit(
                     ctx,
                     "job_failed",
                     job=routed.job.name,
                     code="job_execution_failed",
                 )
-                yield self._result(
-                    ctx,
-                    json.dumps(
-                        {
-                            "status": "error",
-                            "job": routed.job.name,
-                            "completed_jobs": completed,
-                        }
-                    ),
-                    error_code="job_execution_failed",
-                )
+                yield self._job_failed(ctx, routed.job.name, completed)
                 return
             completed.append(routed.job.name)
             reports.append(
@@ -388,29 +363,50 @@ class ScheduledRouter(Agent):
         yield self._result(ctx, "\n\n".join(reports))
 
     def _audit(self, ctx: InvocationContext, event: str, **details: Any) -> None:
-        logger.info(
-            json.dumps(
-                {
-                    "event": event,
-                    "invocation_id": ctx.invocation_id,
-                    "router": self.name,
-                    **details,
-                },
-                sort_keys=True,
-            )
+        log_event(
+            logger,
+            event,
+            sort_keys=True,
+            invocation_id=ctx.invocation_id,
+            router=self.name,
+            **details,
+        )
+
+    def _rejected(self, ctx: InvocationContext, reason: str) -> Event:
+        self._audit(ctx, "job_rejected", code="invalid_job_request")
+        return self._result(
+            ctx,
+            json.dumps({"status": "rejected", "reason": reason}),
+            error_code="invalid_job_request",
+        )
+
+    def _finish_best_effort(
+        self,
+        ctx: InvocationContext,
+        execution: ExecutionHistory,
+        status: str,
+        reason: str,
+    ) -> None:
+        """Record the terminal status; history is best effort and never masks the job outcome."""
+        try:
+            execution.finish(status, reason=reason)
+        except Exception:  # noqa: BLE001 -- history is best effort; the job outcome is still reported
+            self._audit(ctx, "history_failed", code="history_finalization_failed")
+
+    def _job_failed(
+        self, ctx: InvocationContext, job: str, completed: list[str]
+    ) -> Event:
+        """Job result contract: no exception detail leaves the router."""
+        return self._result(
+            ctx,
+            json.dumps({"status": "error", "job": job, "completed_jobs": completed}),
+            error_code="job_execution_failed",
         )
 
     def _result(
         self, ctx: InvocationContext, text: str, *, error_code: str | None = None
     ) -> Event:
-        return Event(
-            invocation_id=ctx.invocation_id,
-            author=self.name,
-            content=types.Content(
-                role="model", parts=[types.Part.from_text(text=text)]
-            ),
-            error_code=error_code,
-        )
+        return text_event(ctx.invocation_id, self.name, text, error_code=error_code)
 
     @staticmethod
     def _job_context(ctx: InvocationContext, routed: RoutedJob) -> InvocationContext:
@@ -444,9 +440,18 @@ class ScheduledJobAdapter(ScheduledRouter):
     tool, so collector/analysis events remain visible in the parent's stream.
     """
 
-    # Narrowed on purpose: an adapter is always single-turn and never runs full.
-    mode: Literal["single_turn"] = "single_turn"  # ty: ignore[incompatible-mutable-override]
-    allow_full: Literal[False] = False  # ty: ignore[incompatible-mutable-override]
+    @model_validator(mode="before")
+    @classmethod
+    def _single_turn_only(cls, data: Any) -> Any:
+        """An adapter is always single-turn and never runs a full job."""
+        if not isinstance(data, dict):
+            return data
+        data = {"mode": "single_turn", "allow_full": False, **data}
+        if data["mode"] != "single_turn" or data["allow_full"] is not False:
+            raise ValueError(
+                "ScheduledJobAdapter must be single_turn with allow_full=False"
+            )
+        return data
 
     async def _run_impl(
         self, *, ctx: Context, node_input: Any
@@ -471,7 +476,7 @@ class ScheduledJobAdapter(ScheduledRouter):
                 if event.author:
                     ctx.event_author = event.author
                 if event.author == self.name and event.is_final_response():
-                    event.output = _text(event) or None
+                    event.output = event_text(event) or None
                 yield event
 
 
@@ -481,7 +486,9 @@ def conversation_tool_guard(
     """Reject extra outer tool arguments before ADK's adapter consumes request."""
     allowed = {adapter.name for adapter in adapters}
 
-    def before_tool_callback(tool: Any, args: dict, tool_context: Any):
+    def before_tool_callback(
+        tool: Any, args: dict, tool_context: Any
+    ) -> dict[str, str] | None:
         if getattr(tool, "name", None) not in allowed:
             return {"status": "rejected", "reason": "workflow_not_allowed"}
         if not isinstance(args, dict) or set(args) != {"request"}:

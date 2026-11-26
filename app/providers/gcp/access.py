@@ -15,10 +15,11 @@ from collections import Counter
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from app.core.findings import finding, result
+from app.core.findings import SEVERITIES, finding, result
 from app.core.redact import redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
 from app.providers.gcp.client import gcp_post, project_path
+from app.providers.gcp.observability import ENTRIES_LIST_URL, entries_list_body
 
 MAX_PAGES = 5
 PAGE_SIZE = 200
@@ -222,12 +223,7 @@ def _fetch(
     filter_ = f'timestamp >= "{iso_utc(start)}" AND timestamp < "{iso_utc(end)}" AND ({_FILTERS[source]})'
     max_pages = HTTP_DENIED_MAX_PAGES if source == "http_denied" else MAX_PAGES
     page_size = HTTP_DENIED_PAGE_SIZE if source == "http_denied" else PAGE_SIZE
-    body: dict[str, Any] = {
-        "resourceNames": [project_path()],
-        "filter": filter_,
-        "orderBy": "timestamp desc",
-        "pageSize": page_size,
-    }
+    body = entries_list_body(filter_, order="timestamp desc", page_size=page_size)
     coverage: dict[str, Any] = {
         "source": source,
         "status": "ok",
@@ -246,9 +242,7 @@ def _fetch(
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for page in range(max_pages):
-        ok, payload = gcp_post(
-            "https://logging.googleapis.com/v2/entries:list", json=dict(body)
-        )
+        ok, payload = gcp_post(ENTRIES_LIST_URL, json=dict(body))
         coverage["pages"] = page + 1
         if not ok:
             status = _mapping(payload).get("status")
@@ -377,6 +371,7 @@ def investigate_access(hours: int) -> dict[str, Any]:
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
     http_sources: dict[str, str] = {}
     for source in _FILTERS:
+        # ast-grep-ignore: api-call-in-loop -- bounded: fixed _FILTERS sources, one bounded search each
         rows, observed = _fetch(source, start, end)
         coverage.append(observed)
         for entry in rows:
@@ -393,7 +388,12 @@ def investigate_access(hours: int) -> dict[str, Any]:
                     continue
             resource, hints = _resource(entry)
             subject, kind = _subject(entry)
-            timestamp = iso_utc(parse_time(entry["timestamp"]))
+            moment = parse_time(entry["timestamp"])
+            if moment is None:
+                raise ValueError(
+                    "_fetch must only return entries with a valid timestamp"
+                )
+            timestamp = iso_utc(moment)
             for check_id, category in _signals(source, entry):
                 group = groups.setdefault(
                     (check_id, resource, subject),
@@ -422,7 +422,7 @@ def investigate_access(hours: int) -> dict[str, Any]:
                     )
                     group.setdefault("http_status_counts", Counter())[status_key] += 1
     findings = [_make_finding(key[0], group) for key, group in groups.items()]
-    order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    order = {severity: rank for rank, severity in enumerate(SEVERITIES)}
     findings.sort(
         key=lambda item: (
             order[item["severity"]],

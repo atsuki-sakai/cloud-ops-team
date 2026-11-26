@@ -11,12 +11,29 @@ from typing import Any
 
 from app.config import CONFIG
 from app.core.fingerprint import fingerprint, message_template, search_text_from
+from app.core.payloads import Payload, clamp_int
 from app.core.redact import is_safe_literal, redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
-from app.providers.gcp.client import gcp_get, gcp_list, gcp_post, project_path
+from app.providers.gcp.client import (
+    failure_result,
+    gcp_get,
+    gcp_list,
+    gcp_post,
+    items_payload,
+    location_path,
+    object_payload,
+    project_path,
+)
+from app.providers.gcp.run import (
+    is_ready,
+    list_services_raw,
+    ready_condition,
+    revisions_url,
+    short_name,
+)
 
 LOGGING = "https://logging.googleapis.com/v2"
-RUN = "https://run.googleapis.com/v2"
+ENTRIES_LIST_URL = f"{LOGGING}/entries:list"
 SCHEDULER = "https://cloudscheduler.googleapis.com/v1"
 MONITORING = "https://monitoring.googleapis.com/v3"
 
@@ -45,7 +62,7 @@ _MSG_KEYS = (
     "reason",
     "status",
 )
-_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.I)
+_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.IGNORECASE)
 
 
 def _search_text_for(entry: dict[str, Any], raw_message: str) -> str:
@@ -145,30 +162,57 @@ def _compact(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _list_entries(
-    filter_: str,
-    *,
-    page_size: int,
-    order: str,
-    max_pages: int,
-    full_response: bool = False,
-) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
-    """Fetch a complete bounded search, or one raw page for explicit previews."""
-    body = {
+def entries_list_body(filter_: str, *, order: str, page_size: int) -> dict[str, Any]:
+    """Request body for Cloud Logging ``entries:list`` in the target project."""
+    return {
         "resourceNames": [project_path()],
         "filter": filter_,
         "orderBy": order,
         "pageSize": page_size,
     }
-    if full_response:
-        return gcp_post(f"{LOGGING}/entries:list", json=body)
+
+
+def series_label(item: dict[str, Any], scope: str, key: str, default: str = "") -> str:
+    """``item[scope]["labels"][key]`` of a log entry or time series, tolerating gaps."""
+    return ((item.get(scope) or {}).get("labels") or {}).get(key, default)
+
+
+def page_meta(token: str | None, count: int, limit: int) -> dict[str, Any]:
+    """Completion fields of a one-page preview (more data exists if either holds)."""
+    truncated = bool(token) or count > limit
+    return {"truncated": truncated, "complete": not truncated, "next_page_token": token}
+
+
+def _list_entries(
+    filter_: str, *, page_size: int, order: str, max_pages: int
+) -> tuple[bool, Payload]:
+    """Fetch a complete bounded search (an error if the page limit is reached)."""
     return gcp_list(
-        f"{LOGGING}/entries:list",
+        ENTRIES_LIST_URL,
         "entries",
         method="POST",
-        json=body,
+        json=entries_list_body(filter_, order=order, page_size=page_size),
         max_pages=max_pages,
     )
+
+
+def _entries_preview(filter_: str, *, limit: int, order: str) -> dict[str, Any]:
+    """One page of entries for display, with explicit completion metadata."""
+    ok, payload = gcp_post(
+        ENTRIES_LIST_URL, json=entries_list_body(filter_, order=order, page_size=limit)
+    )
+    if not ok:
+        return failure_result(payload)
+    payload = object_payload(payload)
+    entries = payload.get("entries") or []
+    meta = page_meta(payload.get("nextPageToken"), len(entries), limit)
+    entries = entries[:limit]
+    return {
+        "status": "ok",
+        "count": len(entries),
+        "entries": [_compact(e) for e in entries],
+        **meta,
+    }
 
 
 def _service_clause(service_name: str) -> str:
@@ -186,7 +230,7 @@ def _service_clause(service_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def summarize_error_groups(hours: int) -> dict:
+def summarize_error_groups(hours: int) -> dict[str, Any]:
     """Group ERROR-and-above log entries from the last ``hours`` hours.
 
     Call this first in an error-watch run. Each group carries a stable
@@ -201,7 +245,7 @@ def summarize_error_groups(hours: int) -> dict:
         dict with ``status``, ``window``, ``total_entries``, ``truncated``,
         ``by_service`` and ``groups`` (sorted by count, max 30).
     """
-    hours = max(1, min(int(hours), 168))
+    hours = clamp_int(hours, 1, 168)
     end = utcnow()
     start = end - dt.timedelta(hours=hours)
     filter_ = f'severity>=ERROR AND timestamp>="{iso_utc(start)}" AND timestamp<="{iso_utc(end)}"'
@@ -209,8 +253,8 @@ def summarize_error_groups(hours: int) -> dict:
         filter_, page_size=1000, order="timestamp desc", max_pages=3
     )
     if not ok:
-        return {"status": entries.get("status", "error"), "error": entries}
-    assert isinstance(entries, list)
+        return failure_result(entries)
+    entries = items_payload(entries)
 
     groups: dict[str, dict[str, Any]] = {}
     by_service: dict[str, int] = defaultdict(int)
@@ -220,7 +264,7 @@ def summarize_error_groups(hours: int) -> dict:
         template = message_template(raw_message)
         key = fingerprint(compact["resource_type"] or "", compact["service"], template)
         by_service[compact["service"]] += 1
-        group = groups.get(key)
+        group: dict[str, Any] | None = groups.get(key)
         ts = compact["timestamp"]
         if group is None:
             group = groups[key] = {
@@ -271,7 +315,7 @@ def summarize_error_groups(hours: int) -> dict:
     }
 
 
-def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
+def list_error_logs(hours: int, service_name: str, limit: int) -> dict[str, Any]:
     """List individual ERROR-and-above log entries (newest first).
 
     Args:
@@ -280,39 +324,18 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
             to filter on. Pass an empty string for all services.
         limit: Maximum entries to return (1-200).
     """
-    hours = max(1, min(int(hours), 168))
-    limit = max(1, min(int(limit), 200))
+    hours = clamp_int(hours, 1, 168)
+    limit = clamp_int(limit, 1, 200)
     start = utcnow() - dt.timedelta(hours=hours)
     clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
     if service_name:
         clauses.append(_service_clause(service_name))
-    ok, payload = _list_entries(
-        " AND ".join(clauses),
-        page_size=limit,
-        order="timestamp desc",
-        max_pages=1,
-        full_response=True,
-    )
-    if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
-    assert isinstance(payload, dict)
-    entries = payload.get("entries") or []
-    token = payload.get("nextPageToken")
-    truncated = bool(token) or len(entries) > limit
-    entries = entries[:limit]
-    return {
-        "status": "ok",
-        "count": len(entries),
-        "entries": [_compact(e) for e in entries],
-        "truncated": truncated,
-        "complete": not truncated,
-        "next_page_token": token,
-    }
+    return _entries_preview(" AND ".join(clauses), limit=limit, order="timestamp desc")
 
 
 def get_log_context(
     service_name: str, around_time: str, window_minutes: int, trace: str
-) -> dict:
+) -> dict[str, Any]:
     """Fetch surrounding log lines (all severities) to investigate an error.
 
     Either pass a ``trace`` id (preferred when available: all entries of that
@@ -337,36 +360,17 @@ def get_log_context(
         clauses.append(f'timestamp>="{iso_utc(start)}"')
     else:
         centre = parse_time(around_time) or utcnow()
-        window = max(1, min(int(window_minutes), 120))
+        window = clamp_int(window_minutes, 1, 120)
         clauses.append(f'timestamp>="{iso_utc(centre - dt.timedelta(minutes=window))}"')
         clauses.append(f'timestamp<="{iso_utc(centre + dt.timedelta(minutes=window))}"')
         if service_name:
             clauses.append(_service_clause(service_name))
-    ok, payload = _list_entries(
-        " AND ".join(clauses),
-        page_size=80,
-        order="timestamp asc",
-        max_pages=1,
-        full_response=True,
-    )
-    if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
-    assert isinstance(payload, dict)
-    entries = payload.get("entries") or []
-    token = payload.get("nextPageToken")
-    truncated = bool(token) or len(entries) > 80
-    entries = entries[:80]
-    return {
-        "status": "ok",
-        "count": len(entries),
-        "entries": [_compact(e) for e in entries],
-        "truncated": truncated,
-        "complete": not truncated,
-        "next_page_token": token,
-    }
+    return _entries_preview(" AND ".join(clauses), limit=80, order="timestamp asc")
 
 
-def count_matching_errors(service_name: str, search_text: str, since: str) -> dict:
+def count_matching_errors(
+    service_name: str, search_text: str, since: str
+) -> dict[str, Any]:
     """Count ERROR-and-above entries containing ``search_text`` since a time.
 
     Used to confirm a fix: if a PR fixing an error was merged at time T, call
@@ -396,17 +400,18 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         " AND ".join(clauses), page_size=1000, order="timestamp desc", max_pages=2
     )
     if not ok:
-        out = {"status": entries.get("status", "error"), "error": entries}
-        if entries.get("incomplete"):
+        out = failure_result(entries)
+        error = out["error"]
+        if error.get("incomplete"):
             out.update(
                 capped=True,
                 complete=False,
-                count=entries["count"],
+                count=error["count"],
                 since=iso_utc(start),
             )
         return out
-    assert isinstance(entries, list)
-    timestamps = [e.get("timestamp") for e in entries if e.get("timestamp")]
+    entries = items_payload(entries)
+    timestamps = [str(e["timestamp"]) for e in entries if e.get("timestamp")]
     return {
         "status": "ok",
         "since": iso_utc(start),
@@ -424,18 +429,6 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
 # ---------------------------------------------------------------------------
 
 
-def _run_parent() -> str:
-    return f"{RUN}/projects/{CONFIG.target}/locations/{CONFIG.region}"
-
-
-def _run_services_raw() -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
-    return gcp_list(f"{_run_parent()}/services", "services", params={"pageSize": 100})
-
-
-def _short(name: str | None) -> str | None:
-    return name.rsplit("/", 1)[-1] if name else name
-
-
 def compact_service(svc: dict[str, Any]) -> dict[str, Any]:
     template = svc.get("template") or {}
     containers = template.get("containers") or []
@@ -448,13 +441,13 @@ def compact_service(svc: dict[str, Any]) -> dict[str, Any]:
             )
     terminal = svc.get("terminalCondition") or {}
     return {
-        "name": _short(svc.get("name")),
+        "name": short_name(svc.get("name")),
         "uri": svc.get("uri"),
         "ingress": svc.get("ingress"),
         "ready": terminal.get("state") == "CONDITION_SUCCEEDED",
         "ready_message": terminal.get("message"),
-        "latest_ready_revision": _short(svc.get("latestReadyRevision")),
-        "latest_created_revision": _short(svc.get("latestCreatedRevision")),
+        "latest_ready_revision": short_name(svc.get("latestReadyRevision")),
+        "latest_created_revision": short_name(svc.get("latestCreatedRevision")),
         "update_time": svc.get("updateTime"),
         "last_modifier": redact(str(svc.get("lastModifier") or "")),
         "service_account": template.get("serviceAccount"),
@@ -470,16 +463,16 @@ def compact_service(svc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_cloud_run_services() -> dict:
+def get_cloud_run_services() -> dict[str, Any]:
     """List Cloud Run services in the target project/region with health info.
 
     Returns readiness, latest revisions, images, service account, scaling,
     env var *names* (never values) and last deploy time per service.
     """
-    ok, services = _run_services_raw()
+    ok, services = list_services_raw()
     if not ok:
-        return {"status": services.get("status", "error"), "error": services}
-    assert isinstance(services, list)
+        return failure_result(services)
+    services = items_payload(services)
     return {
         "status": "ok",
         "target": CONFIG.target,
@@ -489,7 +482,7 @@ def get_cloud_run_services() -> dict:
     }
 
 
-def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
+def get_cloud_run_revisions(service_name: str, limit: int) -> dict[str, Any]:
     """List recent revisions of a Cloud Run service (newest first).
 
     Useful to correlate an error spike with a deployment.
@@ -498,31 +491,25 @@ def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
         service_name: Cloud Run service name (e.g. ``api``).
         limit: Max revisions to return (1-20).
     """
-    limit = max(1, min(int(limit), 20))
-    ok, payload = gcp_get(
-        f"{_run_parent()}/services/{service_name}/revisions",
-        params={"pageSize": limit},
-    )
+    limit = clamp_int(limit, 1, 20)
+    ok, payload = gcp_get(revisions_url(service_name), params={"pageSize": limit})
     if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
+        return failure_result(payload)
     revisions = payload.get("revisions") or []
-    token = payload.get("nextPageToken")
-    truncated = bool(token) or len(revisions) > limit
+    meta = page_meta(payload.get("nextPageToken"), len(revisions), limit)
     revisions.sort(key=lambda r: r.get("createTime", ""), reverse=True)
     out = []
     for rev in revisions[:limit]:
-        ready = next(
-            (c for c in rev.get("conditions") or [] if c.get("type") == "Ready"), {}
-        )
+        ready = ready_condition(rev)
         out.append(
             {
-                "name": _short(rev.get("name")),
+                "name": short_name(rev.get("name")),
                 "create_time": rev.get("createTime"),
                 "images": [c.get("image") for c in rev.get("containers") or []],
                 "image_digests": [
                     c.get("imageDigest") for c in rev.get("containerStatuses") or []
                 ],
-                "ready": ready.get("state") == "CONDITION_SUCCEEDED",
+                "ready": is_ready(ready),
                 "ready_message": ready.get("message"),
                 "scaling": rev.get("scaling") or {},
                 "service_account": rev.get("serviceAccount"),
@@ -533,9 +520,7 @@ def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
         "service": service_name,
         "count": len(out),
         "revisions": out,
-        "truncated": truncated,
-        "complete": not truncated,
-        "next_page_token": token,
+        **meta,
     }
 
 
@@ -544,17 +529,17 @@ def get_cloud_run_revisions(service_name: str, limit: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def get_scheduler_jobs() -> dict:
+def get_scheduler_jobs() -> dict[str, Any]:
     """List Cloud Scheduler jobs with their last attempt status.
 
     Jobs whose last attempt failed are flagged with ``failing: true``; these
     often explain ``cloud_scheduler_job`` error log entries.
     """
-    parent = f"{SCHEDULER}/projects/{CONFIG.target}/locations/{CONFIG.region}"
+    parent = f"{SCHEDULER}/{location_path()}"
     ok, jobs = gcp_list(f"{parent}/jobs", "jobs", params={"pageSize": 100})
     if not ok:
-        return {"status": jobs.get("status", "error"), "error": jobs}
-    assert isinstance(jobs, list)
+        return failure_result(jobs)
+    jobs = items_payload(jobs)
     out = []
     for job in jobs:
         status = job.get("status") or {}
@@ -562,7 +547,7 @@ def get_scheduler_jobs() -> dict:
         uri = str(http.get("uri") or "").split("?", 1)[0]
         out.append(
             {
-                "name": _short(job.get("name")),
+                "name": short_name(job.get("name")),
                 "schedule": job.get("schedule"),
                 "time_zone": job.get("timeZone"),
                 "state": job.get("state"),
@@ -586,13 +571,13 @@ def get_scheduler_jobs() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def get_request_error_rates(hours: int) -> dict:
+def get_request_error_rates(hours: int) -> dict[str, Any]:
     """Per-service Cloud Run request totals and 5xx/4xx ratios (Cloud Monitoring).
 
     Args:
         hours: Window in hours (1-168).
     """
-    hours = max(1, min(int(hours), 168))
+    hours = clamp_int(hours, 1, 168)
     end = utcnow()
     start = end - dt.timedelta(hours=hours)
     params = {
@@ -613,16 +598,12 @@ def get_request_error_rates(hours: int) -> dict:
         f"{MONITORING}/{project_path()}/timeSeries", "timeSeries", params=params
     )
     if not ok:
-        return {"status": series.get("status", "error"), "error": series}
-    assert isinstance(series, list)
+        return failure_result(series)
+    series = items_payload(series)
     per_service: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for ts in series:
-        service = ((ts.get("resource") or {}).get("labels") or {}).get(
-            "service_name", "unknown"
-        )
-        klass = ((ts.get("metric") or {}).get("labels") or {}).get(
-            "response_code_class", "unknown"
-        )
+        service = series_label(ts, "resource", "service_name", "unknown")
+        klass = series_label(ts, "metric", "response_code_class", "unknown")
         total = 0
         for point in ts.get("points") or []:
             value = point.get("value") or {}
@@ -649,7 +630,7 @@ def get_request_error_rates(hours: int) -> dict:
     return {"status": "ok", "window_hours": hours, "services": rows}
 
 
-def get_alerting_setup() -> dict:
+def get_alerting_setup() -> dict[str, Any]:
     """List Cloud Monitoring alert policies and uptime checks.
 
     Lets the team judge whether an error class is already covered by an
@@ -661,8 +642,8 @@ def get_alerting_setup() -> dict:
         params={"pageSize": 100},
     )
     if not ok:
-        return {"status": policies.get("status", "error"), "error": policies}
-    assert isinstance(policies, list)
+        return failure_result(policies)
+    policies = items_payload(policies)
     ok2, uptime = gcp_list(
         f"{MONITORING}/{project_path()}/uptimeCheckConfigs",
         "uptimeCheckConfigs",

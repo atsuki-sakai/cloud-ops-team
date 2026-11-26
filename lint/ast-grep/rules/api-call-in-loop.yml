@@ -1,0 +1,47 @@
+id: api-call-in-loop
+language: python
+severity: warning
+message: ループの中で外部 API を1件ずつ呼んでいます（N+1 のおそれ）。
+note: |
+  優先順: (1) 一覧 API を1回呼んで dict で引く (2) GitHub は GraphQL でまとめて取る
+  (3) 並列にするなら上限付き（Semaphore / ThreadPoolExecutor(max_workers=N)）。上限なしの gather は禁止。
+  件数に上限があり、まとめる API がない場合は理由付きで抑制する:
+    # ast-grep-ignore: api-call-in-loop -- bounded: at most 6 files, no batch endpoint
+files:
+  - app/**/*.py
+utils:
+  api-call:
+    kind: call
+    has:
+      field: function
+      regex: ^(gh_rest|gh_graphql|gcp_request|gcp_get|gcp_post|gcp_list|httpx\.\w+|list_services_raw|_entries_preview|_list_issues|_get_scoped_issue|_repo_label_names|_create_issue|_post_comment|_add_labels|_close|_raw_files|_gh_get|_open_bot_prs|_series|_window|_metrics|_fetch|_supersede_report)$
+  literal-iter:
+    any:
+      - kind: tuple
+      - kind: list
+        not:
+          has:
+            kind: list_comprehension
+      - kind: call
+        has:
+          field: function
+          regex: ^range$
+rule:
+  matches: api-call
+  any:
+    - inside:
+        stopBy:
+          kind: function_definition
+        kind: for_statement
+        not:
+          has:
+            field: right
+            matches: literal-iter
+    - inside:
+        stopBy:
+          kind: function_definition
+        any:
+          - kind: list_comprehension
+          - kind: dictionary_comprehension
+          - kind: set_comprehension
+          - kind: generator_expression

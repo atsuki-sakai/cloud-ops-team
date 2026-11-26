@@ -11,17 +11,24 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from typing import Any
-from urllib.parse import quote
+from typing import Any, Literal
 
 from google.adk.tools import ToolContext
 
 from app.config import CONFIG
+from app.core.findings import normalize_severity
 from app.core.fingerprint import build_meta_comment, parse_meta_comment
+from app.core.i18n import localized
+from app.core.payloads import (
+    Payload,
+    clamp_int,
+    failure_payload,
+    failure_result,
+    items_payload,
+)
 from app.core.redact import is_safe_literal, redact, redact_obj
+from app.core.timeutil import iso_utc, local_stamp, utcnow
 from app.integrations.github import gh_graphql, gh_rest, repo_path
-
-SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 def kind_labels(kind: str) -> list[str]:
@@ -82,8 +89,7 @@ MESSAGES: dict[str, dict[str, str]] = {
 
 
 def _msg(key: str, **kwargs: Any) -> str:
-    table = MESSAGES.get(CONFIG.report_language, MESSAGES["en"])
-    return table[key].format(**kwargs)
+    return localized(MESSAGES, CONFIG.report_language, key, **kwargs)
 
 
 _ensured_labels: set[str] = set()
@@ -91,31 +97,127 @@ _COUNTER_KEY = "ops:issues_created"
 
 
 def _now_iso() -> str:
-    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso_utc(utcnow())
 
 
 def _now_local() -> str:
-    return dt.datetime.now(CONFIG.tz).strftime("%Y-%m-%d %H:%M %Z")
+    return local_stamp(utcnow(), CONFIG.tz)
+
+
+def _ago_iso(delta: dt.timedelta) -> str:
+    return iso_utc(utcnow() - delta)
+
+
+def _failed(payload: Payload, **extra: Any) -> dict[str, Any]:
+    """Tool result for a failed GitHub call: ``{"status", **extra, "error"}``."""
+    return failure_result(payload, source="GitHub", **extra)
+
+
+def _step_failure(
+    number: int, step: str, payload: Payload, completed: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """Result of a multi-step write that stopped at ``step``."""
+    extra: dict[str, Any] = {"number": number, "failed_step": step}
+    if completed:
+        extra["completed_steps"] = list(completed)
+    return _failed(payload, **extra)
+
+
+# --- GitHub writes. Every caller returns a dry-run preview before reaching
+# these; the check here is defence in depth, not the primary guard.
+
+
+def _require_live_writes() -> None:
+    if CONFIG.dry_run:
+        raise RuntimeError("GitHub write attempted while OPS_DRY_RUN is on")
+
+
+def _issue_path(number: int) -> str:
+    return f"{repo_path()}/issues/{int(number)}"
+
+
+def _create_issue(title: str, body: str, labels: list[str]) -> tuple[bool, Any]:
+    _require_live_writes()
+    return gh_rest(
+        "POST",
+        f"{repo_path()}/issues",
+        json={"title": title, "body": body, "labels": labels},
+    )
+
+
+def _post_comment(number: int, body: str) -> tuple[bool, Any]:
+    _require_live_writes()
+    return gh_rest("POST", f"{_issue_path(number)}/comments", json={"body": body})
+
+
+def _add_labels(number: int, labels: list[str]) -> tuple[bool, Any]:
+    _require_live_writes()
+    return gh_rest("POST", f"{_issue_path(number)}/labels", json={"labels": labels})
+
+
+def _close(
+    number: int, reason: Literal["completed", "not_planned"]
+) -> tuple[bool, Any]:
+    _require_live_writes()
+    return gh_rest(
+        "PATCH", _issue_path(number), json={"state": "closed", "state_reason": reason}
+    )
+
+
+_LABEL_PAGE_SIZE = 100
+_LABEL_MAX_PAGES = 10
+
+
+def _repo_label_names() -> set[str] | dict[str, Any]:
+    """List the repository's labels once (case-folded, as GitHub compares them).
+
+    Returns the names, or the error dict of the first failed page.
+    """
+    names: set[str] = set()
+    for page in range(1, _LABEL_MAX_PAGES + 1):
+        ok, payload = gh_rest(
+            "GET",
+            f"{repo_path()}/labels",
+            params={"per_page": _LABEL_PAGE_SIZE, "page": page},
+        )
+        if not ok:
+            return failure_payload(payload, source="GitHub")
+        items = items_payload(payload, source="GitHub")
+        names.update(
+            item["name"].casefold()
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        )
+        if len(items) < _LABEL_PAGE_SIZE:
+            break
+    return names
 
 
 def _ensure_labels(labels: list[str]) -> tuple[bool, list[str] | dict[str, Any]]:
-    """Cache only confirmed labels and stop on failed reads or creation."""
+    """Cache only confirmed labels and stop on failed reads or creation.
+
+    One paged list call replaces a GET per label; only labels that are still
+    missing are created, one POST each (GitHub has no batch label creation).
+    """
+    missing = [label for label in dict.fromkeys(labels) if label not in _ensured_labels]
+    if not missing:
+        return True, []
+    existing = _repo_label_names()
+    if isinstance(existing, dict):
+        return False, existing
     created = []
-    for label in labels:
-        if label in _ensured_labels:
-            continue
-        ok, payload = gh_rest("GET", f"{repo_path()}/labels/{quote(label, safe='')}")
-        if not ok:
-            if payload.get("status") != "not_found":
-                return False, payload
+    for label in missing:
+        if label.casefold() not in existing:
             color, description = LABEL_DEFS.get(label, ("EDEDED", ""))
+            _require_live_writes()
+            # ast-grep-ignore: api-call-in-loop -- GitHub has no batch label creation; runs only for labels missing from the single list call
             ok, payload = gh_rest(
                 "POST",
                 f"{repo_path()}/labels",
                 json={"name": label, "color": color, "description": description},
             )
             if not ok:
-                return False, payload
+                return False, failure_payload(payload, source="GitHub")
             created.append(label)
         _ensured_labels.add(label)
     return True, created
@@ -162,7 +264,7 @@ def _issue_scope_error(issue: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _get_scoped_issue(issue_number: int) -> tuple[bool, dict[str, Any]]:
-    ok, issue = gh_rest("GET", f"{repo_path()}/issues/{int(issue_number)}")
+    ok, issue = gh_rest("GET", _issue_path(issue_number))
     if not ok:
         return False, issue
     if not isinstance(issue, dict):
@@ -199,7 +301,7 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
 def _list_issues(
     state: str, labels: list[str], per_page: int = 100
 ) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
-    per_page = max(1, min(per_page, 100))
+    per_page = clamp_int(per_page, 1, 100)
     rows = []
     page = 1
     while True:
@@ -245,23 +347,18 @@ def find_existing_ops_issue(fingerprint: str) -> dict:
     """
     if not fingerprint:
         return {"status": "not_found"}
-    cutoff = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = _ago_iso(dt.timedelta(days=30))
     for state in ("open", "closed"):
         ok, issues = _list_issues(state, [CONFIG.issue_label])
         if not ok:
-            return {"status": issues.get("status", "error"), "error": issues}
-        assert isinstance(issues, list)
-        for issue in issues:
+            return _failed(issues)
+        for issue in items_payload(issues, source="GitHub"):
             if state == "closed" and (issue.get("closed_at") or "") < cutoff:
                 continue
+            # The compact form carries the resolved provider/target scope.
             compact = _compact_issue(issue)
-            if compact["fingerprint"] != fingerprint:
-                continue
-            if not _matches_scope(parse_meta_comment(issue.get("body") or "")):
-                continue
-            return {"status": "found", **compact}
+            if compact["fingerprint"] == fingerprint and _matches_scope(compact):
+                return {"status": "found", **compact}
     return {"status": "not_found"}
 
 
@@ -305,8 +402,7 @@ def create_ops_issue(
             "status": "invalid_input",
             "message": "Issue identifiers contain sensitive data; use safe identifiers.",
         }
-    if severity not in SEVERITIES:
-        severity = "medium"
+    severity = normalize_severity(severity)
     labels = [CONFIG.issue_label, *kind_labels(kind), *severity_labels(severity)]
     meta = {
         "fingerprint": fingerprint,
@@ -321,16 +417,11 @@ def create_ops_issue(
     clean_body = redact(body)
     full_title = _title(kind, title)
 
-    existing = (
-        find_existing_ops_issue(fingerprint) if fingerprint else {"status": "not_found"}
-    )
+    existing = find_existing_ops_issue(fingerprint)
     if existing.get("status") not in ("found", "not_found") or "error" in existing:
         return existing
     if existing["status"] == "found" and existing["state"] == "open":
-        cooldown = (
-            dt.datetime.now(dt.UTC)
-            - dt.timedelta(hours=CONFIG.recurrence_cooldown_hours)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cooldown = _ago_iso(dt.timedelta(hours=CONFIG.recurrence_cooldown_hours))
         if (existing.get("updated_at") or "") >= cooldown:
             return {
                 "status": "duplicate_recent",
@@ -347,11 +438,7 @@ def create_ops_issue(
                 "url": existing["url"],
                 "comment_preview": comment[:600],
             }
-        ok, _ = gh_rest(
-            "POST",
-            f"{repo_path()}/issues/{existing['number']}/comments",
-            json={"body": comment},
-        )
+        ok, _ = _post_comment(existing["number"], comment)
         return {
             "status": "updated_existing" if ok else "error",
             "number": existing["number"],
@@ -385,19 +472,10 @@ def create_ops_issue(
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
-    ok, issue = gh_rest(
-        "POST",
-        f"{repo_path()}/issues",
-        json={"title": full_title, "body": full_body, "labels": labels},
-    )
+        return _failed(payload)
+    ok, issue = _create_issue(full_title, full_body, labels)
     if not ok:
-        return {
-            "status": issue.get("status", "error"),
-            "error": issue,
-            "title": full_title,
-        }
+        return _failed(issue, title=full_title)
     tool_context.state[_COUNTER_KEY] = created_count + 1
     return {
         "status": "created",
@@ -446,9 +524,7 @@ def _same_report_series(issue: dict[str, Any], report_kind: str) -> bool:
     previous = str(meta.get("report_kind") or "").strip().lower()
     title = str(issue.get("title") or "")
     if previous == report_kind:
-        if report_kind == "security" and _legacy_security_series(title):
-            return False
-        return True
+        return not (report_kind == "security" and _legacy_security_series(title))
     return previous == "security" and _legacy_security_series(title) == report_kind
 
 
@@ -458,8 +534,11 @@ def _open_series_reports(
     ok, issues = _list_issues("open", [CONFIG.issue_label, "ops:report"])
     if not ok:
         return False, issues
-    assert isinstance(issues, list)
-    return True, [issue for issue in issues if _same_report_series(issue, report_kind)]
+    return True, [
+        issue
+        for issue in items_payload(issues, source="GitHub")
+        if _same_report_series(issue, report_kind)
+    ]
 
 
 def _supersede_report(
@@ -468,11 +547,7 @@ def _supersede_report(
     """Close one replaced report as not planned, without the verified-close path."""
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
-        return {
-            "number": issue_number,
-            "status": issue.get("status", "error"),
-            "error": issue,
-        }
+        return _failed(issue, number=issue_number)
     if issue.get("state") == "closed":
         return {"number": issue_number, "status": "already_closed"}
     link = new_url or (f"#{new_number}" if new_number is not None else "")
@@ -483,30 +558,12 @@ def _supersede_report(
             url=link or "(no url)",
         )
     )
-    ok_comment, payload = gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/comments",
-        json={"body": comment},
-    )
-    if not ok_comment:
-        return {
-            "number": issue_number,
-            "status": payload.get("status", "error"),
-            "failed_step": "comment",
-            "error": payload,
-        }
-    ok_close, payload = gh_rest(
-        "PATCH",
-        f"{repo_path()}/issues/{int(issue_number)}",
-        json={"state": "closed", "state_reason": "not_planned"},
-    )
-    if not ok_close:
-        return {
-            "number": issue_number,
-            "status": payload.get("status", "error"),
-            "failed_step": "close",
-            "error": payload,
-        }
+    ok, payload = _post_comment(issue_number, comment)
+    if not ok:
+        return _step_failure(issue_number, "comment", payload)
+    ok, payload = _close(issue_number, "not_planned")
+    if not ok:
+        return _step_failure(issue_number, "close", payload)
     return {"number": issue_number, "status": "closed"}
 
 
@@ -544,9 +601,8 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     full_body = redact(body) + _footer(meta)
     ok, previous = _open_series_reports(kind)
     if not ok:
-        assert isinstance(previous, dict)
-        return {"status": previous.get("status", "error"), "error": previous}
-    assert isinstance(previous, list)
+        return _failed(previous)
+    previous = items_payload(previous, source="GitHub")
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
@@ -558,18 +614,14 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
-    ok, issue = gh_rest(
-        "POST",
-        f"{repo_path()}/issues",
-        json={"title": full_title, "body": full_body, "labels": labels},
-    )
+        return _failed(payload)
+    ok, issue = _create_issue(full_title, full_body, labels)
     if not ok:
-        return {"status": issue.get("status", "error"), "error": issue}
+        return _failed(issue)
     number = issue.get("number")
     url = issue.get("html_url") or ""
     superseded = [
+        # ast-grep-ignore: api-call-in-loop -- GitHub has no batch close; one call per superseded report of this series
         _supersede_report(int(old["number"]), number, url)
         for old in previous
         if old.get("number") not in (None, number)
@@ -600,7 +652,7 @@ def comment_on_issue(issue_number: int, body: str) -> dict:
     """
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
-        return {"status": issue.get("status", "error"), "error": issue}
+        return _failed(issue)
     clean = redact(body)
     if CONFIG.dry_run:
         return {
@@ -609,11 +661,7 @@ def comment_on_issue(issue_number: int, body: str) -> dict:
             "number": issue_number,
             "comment_preview": clean[:600],
         }
-    ok, payload = gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/comments",
-        json={"body": clean},
-    )
+    ok, payload = _post_comment(issue_number, clean)
     return {
         "status": "commented" if ok else payload.get("status", "error"),
         "number": issue_number,
@@ -631,7 +679,7 @@ def add_issue_labels(issue_number: int, labels: list[str]) -> dict:
     """
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
-        return {"status": issue.get("status", "error"), "error": issue}
+        return _failed(issue)
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
@@ -641,13 +689,8 @@ def add_issue_labels(issue_number: int, labels: list[str]) -> dict:
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
-    ok, payload = gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/labels",
-        json={"labels": labels},
-    )
+        return _failed(payload)
+    ok, payload = _add_labels(issue_number, labels)
     return {
         "status": "labeled" if ok else payload.get("status", "error"),
         "number": issue_number,
@@ -669,7 +712,7 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
     """
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
-        return {"status": issue.get("status", "error"), "error": issue}
+        return _failed(issue)
     already_closed = issue.get("state") == "closed"
     comment = f"{_msg('verified', when=_now_local())}\n\n{redact(reason_comment)}"
     if not CONFIG.auto_close_issues and not already_closed:
@@ -685,38 +728,13 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
         }
     ok, payload = _ensure_labels(["ops:verified"])
     if not ok:
-        assert isinstance(payload, dict)
-        return {
-            "status": payload.get("status", "error"),
-            "number": issue_number,
-            "failed_step": "ensure_labels",
-            "error": payload,
-        }
-    ok_c, payload = gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/comments",
-        json={"body": comment},
-    )
-    if not ok_c:
-        return {
-            "status": payload.get("status", "error"),
-            "number": issue_number,
-            "failed_step": "comment",
-            "error": payload,
-        }
-    ok_l, payload = gh_rest(
-        "POST",
-        f"{repo_path()}/issues/{int(issue_number)}/labels",
-        json={"labels": ["ops:verified"]},
-    )
-    if not ok_l:
-        return {
-            "status": payload.get("status", "error"),
-            "number": issue_number,
-            "failed_step": "label",
-            "completed_steps": ["comment"],
-            "error": payload,
-        }
+        return _step_failure(issue_number, "ensure_labels", payload)
+    ok, payload = _post_comment(issue_number, comment)
+    if not ok:
+        return _step_failure(issue_number, "comment", payload)
+    ok, payload = _add_labels(issue_number, ["ops:verified"])
+    if not ok:
+        return _step_failure(issue_number, "label", payload, completed=("comment",))
     if already_closed:
         return {"status": "verified_already_closed", "number": issue_number}
     if not CONFIG.auto_close_issues:
@@ -724,11 +742,7 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
             "status": "verified_not_closed",
             "number": issue_number,
         }
-    ok, payload = gh_rest(
-        "PATCH",
-        f"{repo_path()}/issues/{int(issue_number)}",
-        json={"state": "closed", "state_reason": "completed"},
-    )
+    ok, payload = _close(issue_number, "completed")
     return {
         "status": "closed" if ok else payload.get("status", "error"),
         "number": issue_number,
@@ -755,13 +769,9 @@ def list_ops_issues(state: str, kind: str) -> dict:
         state if state in ("open", "closed", "all") else "open", labels
     )
     if not ok:
-        return {"status": issues.get("status", "error"), "error": issues}
-    assert isinstance(issues, list)
-    rows = [
-        _compact_issue(i)
-        for i in issues
-        if _matches_scope(parse_meta_comment(i.get("body") or ""))
-    ]
+        return _failed(issues)
+    compact = (_compact_issue(i) for i in items_payload(issues, source="GitHub"))
+    rows = [row for row in compact if _matches_scope(row)]
     return {"status": "ok", "count": len(rows), "issues": rows}
 
 
@@ -773,7 +783,7 @@ def get_issue(issue_number: int) -> dict:
     """
     ok, issue = _get_scoped_issue(issue_number)
     if not ok:
-        return {"status": issue.get("status", "error"), "error": issue}
+        return _failed(issue)
     compact = _compact_issue(issue)
     compact["body"] = redact(issue.get("body") or "")[:3000]
     return {"status": "ok", **compact}
@@ -792,7 +802,7 @@ def search_issues(query: str) -> dict:
         params={"q": f"repo:{CONFIG.github_repo} {query}", "per_page": 20},
     )
     if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
+        return _failed(payload)
     items = [
         {
             "number": i.get("number"),
@@ -854,10 +864,8 @@ def list_recent_pull_requests(days: int) -> dict:
     Args:
         days: Look-back window in days (1-90).
     """
-    days = max(1, min(int(days), 90))
-    cutoff = (dt.datetime.now(dt.UTC) - dt.timedelta(days=days)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    days = clamp_int(days, 1, 90)
+    cutoff = _ago_iso(dt.timedelta(days=days))
     query = (
         "query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){"
         " pullRequests(first:50, orderBy:{field:UPDATED_AT,direction:DESC}, states:[OPEN,MERGED,CLOSED]){"
@@ -865,7 +873,7 @@ def list_recent_pull_requests(days: int) -> dict:
     )
     ok, data = gh_graphql(query, {"owner": CONFIG.repo_owner, "name": CONFIG.repo_name})
     if not ok:
-        return {"status": data.get("status", "error"), "error": data}
+        return _failed(data)
     nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get(
         "nodes"
     ) or []
@@ -903,7 +911,7 @@ def get_pull_request(pr_number: int) -> dict:
         },
     )
     if not ok:
-        return {"status": data.get("status", "error"), "error": data}
+        return _failed(data)
     pr = (data.get("repository") or {}).get("pullRequest")
     if not pr:
         return {"status": "not_found", "number": pr_number}
@@ -954,7 +962,7 @@ def get_issue_linked_prs(issue_number: int) -> dict:
         },
     )
     if not ok:
-        return {"status": data.get("status", "error"), "error": data}
+        return _failed(data)
     issue = (data.get("repository") or {}).get("issue")
     if not issue:
         return {"status": "not_found", "number": issue_number}
@@ -1002,14 +1010,14 @@ def get_recent_workflow_runs(branch: str, limit: int) -> dict:
         branch: Branch name, e.g. ``main``.
         limit: Max runs (1-30).
     """
-    limit = max(1, min(int(limit), 30))
+    limit = clamp_int(limit, 1, 30)
     ok, payload = gh_rest(
         "GET",
         f"{repo_path()}/actions/runs",
         params={"branch": branch, "per_page": limit},
     )
     if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
+        return _failed(payload)
     runs = [
         {
             "name": r.get("name") or r.get("display_title"),

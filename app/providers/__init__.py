@@ -47,7 +47,7 @@ def register_provider(key: str, factory: Callable[..., CloudProvider]) -> None:
 def _entry_point_providers() -> dict[str, str]:
     try:
         return {ep.name: ep.value for ep in entry_points(group=ENTRY_POINT_GROUP)}
-    except Exception:  # pragma: no cover - broken metadata should not break startup
+    except Exception:  # noqa: BLE001 -- broken entry-point metadata must not break startup  # pragma: no cover
         return {}
 
 

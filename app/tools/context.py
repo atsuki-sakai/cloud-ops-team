@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 from app.config import CONFIG
+from app.core.timeutil import iso_utc, local_stamp, utcnow
 from app.providers import get_provider
 
 # Always-relevant building blocks used to filter threat intelligence.
@@ -40,12 +39,12 @@ def get_run_context() -> dict:
     whether writes to GitHub are real or simulated, and to know which checks
     this cloud supports.
     """
-    now_utc = dt.datetime.now(dt.UTC)
+    now_utc = utcnow()
     now_local = now_utc.astimezone(CONFIG.tz)
     iso_year, iso_week, _ = now_local.isocalendar()
     return {
-        "now_local": now_local.strftime("%Y-%m-%d %H:%M %Z"),
-        "now_utc": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "now_local": local_stamp(now_utc, CONFIG.tz),
+        "now_utc": iso_utc(now_utc),
         "iso_week": f"{iso_year}-W{iso_week:02d}",
         "month": now_local.strftime("%Y-%m"),
         **get_provider().describe(),

@@ -17,7 +17,8 @@ make doctor                   # Gemini・GitHub・クラウドへのアクセス
 
 ```bash
 make test                     # uv run pytest tests/unit。数秒で終わり、ネットワークも使わない
-make lint                     # ruff、ruff format、codespell、ty
+make lint                     # ruff、ruff format、codespell、ty、ast-grep
+make check-py                 # 変更した .py だけを編集フックと同じ検査にかける
 ```
 
 Gemini とクラウドにアクセスできる場合は、次も実行できます。

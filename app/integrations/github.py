@@ -10,46 +10,46 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import threading
 from typing import Any
 
 import httpx
 
 from app.config import CONFIG
+from app.core.cache import TtlValue
+from app.core.errors import error_message, tool_error
 
 API = "https://api.github.com"
-_lock = threading.Lock()
-_token_cache: str | None = None
+_token_cache: TtlValue[str] = TtlValue()
 
 
 class GitHubAuthError(RuntimeError):
     pass
 
 
+def _load_token() -> str:
+    token = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
+    if not token and (gh := shutil.which("gh")):
+        try:
+            token = subprocess.run(  # noqa: S603 -- fixed argv, resolved gh binary
+                [gh, "auth", "token"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            token = ""
+    if not token:
+        raise GitHubAuthError(
+            "GitHub token not found. Set GITHUB_TOKEN (recommended: from Secret Manager) "
+            "or log in with `gh auth login` for local development."
+        )
+    return token
+
+
 def github_token() -> str:
-    global _token_cache
-    with _lock:
-        if _token_cache:
-            return _token_cache
-        token = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
-        if not token and shutil.which("gh"):
-            try:
-                token = subprocess.run(
-                    ["gh", "auth", "token"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                ).stdout.strip()
-            except (OSError, subprocess.SubprocessError):
-                token = ""
-        if not token:
-            raise GitHubAuthError(
-                "GitHub token not found. Set GITHUB_TOKEN (recommended: from Secret Manager) "
-                "or log in with `gh auth login` for local development."
-            )
-        _token_cache = token
-        return token
+    """Resolve the token once per process; a failed lookup is retried next call."""
+    return _token_cache.get_or_set(_load_token)
 
 
 def _headers(accept: str | None = None) -> dict[str, str]:
@@ -102,9 +102,9 @@ def gh_rest(
             timeout=timeout,
         )
     except GitHubAuthError as exc:
-        return False, {"status": "auth_error", "message": str(exc)}
+        return False, {"status": "auth_error", "message": error_message(exc)}
     except httpx.HTTPError as exc:
-        return False, {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+        return False, tool_error(exc)
     if resp.status_code >= 400:
         return False, _error(resp)
     if accept and "application/vnd.github.raw" in accept:

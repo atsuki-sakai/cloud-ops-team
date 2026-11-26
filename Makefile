@@ -6,7 +6,7 @@ JOB ?= error_watch
 ARGS ?=
 ENVRUN := uv run --quiet python scripts/envrun.py
 
-.PHONY: help install setup doctor jobs run chat test lint eval \
+.PHONY: help install setup doctor jobs run chat test lint check-py eval \
         gcp-bootstrap gcp-build-bootstrap gcp-grant gcp-deploy gcp-promote-existing gcp-schedule gcp-logs
 
 help: ## Show this help
@@ -33,8 +33,13 @@ chat: ## Talk to the team in the browser (ADK playground)
 test: ## Unit tests (offline)
 	uv run pytest tests/unit -q
 
-lint: ## Lint, format check, spell check, type check
+lint: ## Lint, format check, spell check, type check, ast-grep rules
 	agents-cli lint
+	uv run ast-grep scan
+	uv run ast-grep test --skip-snapshot-tests
+
+check-py: ## Run the edit-hook checks on FILES=... (default: changed .py files)
+	.venv/bin/python -I scripts/quality/hook.py check $(FILES)
 
 eval: ## Behaviour evaluation with an LLM judge (calls the model)
 	agents-cli eval run

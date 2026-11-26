@@ -14,7 +14,8 @@
 
 import contextlib
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
@@ -33,7 +34,7 @@ allow_origins = (
 )
 otel_to_cloud = True
 
-AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AGENT_DIR = str(Path(__file__).absolute().parents[1])
 
 # Authentication of the scheduler trigger (/apps/app/trigger/pubsub).
 # OPS_TRIGGER_AUDIENCE set: ADK verifies the Google-signed OIDC token (audience = the
@@ -51,20 +52,19 @@ TRIGGER_SERVICE_ACCOUNTS = [
 
 async def _platform_authenticated(_request: object) -> None:
     """Trigger auth delegated to Cloud Run IAM (or local development)."""
-    return None
+    return
 
 
-if TRIGGER_AUDIENCE:
-    trigger_auth: dict = {
-        "trigger_oidc_audience": TRIGGER_AUDIENCE,
-        "trigger_oidc_service_accounts": TRIGGER_SERVICE_ACCOUNTS or None,
-    }
-else:
-    trigger_auth = {"trigger_auth_verifier": _platform_authenticated}
+# Exactly one mechanism is active: ADK OIDC verification or the platform.
+trigger_oidc_audience = TRIGGER_AUDIENCE or None
+trigger_oidc_service_accounts = (
+    (TRIGGER_SERVICE_ACCOUNTS or None) if TRIGGER_AUDIENCE else None
+)
+trigger_auth_verifier = None if TRIGGER_AUDIENCE else _platform_authenticated
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.agent import app as adk_app
     from app.agent import root_agent
 
@@ -91,7 +91,9 @@ app: FastAPI = get_fast_api_app(
     web=True,
     # Cloud Scheduler (HTTP + OIDC, Pub/Sub-shaped body) -> POST /apps/app/trigger/pubsub
     trigger_sources=["pubsub"],
-    **trigger_auth,
+    trigger_oidc_audience=trigger_oidc_audience,
+    trigger_oidc_service_accounts=trigger_oidc_service_accounts,
+    trigger_auth_verifier=trigger_auth_verifier,
     artifact_service_uri=services.ARTIFACT_SERVICE_URI,
     allow_origins=allow_origins,
     session_service_uri=services.SESSION_SERVICE_URI,
@@ -107,4 +109,5 @@ app.add_middleware(ExecutionIdentityMiddleware, enabled=bool(CONFIG.execution_db
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Local development only; the container binds via the Dockerfile CMD.
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=8000)

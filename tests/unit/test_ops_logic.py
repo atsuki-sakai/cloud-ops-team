@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.config import load_config
 from app.core.fingerprint import (
     build_meta_comment,
@@ -181,3 +183,37 @@ def test_scheduler_log_message_extraction() -> None:
     }
     assert _service_of(entry) == "reconcile-reservations"
     assert _message_of(entry).startswith("job=reconcile-reservations status=INTERNAL")
+
+
+def test_ttl_value_loads_once_and_retries_after_a_failed_load():
+    from app.core.cache import TtlValue
+
+    cache: TtlValue[str] = TtlValue()
+    loads = []
+
+    def failing() -> str:
+        loads.append("fail")
+        raise RuntimeError("no token")
+
+    with pytest.raises(RuntimeError):
+        cache.get_or_set(failing)
+    assert cache.get() is None
+    assert cache.get_or_set(lambda: "token") == "token"
+    assert cache.get_or_set(failing) == "token"
+    assert loads == ["fail"]
+
+
+def test_localized_falls_back_to_english_and_formats_only_when_asked():
+    from app.core.i18n import localized
+
+    table = {"en": {"k": "{n} items", "raw": "{literal}"}, "ja": {"k": "{n} 件"}}
+    assert localized(table, "ja", "k", n=3) == "3 件"
+    assert localized(table, "fr", "k", n=3) == "3 items"
+    assert localized(table, "en", "raw") == "{literal}"
+
+
+def test_normalize_severity_keeps_known_values_only():
+    from app.core.findings import normalize_severity
+
+    assert normalize_severity("high") == "high"
+    assert normalize_severity("urgent") == "medium"

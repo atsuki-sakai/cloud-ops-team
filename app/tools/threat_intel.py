@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import datetime as dt
-import time
 from typing import Any
 
 import httpx
 
 from app.config import CONFIG
+from app.core.cache import TtlValue
+from app.core.errors import error_message, tool_error
+from app.core.payloads import clamp_int
 from app.core.redact import redact
 from app.core.timeutil import utcnow
 from app.tools.context import effective_stack_keywords
@@ -21,7 +23,7 @@ from app.tools.context import effective_stack_keywords
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 EOL_URL = "https://endoflife.date/api/{product}.json"
 
-_kev_cache: tuple[float, dict[str, Any]] | None = None
+_kev_cache: TtlValue[dict[str, Any]] = TtlValue(ttl_s=3600)
 
 
 def fetch_cisa_kev(days: int) -> dict:
@@ -32,18 +34,17 @@ def fetch_cisa_kev(days: int) -> dict:
     Args:
         days: Look-back window in days (1-365).
     """
-    global _kev_cache
-    days = max(1, min(int(days), 365))
-    now = time.time()
-    if _kev_cache and now - _kev_cache[0] < 3600:
-        data = _kev_cache[1]
+    days = clamp_int(days, 1, 365)
+    cached = _kev_cache.get()
+    if cached is not None:
+        data = cached
     else:
         try:
             resp = httpx.get(KEV_URL, timeout=60, follow_redirects=True)
             resp.raise_for_status()
             data = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            return {"status": "error", "message": f"KEV fetch failed: {exc}"}
+            return tool_error(exc, message=f"KEV fetch failed: {error_message(exc)}")
         if (
             not isinstance(data, dict)
             or not isinstance(data.get("vulnerabilities"), list)
@@ -56,7 +57,7 @@ def fetch_cisa_kev(days: int) -> dict:
                 "status": "error",
                 "message": "KEV response must contain a list of vulnerability objects with dateAdded strings",
             }
-        _kev_cache = (now, data)
+        _kev_cache.set(data)
     cutoff = (utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%d")
     keywords = [k.lower() for k in effective_stack_keywords()]
 
@@ -121,7 +122,9 @@ def check_eol_status(product: str, version: str) -> dict:
             EOL_URL.format(product=slug), timeout=30, follow_redirects=True
         )
     except httpx.HTTPError as exc:
-        return {"status": "error", "message": f"endoflife.date fetch failed: {exc}"}
+        return tool_error(
+            exc, message=f"endoflife.date fetch failed: {error_message(exc)}"
+        )
     if resp.status_code == 404:
         return {
             "status": "not_found",
@@ -133,10 +136,9 @@ def check_eol_status(product: str, version: str) -> dict:
     try:
         cycles = resp.json()
     except ValueError as exc:
-        return {
-            "status": "error",
-            "message": f"endoflife.date JSON decode failed: {exc}",
-        }
+        return tool_error(
+            exc, message=f"endoflife.date JSON decode failed: {error_message(exc)}"
+        )
     if not isinstance(cycles, list) or any(
         not isinstance(c, dict)
         or not isinstance(c.get("cycle"), (str, int))
@@ -220,7 +222,7 @@ def web_threat_research(focus: str, days: int) -> dict:
     from google import genai
     from google.genai import types as genai_types
 
-    days = max(7, min(int(days), 90))
+    days = clamp_int(days, 7, 90)
     today = utcnow().date()
     since = today - dt.timedelta(days=days)
     prompt = (
@@ -245,24 +247,22 @@ def web_threat_research(focus: str, days: int) -> dict:
                 http_options=genai_types.HttpOptions(timeout=_RESEARCH_TIMEOUT_MS),
             ),
         )
-    except Exception as exc:
-        return {
-            "status": "error",
-            "message": f"{type(exc).__name__}: {str(exc)[:300]}",
-            "hint": "Web 調査はスキップし、CISA KEV の結果のみで脅威動向をまとめてください。",
-        }
+    except Exception as exc:  # noqa: BLE001 -- tool boundary: a model/search failure must not crash the run
+        return tool_error(
+            exc,
+            hint="Web 調査はスキップし、CISA KEV の結果のみで脅威動向をまとめてください。",
+        )
     text = response.text or ""
     sources: list[dict[str, str]] = []
     queries: list[str] = []
-    try:
-        meta = response.candidates[0].grounding_metadata
+    candidates = response.candidates or []
+    meta = candidates[0].grounding_metadata if candidates else None
+    if meta is not None:
         for chunk in meta.grounding_chunks or []:
             web = getattr(chunk, "web", None)
             if web and web.uri:
                 sources.append({"title": web.title or "", "uri": web.uri})
         queries = list(meta.web_search_queries or [])
-    except (AttributeError, IndexError, TypeError):
-        pass
     return {
         "status": "ok",
         "period": {"from": since.isoformat(), "to": today.isoformat()},

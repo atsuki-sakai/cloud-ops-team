@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.config import CONFIG
+from app.core.i18n import localized
 
 SERVICE_PREFIX = "service_check:"
 NEEDS_ANALYSIS = frozenset(
@@ -56,7 +57,7 @@ _LABELS = {
 
 
 def _label(key: str) -> str:
-    return _LABELS.get(CONFIG.report_language, _LABELS["en"])[key]
+    return localized(_LABELS, CONFIG.report_language, key)
 
 
 def service_incidents(result: Any) -> Any:
@@ -96,7 +97,7 @@ def service_check_decision(
             "reason": "collection_failed",
             "transitions": [],
         }
-    if run.get("status") in ("not_configured",):
+    if run.get("status") == "not_configured":
         return {
             "analysis_required": False,
             "reason": "not_configured",
@@ -238,7 +239,7 @@ def _deploy_lines(evidence: Mapping[str, Any]) -> list[str]:
         before, after = metrics.get("before") or {}, metrics.get("after") or {}
         samples = (
             f"{before.get('requests', '-')}/{after.get('requests', '-')}"
-            if metrics.get("verdict") not in ("unavailable",)
+            if metrics.get("verdict") != "unavailable"
             else "unavailable"
         )
         if not row.get("metrics_evaluated") and metrics.get("verdict") != "unavailable":

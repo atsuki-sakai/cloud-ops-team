@@ -17,7 +17,8 @@ Unit tests and lint need no cloud credentials:
 
 ```bash
 make test                     # uv run pytest tests/unit — fast, no network
-make lint                     # ruff, ruff format, codespell, ty
+make lint                     # ruff, ruff format, codespell, ty, ast-grep
+make check-py                 # run the edit-hook checks on changed .py files
 ```
 
 With Gemini and cloud access you can also run:

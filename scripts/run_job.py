@@ -20,11 +20,14 @@ import argparse
 import asyncio
 import json
 import time
+from typing import Any
 
 from google.adk.apps import App
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from app.agent import root_agent
@@ -49,28 +52,42 @@ class DevTracePlugin(BasePlugin):
     def _stamp(self) -> str:
         return f"[{time.time() - self.t0:6.1f}s]"
 
-    async def before_tool_callback(self, **kw):  # type: ignore[override]
-        tool, args, ctx = kw.get("tool"), kw.get("tool_args"), kw.get("tool_context")
-        agent = getattr(ctx, "agent_name", "?")
+    async def before_tool_callback(
+        self, *, tool: BaseTool, tool_args: dict[str, Any], tool_context: ToolContext
+    ) -> dict[str, Any] | None:
+        agent = getattr(tool_context, "agent_name", "?")
         print(
-            f"{self._stamp()} {agent} → {getattr(tool, 'name', tool)}({_short(args, 200)})",
+            f"{self._stamp()} {agent} → {tool.name}({_short(tool_args, 200)})",
             flush=True,
         )
         return None
 
-    async def after_tool_callback(self, **kw):  # type: ignore[override]
-        tool, ctx, result = kw.get("tool"), kw.get("tool_context"), kw.get("result")
-        agent = getattr(ctx, "agent_name", "?")
+    async def after_tool_callback(
+        self,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        result: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        agent = getattr(tool_context, "agent_name", "?")
         status = result.get("status") if isinstance(result, dict) else None
         print(
-            f"{self._stamp()} {agent} ← {getattr(tool, 'name', tool)} status={status} {_short(result, 220)}",
+            f"{self._stamp()} {agent} ← {tool.name} status={status} {_short(result, 220)}",
             flush=True,
         )
         return None
 
-    async def on_tool_error_callback(self, **kw):  # type: ignore[override]
+    async def on_tool_error_callback(
+        self,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        error: Exception,
+    ) -> dict[str, Any] | None:
         print(
-            f"{self._stamp()} !! tool error {getattr(kw.get('tool'), 'name', '?')}: {kw.get('error')}",
+            f"{self._stamp()} !! tool error {tool.name}: {error}",
             flush=True,
         )
         return None
@@ -131,9 +148,11 @@ async def main() -> None:
     ):
         if not event.content or not event.content.parts:
             continue
-        for part in event.content.parts:
-            if part.text and event.author == root_agent.name and not part.thought:
-                final_text.append(part.text)
+        final_text.extend(
+            part.text
+            for part in event.content.parts
+            if part.text and event.author == root_agent.name and not part.thought
+        )
     print("\n===== FINAL REPORT =====\n", flush=True)
     print("".join(final_text).strip())
     print(f"\n(elapsed {time.time() - t0:.0f}s)")

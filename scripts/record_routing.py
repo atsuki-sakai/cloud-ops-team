@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any, get_type_hints
 from urllib.parse import urlsplit
 
-DEFAULT_SUITE = Path(__file__).resolve().parents[1] / "tests/eval/routing/cases.json"
+RECORDER = Path(__file__).resolve()
+DEFAULT_SUITE = RECORDER.parents[1] / "tests/eval/routing/cases.json"
 DEFAULT_FIXTURE = DEFAULT_SUITE.with_name("frozen-tools-v1.json")
 KNOWN_ROUTES = {
     "error_watch",
@@ -195,7 +196,7 @@ class ModelOnlyEgress:
         socket.socket.connect = connect
         socket.socket.connect_ex = connect_ex
         import httpx
-        import requests
+        import requests  # noqa: TID251 -- egress guard patches requests in case a dependency uses it
 
         sync_send, async_send = httpx.Client.send, httpx.AsyncClient.send
         request = requests.Session.request
@@ -407,7 +408,9 @@ def completion_assertions(
     if (
         evidence_read
         and len(report.strip()) >= 80
-        and re.search(r"fixture|対象|取得|確認|所見|レポート|報告", report, re.I)
+        and re.search(
+            r"fixture|対象|取得|確認|所見|レポート|報告", report, re.IGNORECASE
+        )
     ):
         facts.append("report_ready")
     rejected = error_code == "invalid_job_request" or (
@@ -417,7 +420,7 @@ def completion_assertions(
             re.search(
                 r"未登録|未対応|無効|不正な(?:引数|型|ジョブ)|拒否|not registered|unsupported|invalid.*(?:job|parameter)",
                 final,
-                re.I,
+                re.IGNORECASE,
             )
         )
     )
@@ -427,7 +430,7 @@ def completion_assertions(
         re.search(
             r"できません|できない|未対応|未実装|対象外|ありません|(?:提供|用意)(?:していません|されて(?:いません|おりません))|cannot|not supported|not available",
             final,
-            re.I,
+            re.IGNORECASE,
         )
     )
     if boundary and not any(
@@ -442,21 +445,23 @@ def completion_assertions(
     if partial and re.search(
         r"部分|不完全|未取得|取得でき|権限|未確認|partial|incomplete|permission|unavailable",
         report,
-        re.I,
+        re.IGNORECASE,
     ):
         facts.append("coverage_incomplete_reported")
     if case.get("fixture") == "access-permission-denied-v1" and re.search(
-        r"権限|permission|403|アクセス拒否", report, re.I
+        r"権限|permission|403|アクセス拒否", report, re.IGNORECASE
     ):
         facts.append("permission_gap_reported")
     if re.search(
         r"不正アクセス(?:は|が)存在しないと証明しました|安全性を保証します|no attacks occurred|fully secure",
         report,
-        re.I,
+        re.IGNORECASE,
     ):
         facts.append("no_attack_proven")
     if re.search(
-        r"バックアップを作成しました|backup (?:was )?created successfully", report, re.I
+        r"バックアップを作成しました|backup (?:was )?created successfully",
+        report,
+        re.IGNORECASE,
     ):
         facts.append("backup_created")
     status = (
@@ -616,7 +621,8 @@ async def _sample(args) -> dict[str, Any]:
         import google.auth
         from google.oauth2.credentials import Credentials
 
-        token_result = subprocess.run(
+        token_result = await asyncio.to_thread(
+            subprocess.run,
             ["gcloud", "auth", "print-access-token", "--quiet"],
             capture_output=True,
             text=True,
@@ -639,11 +645,14 @@ async def _sample(args) -> dict[str, Any]:
     egress.install()
     # Load configuration after the explicit fixture overrides, before app.agent.
     config = importlib.import_module("app.config").CONFIG
-    assert (
+    if not (
         config.dry_run
         and config.target == fixture["target"]
         and config.github_repo == fixture["repository"]
-    )
+    ):
+        raise RuntimeError(
+            "The recorder requires dry-run and the fixture target/repository"
+        )
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         if args.mode == "runtime_stubbed":
             # Scripted samples never call Vertex. ADC discovery reaches the
@@ -856,7 +865,7 @@ async def _sample(args) -> dict[str, Any]:
             if tool.name in KNOWN_ROUTES:
                 record["route"] = tool.name
             checkpoint()
-            return None
+            return
 
         async def after_tool_callback(self, *, tool, tool_args, tool_context, result):
             item = recorder["pending"].pop(tool_context.function_call_id, None)
@@ -877,7 +886,7 @@ async def _sample(args) -> dict[str, Any]:
             ):
                 item["facts"] = ["evidence_checked"]
             checkpoint()
-            return None
+            return
 
     started = time.monotonic()
     deadline_snapshot = DeadlineTaskSnapshot(args.timeout, egress.origin)
@@ -979,7 +988,9 @@ async def _record(args) -> int:
         if not os.environ.get(key) and local.get(key):
             os.environ[key] = str(local[key])
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-    recorder_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    recorder_sha256 = hashlib.sha256(
+        await asyncio.to_thread(RECORDER.read_bytes)
+    ).hexdigest()
     suite = json.loads(args.suite.read_text())
     fixture_bytes = args.fixture.read_bytes()
     fixture = json.loads(fixture_bytes)
@@ -1002,7 +1013,7 @@ async def _record(args) -> int:
             detail = detail_dir / f"{case['case_id']}-{sample}.json"
             command = [
                 sys.executable,
-                str(Path(__file__).resolve()),
+                str(RECORDER),
                 "--checkout",
                 str(args.checkout.resolve()),
                 "--revision",

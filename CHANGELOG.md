@@ -8,6 +8,7 @@ English: [CHANGELOG.en.md](CHANGELOG.en.md)
 ## [Unreleased]
 
 ### 追加
+- Python の **コード品質ゲート** を追加しました。Claude Code が編集した直後に、そのファイルだけを ruff・ruff format・ty・ast-grep で検査し、エラーなら理由と直し方を返して直させます（応答を終える前にも変更ファイル全体を再検査）。ルールは `pyproject.toml` と `sgconfig.yml` に一本化し、CI と `make lint` も同じルールで検査します。ruff に型注釈・セキュリティ・例外処理・性能などのルール群を追加し、`app/` の ty を全ルールでエラーにしました。独自ルールとして、例外文字列の秘匿化漏れ、境界のエラー辞書の手組み、理由のない抑制、`app/tools/` のクラウド依存、ループ内の外部 API 呼び出し（警告）を追加しました。API の呼び出し回数を数えるテスト（`api_calls` fixture）も追加しました。Issue ラベルの確認は、ラベルごとの GET を一覧の取得1回に置き換えました。イメージごとの脆弱性一覧は、同時に4件までの並列取得にしました。リポジトリの安全設定の確認では、Dockerfile とバージョン指定ファイルを、ファイルごとの GET から GraphQL 1回の取得に変えました。`make doctor` は、gcloud が無いか応答しないときに落ちず、`unknown` と表示します。境界のエラーは `app/core/errors.py` の `tool_error` に統一し、例外メッセージは秘匿化して 300 文字に切ります。詳細: [コード品質ゲート](docs/code-quality.md)
 - 登録シナリオ（HTTP / ブラウザ）を公開 URL で再生する **稼働確認**（`service_check`）と、実際に配信中のリビジョン・トラフィック配分・新旧リビジョン別の指標で判定する **デプロイ後検証**（`deploy_verification`、別名 `post_deploy_check`）を追加しました（[#10](https://github.com/atsuki-sakai/cloud-ops-team/issues/10)）。
   期待結果による判定、再試行による失敗の確定と flaky の初回失敗の保持、サイト側・到達性・検査基盤の失敗の区別、外部疎通による検査側障害の判別、保守時間、座標クリックの対象確認、ページ内の 5xx 検知、標本不足の未評価化をコードで行います。
   正常時はモデルを呼ばずに固定レポートを返し、異常・復旧時だけ AI が調査します。AI の調査が失敗しても判定表は失われません。詳細: [稼働確認](docs/service-checks.md)

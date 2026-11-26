@@ -1,4 +1,3 @@
-# ruff: noqa
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +21,13 @@ language retains a separate, scoped conversation leader.
 """
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import aclosing
 
 from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.agents.invocation_context import InvocationContext
 from google.adk.apps import App
 from google.adk.events import Event
 from google.adk.models import Gemini
@@ -37,10 +36,17 @@ from pydantic import Field
 
 from app import prompts
 from app.config import CONFIG
+from app.core.audit import log_event
 from app.core.check_decisions import analysis_failed_report
 from app.model import OpsGemini
 from app.providers import get_provider
-from app.routing import ScheduledJobAdapter, ScheduledRouter, conversation_tool_guard
+from app.routing import (
+    ScheduledJobAdapter,
+    ScheduledRouter,
+    conversation_tool_guard,
+    event_text,
+    text_event,
+)
 from app.specialists import SPECIALISTS
 from app.specialists.base import Job, Specialist
 from app.tool_scope import build_tool_scope
@@ -83,12 +89,8 @@ def build_specialist(specialist: Specialist, *, phase: str = "legacy") -> Agent:
     )
 
 
-def _report_event(ctx, author: str, text: str) -> Event:
-    return Event(
-        invocation_id=ctx.invocation_id,
-        author=author,
-        content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
-    )
+def _report_event(ctx: InvocationContext, author: str, text: str) -> Event:
+    return text_event(ctx.invocation_id, author, text)
 
 
 class FixedReportAgent(BaseAgent):
@@ -96,7 +98,9 @@ class FixedReportAgent(BaseAgent):
 
     report: str
 
-    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(
+        self, ctx: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
         yield _report_event(ctx, self.name, self.report)
 
 
@@ -112,7 +116,9 @@ class VerdictGuardAgent(BaseAgent):
     verdict_summary: str
     failure_report: str
 
-    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(
+        self, ctx: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
         final = ""
         try:
             async with aclosing(self.analysis.run_async(ctx)) as events:
@@ -120,25 +126,18 @@ class VerdictGuardAgent(BaseAgent):
                     if event.error_code:
                         raise RuntimeError("analysis returned an error event")
                     if event.is_final_response() and event.content:
-                        final = "".join(
-                            part.text
-                            for part in event.content.parts or []
-                            if part.text and not part.thought
-                        )
+                        final = event_text(event)
                         if final:
                             # The combined report below replaces this final text.
                             continue
                     yield event
-        except Exception as exc:
-            logger.info(
-                json.dumps(
-                    {
-                        "event": "ops_analysis_failed",
-                        "invocation_id": ctx.invocation_id,
-                        "agent": self.name,
-                        "error_type": type(exc).__name__,
-                    }
-                )
+        except Exception as exc:  # noqa: BLE001 -- analysis boundary: any failure must still yield the code-verdict report
+            log_event(
+                logger,
+                "ops_analysis_failed",
+                invocation_id=ctx.invocation_id,
+                agent=self.name,
+                error_type=type(exc).__name__,
             )
             yield _report_event(ctx, self.name, self.failure_report)
             return

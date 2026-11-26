@@ -1,0 +1,8 @@
+id: tools-cloud-neutral
+valid:
+  - from app.providers import get_provider
+  - from app.core.redact import redact
+invalid:
+  - from google.cloud import logging
+  - import boto3
+  - from app.providers.gcp.client import gcp_get

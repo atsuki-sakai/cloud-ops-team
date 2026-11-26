@@ -18,6 +18,8 @@ from typing import Any
 
 from app.config import CONFIG
 from app.core.deploy_verification import evaluate_rollout
+from app.core.payloads import clamp_int
+from app.core.redact import redact
 from app.core.service_checks import (
     DEPLOY_DEFAULTS,
     RUN_LIMITATIONS,
@@ -49,7 +51,7 @@ def _load() -> tuple[Any, dict | None]:
         return None, {
             "status": "invalid_input",
             "complete": False,
-            "message": f"The service check file is invalid: {exc}",
+            "message": f"The service check file is invalid: {redact(str(exc))}",
         }
     if suite is None:
         return None, {
@@ -101,7 +103,7 @@ def run_service_checks(attempts: int) -> dict:
     Args:
         attempts: Maximum attempts per scenario (1-5).
     """
-    attempts = max(1, min(int(attempts), 5))
+    attempts = clamp_int(attempts, 1, 5)
     suite, error = _load()
     if error:
         return {**error, "trigger": "service_check"}
@@ -152,7 +154,7 @@ def verify_recent_deployments(minutes: int) -> dict:
     Args:
         minutes: Look-back window for deployments in minutes (5-1440).
     """
-    minutes = max(5, min(int(minutes), 1440))
+    minutes = clamp_int(minutes, 5, 1440)
     suite, error = _load()
     if error and error["status"] != "not_configured":
         return {**error, "trigger": "deploy_verification"}

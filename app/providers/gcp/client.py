@@ -14,7 +14,6 @@ import os
 import shutil
 import subprocess
 import threading
-import time
 from typing import Any
 
 import google.auth
@@ -22,11 +21,19 @@ import httpx
 from google.auth.transport.requests import Request
 
 from app.config import CONFIG
+from app.core.cache import TtlValue
+from app.core.errors import tool_error
+from app.core.payloads import (
+    failure_payload,
+    failure_result,
+    items_payload,
+    object_payload,
+)
 
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 _lock = threading.Lock()
 _creds = None
-_gcloud_token: tuple[float, str] | None = None
+_gcloud_token: TtlValue[str] = TtlValue(ttl_s=45 * 60)
 
 # OPS_GCP_AUTH=adc (default): Application Default Credentials — the runtime
 # service account when deployed, `gcloud auth application-default login` locally.
@@ -34,21 +41,35 @@ _gcloud_token: tuple[float, str] | None = None
 # `gcloud` account's token (useful when ADC belongs to a different account).
 _AUTH_MODE = (os.getenv("OPS_GCP_AUTH") or "adc").strip().lower()
 
+# ``(ok, payload)`` narrowing helpers are re-exported for provider modules.
+__all__ = [
+    "failure_payload",
+    "failure_result",
+    "gcp_get",
+    "gcp_list",
+    "gcp_post",
+    "gcp_request",
+    "items_payload",
+    "location_path",
+    "object_payload",
+    "project_path",
+]
+
 
 def _gcloud_access_token() -> str:
-    global _gcloud_token
-    if _gcloud_token and time.time() - _gcloud_token[0] < 45 * 60:
-        return _gcloud_token[1]
-    if not shutil.which("gcloud"):
+    if cached := _gcloud_token.get():
+        return cached
+    gcloud = shutil.which("gcloud")
+    if not gcloud:
         raise RuntimeError("OPS_GCP_AUTH=gcloud but the gcloud CLI is not installed")
-    token = subprocess.run(
-        ["gcloud", "auth", "print-access-token"],
+    token = subprocess.run(  # noqa: S603 -- fixed argv, resolved gcloud binary
+        [gcloud, "auth", "print-access-token"],
         capture_output=True,
         text=True,
         timeout=30,
         check=True,
     ).stdout.strip()
-    _gcloud_token = (time.time(), token)
+    _gcloud_token.set(token)
     return token
 
 
@@ -116,12 +137,8 @@ def gcp_request(
         resp = httpx.request(
             method, url, params=params, json=json, headers=headers, timeout=timeout
         )
-    except Exception as exc:  # network / auth failures
-        return False, {
-            "status": "error",
-            "message": f"{type(exc).__name__}: {exc}",
-            "url": url,
-        }
+    except Exception as exc:  # noqa: BLE001 -- transport boundary: network / auth failures become an error result
+        return False, tool_error(exc, url=url)
     if resp.status_code >= 400:
         return False, _normalize_error(resp)
     if not resp.content:
@@ -209,3 +226,7 @@ def gcp_list(
 
 def project_path() -> str:
     return f"projects/{CONFIG.target}"
+
+
+def location_path() -> str:
+    return f"{project_path()}/locations/{CONFIG.region}"

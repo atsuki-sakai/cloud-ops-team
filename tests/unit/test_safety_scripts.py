@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 )
 def test_safety_flags_accept_only_explicit_booleans(monkeypatch, raw, expected):
     monkeypatch.setenv("OPS_DRY_RUN", raw)
-    assert _env_bool("OPS_DRY_RUN", True) is expected
+    assert _env_bool("OPS_DRY_RUN", default=True) is expected
 
 
 @pytest.mark.parametrize(
@@ -47,15 +47,15 @@ def test_safety_flags_accept_only_explicit_booleans(monkeypatch, raw, expected):
 def test_invalid_safety_flags_stop_configuration(monkeypatch, raw):
     monkeypatch.setenv("OPS_DRY_RUN", raw)
     with pytest.raises(ValueError, match="OPS_DRY_RUN must be"):
-        _env_bool("OPS_DRY_RUN", True)
+        _env_bool("OPS_DRY_RUN", default=True)
 
 
 @pytest.mark.parametrize("default", [True, False])
 def test_unset_or_empty_safety_flags_keep_defaults(monkeypatch, default):
     monkeypatch.delenv("OPS_DRY_RUN", raising=False)
-    assert _env_bool("OPS_DRY_RUN", default) is default
+    assert _env_bool("OPS_DRY_RUN", default=default) is default
     monkeypatch.setenv("OPS_DRY_RUN", "")
-    assert _env_bool("OPS_DRY_RUN", default) is default
+    assert _env_bool("OPS_DRY_RUN", default=default) is default
 
 
 def test_setup_backup_preserves_content_but_is_private_and_ignored(

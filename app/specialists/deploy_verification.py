@@ -61,7 +61,6 @@ SPECIALIST = Specialist(
             schedule="",
             schedule_key="deploy-verification",
             scheduled_params={"minutes": 60},
-            cron_env="DEPLOY_VERIFICATION_CRON",
             param_env={"minutes": "DEPLOY_VERIFICATION_MINUTES"},
         ),
     ),

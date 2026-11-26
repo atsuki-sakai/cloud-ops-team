@@ -11,7 +11,7 @@ MODEL_HTTP_TIMEOUT_MS = 60_000
 class _EnvironmentTransport(httpx.AsyncBaseTransport):
     """Let HTTPX resolve proxy/CA settings while keeping SDK client ownership."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = httpx.AsyncClient()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:

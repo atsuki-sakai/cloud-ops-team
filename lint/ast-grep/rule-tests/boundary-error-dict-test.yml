@@ -1,0 +1,26 @@
+id: boundary-error-dict
+valid:
+  - |
+    try:
+        call()
+    except Exception as exc:
+        return tool_error(exc, capability=name)
+  - |
+    if not ok:
+        return {"status": "error", "message": "Collection skipped"}
+  - |
+    try:
+        call()
+    except KeyError:
+        return {"status": "not_found"}
+invalid:
+  - |
+    try:
+        call()
+    except Exception as exc:
+        return {"status": "error", "message": "Collector failed"}
+  - |
+    try:
+        call()
+    except httpx.HTTPError as exc:
+        return False, {"status": "error", "error_type": type(exc).__name__}

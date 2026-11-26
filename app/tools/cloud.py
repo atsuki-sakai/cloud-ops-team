@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.errors import tool_error
 from app.providers import get_provider
 
 
@@ -18,13 +19,8 @@ def _call(capability: str, **kwargs: Any) -> dict:
     provider = get_provider()
     try:
         out = getattr(provider, capability)(**kwargs)
-    except Exception as exc:  # never let a provider bug crash the agent run
-        return {
-            "status": "error",
-            "provider": provider.profile.key,
-            "capability": capability,
-            "message": f"{type(exc).__name__}: {str(exc)[:300]}",
-        }
+    except Exception as exc:  # noqa: BLE001 -- tool boundary: never let a provider bug crash the agent run
+        return tool_error(exc, provider=provider.profile.key, capability=capability)
     if isinstance(out, dict):
         out.setdefault("provider", provider.profile.key)
     return out

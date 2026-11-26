@@ -258,3 +258,23 @@ def test_weekly_fixed_collection_includes_closed_unverified_findings(monkeypatch
     assert {tool.__name__ for tool in prepared.analysis_specialist.tools}.isdisjoint(
         {"list_ops_issues"}
     )
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda: issues._post_comment(7, "body"),
+        lambda: issues._add_labels(7, ["ops:verified"]),
+        lambda: issues._close(7, "completed"),
+        lambda: issues._create_issue("title", "body", ["ops-agent"]),
+    ],
+)
+def test_github_write_helpers_refuse_to_run_in_dry_run(monkeypatch, write):
+    monkeypatch.setattr(
+        issues, "CONFIG", dataclasses.replace(issues.CONFIG, dry_run=True)
+    )
+    calls = []
+    monkeypatch.setattr(issues, "gh_rest", lambda *a, **k: calls.append(a))
+    with pytest.raises(RuntimeError, match="OPS_DRY_RUN"):
+        write()
+    assert calls == []

@@ -13,7 +13,7 @@
   `docs/*.md`, `CONTRIBUTING.md`, `CHANGELOG.md` are Japanese and `docs/en/*.md`, `CONTRIBUTING.en.md`, `CHANGELOG.en.md`
   are English. Update both languages together
   (`SECURITY.md` and `.github/` templates are bilingual in one file).
-- Fast checks: `make test` and `make lint`. Run a job locally: `make run JOB=<job>` (`agents-cli run` has a fixed 120 s
+- Fast checks: `make test`, `make lint` and `make check-py` (edit-hook checks on changed files). Run a job locally: `make run JOB=<job>` (`agents-cli run` has a fixed 120 s
   read timeout). Check access: `make doctor`.
 
 ## Prerequisites
@@ -71,6 +71,10 @@ Ask the user: Option A (simple single-project) or Option B (full CI/CD pipeline 
 ## Operational Guidelines for Coding Agents
 
 - **Code preservation**: Only modify code directly targeted by the user's request. Preserve all surrounding code, config values (e.g., `model`), comments, and formatting.
+  Exception: findings the py-quality hook reports for a file you edited are in scope; fix them (they are not unrelated refactoring).
+- **Python quality gate**: follow `.claude/skills/python-quality/SKILL.md` before writing Python. After each Edit/Write the
+  hook (`scripts/quality/hook.py`) runs ruff, ty and ast-grep on the edited file; fix every `[py-quality]` error before moving on.
+  Rules live only in `pyproject.toml` and `sgconfig.yml` (`docs/code-quality.md`). Suppress only as `# noqa: CODE -- reason`.
 - **NEVER change the model** unless explicitly asked.
 - **Preserve stage boundaries**: change routine collection in `workflows.py`, decision/report requirements in the specialist and analysis prompt, and argument limits in routing/tool scope. Do not route unknown structured input through a model fallback or add shell/SQL escape hatches.
 - **Feature status**: browser recording/replay, backup creation/restore and the other Issue #7 extensions are planned work. The scoped architecture and offline tests do not establish those features or a production deployment.

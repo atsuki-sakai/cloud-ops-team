@@ -366,7 +366,7 @@ def test_image_scan_covers_split_traffic_and_deduplicates_images(monkeypatch):
         service(),
         service("worker", [{"revision": "same-image", "percent": 100}]),
     ]
-    monkeypatch.setattr(sec, "_run_services_raw", lambda: (True, services))
+    monkeypatch.setattr(sec, "list_services_raw", lambda: (True, services))
     revisions_read, images_scanned = [], []
 
     def get(url, **kwargs):
@@ -394,7 +394,7 @@ def test_image_scan_covers_split_traffic_and_deduplicates_images(monkeypatch):
 
 @pytest.mark.parametrize("failure", ["permission_denied", "missing_digest"])
 def test_image_scan_reports_unchecked_revisions_as_unknown(monkeypatch, failure):
-    monkeypatch.setattr(sec, "_run_services_raw", lambda: (True, [service()]))
+    monkeypatch.setattr(sec, "list_services_raw", lambda: (True, [service()]))
 
     def get(url, **kwargs):
         if url.endswith("/old"):
@@ -422,7 +422,7 @@ def test_image_scan_includes_tagged_revision_and_pinned_sidecar(monkeypatch):
         {"revision": "inactive", "percent": 0},
     ]
     monkeypatch.setattr(
-        sec, "_run_services_raw", lambda: (True, [service(traffic=traffic)])
+        sec, "list_services_raw", lambda: (True, [service(traffic=traffic)])
     )
     read = []
 
@@ -446,7 +446,7 @@ def test_image_scan_includes_tagged_revision_and_pinned_sidecar(monkeypatch):
 def test_image_scan_failure_is_not_reported_as_zero_vulnerabilities(monkeypatch):
     monkeypatch.setattr(
         sec,
-        "_run_services_raw",
+        "list_services_raw",
         lambda: (True, [service(traffic=[{"revision": "new", "percent": 100}])]),
     )
     monkeypatch.setattr(

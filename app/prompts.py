@@ -22,7 +22,7 @@ from google.adk.agents.readonly_context import ReadonlyContext
 from app.config import CONFIG
 from app.providers import CAPABILITIES, get_provider
 from app.specialists import SPECIALISTS
-from app.specialists.base import Specialist
+from app.specialists.base import Specialist, tool_name
 from app.tool_scope import capabilities_for
 from app.tools.context import effective_stack_keywords
 
@@ -157,7 +157,6 @@ def _team_sections(template: str) -> str:
         template.replace("__TEAM_SIZE__", str(len(SPECIALISTS)))
         .replace("__SPECIALIST_LIST__", specialist_list)
         .replace("__JOB_TABLE__", "\n".join(rows))
-        .replace("__ALL_SPECIALISTS__", " → ".join(s.name for s in SPECIALISTS))
     )
 
 
@@ -238,7 +237,7 @@ def _analysis_template(specialist: Specialist, tools: Iterable[Callable]) -> str
         specialist.instruction,
         flags=re.MULTILINE | re.DOTALL,
     )
-    names = ", ".join(tool.__name__ for tool in tools) or "なし"
+    names = ", ".join(tool_name(tool) for tool in tools) or "なし"
     workflow = _ANALYSIS_STEPS.get(
         specialist.name,
         "収集済み証拠を分析し、不足を明記して担当業務の結果と対応案を報告する。",

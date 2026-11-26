@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^(Edit|Write|MultiEdit)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"$CLAUDE_PROJECT_DIR/.venv/bin/python\" ]; then \"$CLAUDE_PROJECT_DIR/.venv/bin/python\" -I \"$CLAUDE_PROJECT_DIR/scripts/quality/hook.py\" post-edit; else echo '{\"systemMessage\":\"[py-quality] SETUP: .venv がありません。uv sync --extra lint を実行してください（チェックをスキップしました）\"}'; fi",
+            "timeout": 30,
+            "statusMessage": "py-quality: ruff / ty / ast-grep で編集したファイルを検査"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"$CLAUDE_PROJECT_DIR/.venv/bin/python\" ]; then \"$CLAUDE_PROJECT_DIR/.venv/bin/python\" -I \"$CLAUDE_PROJECT_DIR/scripts/quality/hook.py\" stop; fi",
+            "timeout": 60,
+            "statusMessage": "py-quality: 変更した Python ファイルの最終チェック"
+          }
+        ]
+      }
+    ]
+  }
+}
