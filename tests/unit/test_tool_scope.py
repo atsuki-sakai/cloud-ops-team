@@ -135,7 +135,7 @@ def test_direct_exposed_tool_rejects_excessive_range_before_provider(monkeypatch
         _specialist("access_watch"), tools=[cloud.investigate_access]
     )
     tool = tool_scope.build_tool_scope(specialist).tools[0]
-    assert tool(hours=169)["status"] == "rejected"
+    assert tool(hours=721)["status"] == "rejected"
     assert tool(hours=True)["status"] == "rejected"
     assert tool(hours="24")["status"] == "rejected"
     assert calls == []

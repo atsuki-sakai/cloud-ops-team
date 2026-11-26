@@ -1,4 +1,4 @@
-"""Code-owned decisions for service checks and deployment verification.
+"""Code-owned decisions for service checks, deployment verification and error watch.
 
 The collectors already judged each scenario and rollout. This module adds the
 state transition against open incidents (first failure, ongoing, recovered),
@@ -36,6 +36,15 @@ _LABELS = {
         "incident_unknown": "未確認（open ISSUE を取得できませんでした）",
         "analysis_failed": "AI による原因調査は失敗しました。上の判定は有効ですが、原因は未確認です。",
         "scope": "この結果は検査地点・ブラウザ条件・記録した操作に限られ、全利用者の体験を保証しません。",
+        "error_title": "エラー監視（固定判定）",
+        "error_window": "対象期間",
+        "error_entries": "エラー件数 / グループ数",
+        "error_5xx": "5xx を返したサービス",
+        "error_jobs": "失敗中のスケジュールジョブ",
+        "error_services": "準備未完了のサービス",
+        "error_databases": "停止中・エラー対象のデータベース",
+        "error_unverified": "取得できなかった情報（未確認）",
+        "error_clean": "エラーと問題は見つかりませんでした。AI による調査は不要と判定しました。",
     },
     "en": {
         "service_title": "Service check (code verdicts)",
@@ -52,6 +61,15 @@ _LABELS = {
         "incident_unknown": "unverified (open issues could not be read)",
         "analysis_failed": "The AI investigation failed. The verdicts above stand; the cause is unverified.",
         "scope": "Results cover only the checker location, browser conditions and recorded steps.",
+        "error_title": "Error watch (code verdicts)",
+        "error_window": "Window",
+        "error_entries": "Error entries / groups",
+        "error_5xx": "Services returning 5xx",
+        "error_jobs": "Failing scheduled jobs",
+        "error_services": "Services not ready",
+        "error_databases": "Databases not running or named by errors",
+        "error_unverified": "Sources not retrieved (unverified)",
+        "error_clean": "No errors or problems were found. No AI investigation is needed.",
     },
 }
 
@@ -178,6 +196,107 @@ def deploy_decision(
     }
 
 
+# Error-watch sources whose rows show a problem after ``app.core.error_focus``.
+_ERROR_PROBLEM_ROWS = {
+    "get_request_error_rates": ("services", "error_5xx"),
+    "list_scheduled_jobs": ("jobs", "error_jobs"),
+    "list_databases": ("instances", "error_databases"),
+}
+
+
+def _error_groups(checks: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The error-group result when it is complete, otherwise ``None``."""
+    result = checks.get("summarize_error_groups")
+    if (
+        not isinstance(result, Mapping)
+        or result.get("status") != "ok"
+        or not isinstance(result.get("groups"), list)
+        or result.get("truncated")
+        or result.get("complete") is False
+    ):
+        return None
+    return result
+
+
+def _error_problems(checks: Mapping[str, Any]) -> tuple[dict[str, int], list[str]]:
+    """Problem counts per source, and the sources that could not be read."""
+    counts: dict[str, int] = {}
+    unavailable: list[str] = []
+    groups = _error_groups(checks)
+    if groups is None:
+        unavailable.append("summarize_error_groups")
+    else:
+        counts["groups"] = len(groups["groups"])
+    for name, (key, _label_key) in _ERROR_PROBLEM_ROWS.items():
+        result = checks.get(name)
+        rows = result.get(key) if isinstance(result, Mapping) else None
+        if (
+            not isinstance(result, Mapping)
+            or result.get("status") != "ok"
+            or not isinstance(rows, list)
+        ):
+            unavailable.append(name)
+        else:
+            counts[name] = len(rows)
+    services = checks.get("list_services")
+    rows = services.get("services") if isinstance(services, Mapping) else None
+    if (
+        not isinstance(services, Mapping)
+        or services.get("status") != "ok"
+        or not isinstance(rows, list)
+    ):
+        unavailable.append("list_services")
+    else:
+        counts["list_services"] = sum(
+            1 for row in rows if isinstance(row, Mapping) and row.get("ready") is False
+        )
+    return counts, unavailable
+
+
+def error_watch_decision(
+    checks: Mapping[str, Any], *, collection_failed: bool = False
+) -> dict:
+    """Skip the model only when every source was read and none shows a problem."""
+    if collection_failed:
+        return {"analysis_required": True, "reason": "collection_failed"}
+    counts, unavailable = _error_problems(checks)
+    if unavailable:
+        return {
+            "analysis_required": True,
+            "reason": "source_unavailable",
+            "unavailable": unavailable,
+            "counts": counts,
+        }
+    required = any(counts.values())
+    return {
+        "analysis_required": required,
+        "reason": "problems_found" if required else "no_errors",
+        "unavailable": [],
+        "counts": counts,
+    }
+
+
+def _error_lines(evidence: Mapping[str, Any]) -> list[str]:
+    checks = evidence.get("checks") or {}
+    counts, unavailable = _error_problems(checks)
+    groups = _error_groups(checks) or {}
+    window = groups.get("window") or {}
+    entries = groups.get("total_entries", "-")
+    lines = [
+        f"## {_label('error_title')}",
+        "",
+        f"- {_label('error_window')}: {window.get('start', '-')} 〜 "
+        f"{window.get('end', '-')}（{evidence.get('parameters', {}).get('hours', '-')}h）",
+        f"- {_label('error_entries')}: {entries} / {counts.get('groups', '-')}",
+    ]
+    for name, (_key, label_key) in _ERROR_PROBLEM_ROWS.items():
+        lines.append(f"- {_label(label_key)}: {counts.get(name, '-')}")
+    lines.append(f"- {_label('error_services')}: {counts.get('list_services', '-')}")
+    if unavailable:
+        lines.append(f"- {_label('error_unverified')}: {', '.join(unavailable)}")
+    return lines
+
+
 def _service_lines(evidence: Mapping[str, Any]) -> list[str]:
     run = (evidence.get("checks") or {}).get("run_service_checks") or {}
     decision = evidence.get("decision") or {}
@@ -255,11 +374,13 @@ def _deploy_lines(evidence: Mapping[str, Any]) -> list[str]:
 
 def verdict_summary(evidence: Mapping[str, Any]) -> str:
     """Markdown summary of the code verdicts, in the configured language."""
-    lines = (
-        _service_lines(evidence)
-        if evidence.get("job") == "service_check"
-        else _deploy_lines(evidence)
-    )
+    job = evidence.get("job")
+    if job == "service_check":
+        lines = _service_lines(evidence)
+    elif job == "error_watch":
+        lines = _error_lines(evidence)
+    else:
+        lines = _deploy_lines(evidence)
     return "\n".join(lines)
 
 
@@ -270,6 +391,7 @@ def fixed_report(evidence: Mapping[str, Any]) -> str:
         "all_healthy": _label("healthy"),
         "no_rollouts": _label("no_rollouts"),
         "all_verified": _label("all_verified"),
+        "no_errors": _label("error_clean"),
     }.get(str(decision.get("reason")), "")
     return verdict_summary(evidence) + (f"\n\n{note}" if note else "")
 

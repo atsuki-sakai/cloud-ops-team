@@ -70,11 +70,11 @@ ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # 6 時�
 | 変数 | 意味 |
 |---|---|
 | `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | エラー監視の予定 / さかのぼる時間 |
-| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | 不審アクセス調査の予定 / さかのぼる時間（既定: 月曜・木曜 08:30 / 120 時間） |
-| `INFRASTRUCTURE_REVIEW_CRON` | インフラ見直し（既定: 毎週月曜 10:00） |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | 不審アクセス調査の予定 / さかのぼる時間（既定: 毎月1日・15日 08:30 / 432 時間） |
+| `INFRASTRUCTURE_REVIEW_CRON` | インフラ見直し（既定: 毎月1日・15日 10:00） |
 | `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | 稼働確認（既定: 手動のみ / 最大 2 回試行）。[稼働確認](service-checks.md) |
 | `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | デプロイ後検証（既定: デプロイ時に起動 / 60 分） |
-| `WEEKLY_CRON` / `WEEKLY_DAYS` | 週次の修正確認 |
+| `WEEKLY_CRON` / `WEEKLY_DAYS` | 隔週の修正確認（既定: 毎月1日・15日 09:00 / 18 日） |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | 月次のセキュリティ診断 |
 | `<ジョブキー>_CRON` | 自分で追加したジョブ（例: `DEPLOY_WATCH_CRON`） |
 | `ONLY_JOBS` | 更新するジョブを限定（例: `ONLY_JOBS=error-watch`） |

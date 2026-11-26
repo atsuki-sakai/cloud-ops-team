@@ -12,7 +12,7 @@ names are identical on every cloud; only the provider changes (`OPS_CLOUD_PROVID
 | Microsoft Azure | `azure` | Skeleton — every capability returns `not_supported` | [`app/providers/azure/__init__.py`](../../app/providers/azure/__init__.py) |
 
 A skeleton provider can still inspect repository posture, CISA KEV, EOL and web threats, and retrieve PRs and CI.
-Confirming deployment and error recurrence in a weekly review requires the corresponding cloud capabilities.
+Confirming deployment and error recurrence in the twice-monthly review requires the corresponding cloud capabilities.
 Unsupported capabilities return `not_supported`; the agents are instructed to report them as "not checked".
 Capabilities can be implemented one at a time — contributions are very welcome.
 
@@ -83,7 +83,7 @@ Rules:
 | `audit_security_services` | `()` | security audit |
 | `list_security_findings` | `(max_findings: int)` | security audit, access investigation |
 | `scan_deployed_images` | `()` | security audit |
-| `investigate_access` | `(hours: int)` (1–168) | access investigation |
+| `investigate_access` | `(hours: int)` (1–720) | access investigation |
 | `list_optimization_recommendations` | `()` | infrastructure review |
 
 ### Normalized results

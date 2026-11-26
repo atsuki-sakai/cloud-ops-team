@@ -23,7 +23,7 @@ from google.adk.events import Event
 from google.genai import types
 from pydantic import Field, model_validator
 
-from app.config import CONFIG
+from app.config import CONFIG, MAX_WATCH_LOOKBACK_HOURS
 from app.core.audit import log_event
 from app.core.jsonutil import unique_pairs_hook
 from app.core.redact import redact
@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 # A new job must declare a request schema as well as register a specialist. An
 # unknown schema never falls back to another job or a model-picked default.
 JOB_PARAMETER_BOUNDS: dict[str, dict[str, tuple[int, int]]] = {
-    "error_watch": {"hours": (1, 168)},
+    "error_watch": {"hours": (1, MAX_WATCH_LOOKBACK_HOURS)},
     "security_audit": {"kev_days": (1, 365)},
     "pr_review": {"days": (1, 90)},
-    "access_watch": {"hours": (1, 168)},
+    "access_watch": {"hours": (1, MAX_WATCH_LOOKBACK_HOURS)},
     "infrastructure_review": {},
     "service_check": {"attempts": (1, 5)},
     "deploy_verification": {"minutes": (5, 1440)},

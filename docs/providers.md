@@ -12,7 +12,7 @@ English: [docs/en/providers.md](en/providers.md)
 | Microsoft Azure | `azure` | 雛形。すべての機能が `not_supported` を返します | [`app/providers/azure/__init__.py`](../app/providers/azure/__init__.py) |
 
 雛形のプロバイダーでも、リポジトリの診断、CISA KEV、サポート期限（EOL）の確認、最新の攻撃動向の調査、PR・CI の取得は利用できます。
-ただし、週次レビューで配置とエラー再発まで確認するには、対応するクラウド機能が必要です。
+ただし、隔週レビューで配置とエラー再発まで確認するには、対応するクラウド機能が必要です。
 未対応の機能は `not_supported` を返し、エージェントには「確認できなかった項目」として報告するよう指示しています。
 機能は 1 つずつ実装できます。コントリビューションを歓迎します。
 
@@ -82,7 +82,7 @@ class AwsProvider(CloudProvider):
 | `audit_security_services` | `()` | セキュリティ診断 |
 | `list_security_findings` | `(max_findings: int)` | セキュリティ診断、不審アクセス調査 |
 | `scan_deployed_images` | `()` | セキュリティ診断 |
-| `investigate_access` | `(hours: int)`（1〜168） | 不審アクセス調査 |
+| `investigate_access` | `(hours: int)`（1〜720） | 不審アクセス調査 |
 | `list_optimization_recommendations` | `()` | インフラ見直し |
 
 ### 共通形式の結果

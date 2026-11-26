@@ -11,12 +11,12 @@
 #     ./scripts/setup_schedules.sh
 #
 # Everything is configurable with environment variables (defaults in brackets):
-#   ERROR_WATCH_CRON   ["0 8 * * 1,4"] error watch (Monday and Thursday 08:00). e.g. "0 * * * *" for hourly
-#   ERROR_WATCH_HOURS  [120]           look-back window. The longer Mon/Thu gap is 96h; 120h overlaps it
-#   ACCESS_WATCH_CRON  ["30 8 * * 1,4"] access watch (Monday and Thursday 08:30)
-#   ACCESS_WATCH_HOURS [120]           look-back window; keep it at least as long as the longer gap
-#   WEEKLY_CRON        ["0 9 * * 1"]   weekly issue / PR review (Monday 09:00)
-#   WEEKLY_DAYS        [7]
+#   ERROR_WATCH_CRON   ["0 8 1,15 * *"]  error watch (1st and 15th 08:00). e.g. "0 * * * *" for hourly
+#   ERROR_WATCH_HOURS  [432]             look-back window. The longest gap is 408h (15th to 1st); 432h overlaps it (max 720)
+#   ACCESS_WATCH_CRON  ["30 8 1,15 * *"] access watch (1st and 15th 08:30)
+#   ACCESS_WATCH_HOURS [432]             look-back window; keep it at least as long as the longest gap (max 720)
+#   WEEKLY_CRON        ["0 9 1,15 * *"]  twice-monthly issue / PR review (1st and 15th 09:00)
+#   WEEKLY_DAYS        [18]
 #   MONTHLY_CRON       ["0 9 1 * *"]   monthly security audit (1st day 09:00)
 #   MONTHLY_KEV_DAYS   [30]
 #   TZ_NAME            [Asia/Tokyo]

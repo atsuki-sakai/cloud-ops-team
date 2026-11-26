@@ -64,7 +64,7 @@ SPECIALIST = Specialist(
         Job(
             name="error_watch",
             params={"hours": "data.hours があればそれ、無ければ __LOOKBACK__"},
-            schedule="0 8 * * 1,4",
+            schedule="0 8 1,15 * *",
             schedule_key="error-watch",
             scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
             param_env={"hours": "ERROR_WATCH_HOURS"},

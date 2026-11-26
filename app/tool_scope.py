@@ -20,7 +20,7 @@ from typing import Any
 
 from google.adk.tools.tool_context import ToolContext
 
-from app.config import CONFIG
+from app.config import CONFIG, MAX_WATCH_LOOKBACK_HOURS
 from app.core.evidence import is_incomplete
 from app.core.run_budget import (
     ISSUES_CREATED_STATE_KEY,
@@ -34,7 +34,7 @@ from app.specialists.base import Specialist, tool_name
 ToolFunction = Callable[..., Any]
 
 _BOUNDS = {
-    "hours": (1, 168),
+    "hours": (1, MAX_WATCH_LOOKBACK_HOURS),
     "window_minutes": (1, 120),
     "max_findings": (1, 200),
     "issue_number": (1, 2**31 - 1),

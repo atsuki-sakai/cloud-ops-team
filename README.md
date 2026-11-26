@@ -37,11 +37,11 @@ merged fix actually stopped the error. cloud-ops-team does that legwork on a sch
 
 | Job | Default schedule | Specialist | What you get |
 |---|---|---|---|
-| `error_watch` | Mon & Thu 08:00 | 🔍 SRE | Groups 120 h of error logs by fingerprint and correlates them with 5xx rates, failing scheduled jobs and recent deploys. Files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate. |
-| `access_watch` | Mon & Thu 08:30 | 🔎 Access investigator | Reviews 120 h of audit logs, HTTP 401/403, probe paths and Cloud Armor denials. Keeps suspicious signals apart from confirmed compromise and reports evidence, confidence and coverage gaps. |
-| `infrastructure_review` | Mon 10:00 | 🧰 Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits. Each proposal comes with impact, risk, validation and rollback steps. |
+| `error_watch` | 1st & 15th 08:00 | 🔍 SRE | Groups 432 h of error logs by fingerprint and correlates them with 5xx rates, failing scheduled jobs and recent deploys. Only the problem rows reach the model, and a run with no errors or problems skips the model. Files an `[ops/error]` issue with a root-cause hypothesis, evidence and a verification recipe. Recurring errors get a comment instead of a duplicate. |
+| `access_watch` | 1st & 15th 08:30 | 🔎 Access investigator | Reviews 432 h of audit logs, HTTP 401/403, probe paths and Cloud Armor denials. Keeps suspicious signals apart from confirmed compromise and reports evidence, confidence and coverage gaps. |
+| `infrastructure_review` | 1st & 15th 10:00 | 🧰 Infrastructure reviewer | Combines GCP Recommender cost/IAM recommendations with IAM, credential, Cloud Run, Cloud SQL and network audits. Each proposal comes with impact, risk, validation and rollback steps. |
 | `monthly_security_audit` | 1st of the month | 🛡️ Cloud security | Covers IAM, long-lived credentials, compute, databases, network rules, posture findings, container CVEs, end-of-life runtimes, CISA KEV and current threat intel. Critical and high findings become issues, and everything goes into a monthly report. |
-| `weekly_pr_review` | Mon 09:00 | ✅ Release manager | Checks open issues, plus unverified issues closed within 30 days (including auto-closed via `closes #N`), against linked PRs, CI and recurrence. Labels verified fixes and stale issues and publishes a weekly report. |
+| `weekly_pr_review` | 1st & 15th 09:00 | ✅ Release manager | Checks open issues, plus unverified issues closed within 30 days (including auto-closed via `closes #N`), against linked PRs, CI and recurrence. Labels verified fixes and stale issues and publishes a twice-monthly report. |
 | `service_check` | Off (set `SERVICE_CHECK_CRON`) | 🩺 Service checker | Replays registered HTTP and browser scenarios against your public URLs and judges them in code by expected results, with confirming retries. Files, updates and records recovery of `[ops/error]` issues; healthy runs need no model call. [Details](docs/en/service-checks.md) |
 | `deploy_verification` | After each deploy | 🚦 Deploy verifier | Verifies the revision actually serving traffic: readiness, traffic split, production scenarios and the new revision's own error rate and p95 latency against the previous revisions. |
 
@@ -72,10 +72,10 @@ More than 10 scheduled jobs started at 12:30 and exhausted the database connecti
 2. Review the connection pool limit and the database max_connections
 
 ## Verification
-After the fix, confirm zero errors on "/api/v1/jobs/expire-reservations" (checked automatically by the weekly review).
+After the fix, confirm zero errors on "/api/v1/jobs/expire-reservations" (checked automatically by the twice-monthly review).
 ```
 
-You fix it, merge a PR containing `closes #N`, and the next Monday the release manager reports what it found.
+You fix it, merge a PR containing `closes #N`, and at the next review (1st or 15th) the release manager reports what it found.
 Review its PR, CI, deploy and recurrence evidence yourself; "verified" is not a guarantee that the fix is complete.
 
 </details>
@@ -116,7 +116,7 @@ Summary: 22 ok, 2 warnings, 0 failures
 
 ```bash
 make run JOB=error_watch                                  # streams every tool call; nothing is written
-make run JOB=access_watch ARGS="--hours 120"
+make run JOB=access_watch ARGS="--hours 432"
 make run JOB=infrastructure_review
 make run JOB=monthly_security_audit ARGS="--kev-days 30"  # takes a few minutes
 make run JOB=weekly_pr_review
@@ -157,9 +157,9 @@ The full guide and runbook (pausing, token rotation, rollback) is in [docs/en/de
 | Infrastructure review on Fridays at 10:00 | `INFRASTRUCTURE_REVIEW_CRON="0 10 * * 5" ONLY_JOBS=infrastructure-review make gcp-schedule` |
 | Change only one schedule | add `ONLY_JOBS=error-watch` |
 
-With the default Monday/Thursday cadence, the longest gap is the 96 hours from Thursday to Monday. The default 120-hour
-lookback for `ERROR_WATCH_HOURS` and `ACCESS_WATCH_HOURS` adds a 24-hour overlap; if you change the cadence, keep the
-lookback at least as long as the longest gap. To pause a job, run
+With the default twice-monthly cadence (1st and 15th; cron cannot express "every two weeks"), the longest gap is the
+408 hours from the 15th to the 1st. The default 432-hour lookback for `ERROR_WATCH_HOURS` and `ACCESS_WATCH_HOURS` adds a
+24-hour overlap (maximum 720 hours); if you change the cadence, keep the lookback at least as long as the longest gap. To pause a job, run
 `gcloud scheduler jobs pause cloud-ops-error-watch --location asia-northeast1` (`resume` restarts it).
 
 </details>
@@ -222,7 +222,7 @@ Deep dive: [docs/en/architecture.md](docs/en/architecture.md).
 | Azure | 🚧 Skeleton, contributions welcome | Log Analytics, App Service / Container Apps, Azure DBs (planned) | RBAC, Defender for Cloud, NSGs (planned) |
 
 Repository posture, CISA KEV, end-of-life checks, web threat research and PR progress review work on every cloud. Without a log
-capability, the weekly review can't verify recurrence, so confirm that separately. Unsupported checks are listed in reports as
+capability, the twice-monthly review can't verify recurrence, so confirm that separately. Unsupported checks are listed in reports as
 not verified. To add or complete a provider, see [docs/en/providers.md](docs/en/providers.md).
 
 ## Customize
@@ -246,7 +246,7 @@ Recipes with code: [docs/en/customization.md](docs/en/customization.md).
 | `OPS_TARGET` / `OPS_TARGET_REGION` | — | Project, account or subscription to monitor, and its region |
 | `GITHUB_REPO` | — | `owner/repo` that receives issues |
 | `OPS_DRY_RUN` | `true` | Preview instead of writing to GitHub |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close verified issues |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the twice-monthly review close verified issues |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | Normal issue cap shared within one invocation; resets on the next request and excludes reports |
 | `OPS_REPORT_LANGUAGE` | `ja` | `ja` or `en` for reports, issues and comments |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model for all agents |
@@ -288,7 +288,8 @@ cloud-ops-team/
 <summary><b>What does it cost?</b></summary>
 
 Mostly Gemini usage. Cloud Run bills only while a request runs and scales to zero in between. The default schedules
-add up to about 27 runs a month: error and access watches twice a week, fix and infrastructure reviews weekly, and the monthly audit.
+add up to 9 runs a month: error, access, fix and infrastructure reviews on the 1st and 15th, and the monthly audit. An error
+watch that finds no errors or problems does not call the model.
 
 </details>
 

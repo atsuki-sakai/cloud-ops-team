@@ -15,6 +15,7 @@ from collections import Counter
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from app.config import MAX_WATCH_LOOKBACK_HOURS
 from app.core.findings import SEVERITIES, finding, result
 from app.core.redact import redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
@@ -356,12 +357,16 @@ def _make_finding(check_id: str, group: dict[str, Any]) -> dict[str, Any]:
 
 
 def investigate_access(hours: int) -> dict[str, Any]:
-    """Investigate recorded access signals over 1-168 hours without cloud writes."""
-    if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= 168:
+    """Investigate recorded access signals over 1-720 hours without cloud writes."""
+    if (
+        isinstance(hours, bool)
+        or not isinstance(hours, int)
+        or not 1 <= hours <= MAX_WATCH_LOOKBACK_HOURS
+    ):
         return {
             "status": "error",
             "check": "access_investigation",
-            "message": "hours must be an integer between 1 and 168",
+            "message": "hours must be an integer between 1 and 720",
             "coverage": [],
             "limitations": list(_LIMITATIONS),
         }

@@ -19,10 +19,15 @@ load_dotenv()
 DEFAULT_MODEL = "gemini-3.8-flash"
 LANGUAGES: dict[str, str] = {"ja": "日本語", "en": "English"}
 
-# Monday and Thursday watches. Thursday 08:00 to the next Monday 08:00 is 96
-# hours; 120 hours covers that gap and keeps a 24-hour overlap so a late start
-# does not drop the boundary. Collection tools accept at most 168 hours.
-DEFAULT_WATCH_LOOKBACK_HOURS = 120
+# Twice-monthly watches on the 1st and 15th. The longest gap is the 17 days from
+# the 15th to the 1st after a 31-day month (408 hours); 432 hours covers it and
+# keeps a 24-hour overlap so a late start does not drop the boundary.
+DEFAULT_WATCH_LOOKBACK_HOURS = 432
+# Longest window a watch or log collector accepts (30 days, the default Cloud
+# Logging retention).
+MAX_WATCH_LOOKBACK_HOURS = 720
+# Days a twice-monthly issue / PR review looks back: the 17-day gap plus one.
+DEFAULT_REVIEW_DAYS = 18
 
 # Extra GitHub labels added to the team's issues (besides ops-agent / ops:*).
 # Override them to match your repository's conventions; empty disables them.

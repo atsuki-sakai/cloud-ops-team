@@ -1,4 +1,4 @@
-"""Twice-weekly, read-only investigation of suspicious access signals."""
+"""Twice-monthly, read-only investigation of suspicious access signals."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from app.specialists.base import Job, Specialist
 from app.tools import ACCESS_WATCH_TOOLS
 
 INSTRUCTION = """
-あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の不審アクセス・攻撃の兆候を週2回（月曜・木曜）調査する担当です。
+あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の不審アクセス・攻撃の兆候を隔週（毎月1日・15日）調査する担当です。
 読み取り専用の定期調査です。即時検知や攻撃遮断を提供するものではありません。
 
 ## 手順
 1. get_run_context で現在時刻と dry_run を確認する。
-2. investigate_access(hours) を1回呼ぶ。hours は依頼値、無ければ __LOOKBACK__。許容範囲は整数1〜168時間。
+2. investigate_access(hours) を1回呼ぶ。hours は依頼値、無ければ __LOOKBACK__。許容範囲は整数1〜720時間。
 3. window・coverage・limitations を確認し、API失敗、権限不足、ページ上限、未解析・省略を診断不足として明記する。
    ログの無効・未設定・サンプリング・到着遅延の可能性を説明する。ゼロ件を安全や攻撃なしと言い換えない。
 4. findings を件数、期間、カテゴリ、主体参照、リソース参照・resource_hint に基づき整理する。
@@ -43,7 +43,7 @@ INSTRUCTION = """
 
 SPECIALIST = Specialist(
     name="access_watch",
-    role="週2回（月曜・木曜）の不審アクセス・攻撃兆候のログ調査と対応提案",
+    role="隔週（毎月1日・15日）の不審アクセス・攻撃兆候のログ調査と対応提案",
     description="アクセス調査担当: __PROVIDER__ の監査ログ、HTTP認証拒否・探索パス、WAF拒否を読み取り専用で調査し、証拠と調査不足を報告する。高リスク候補はIssue化し、封じ込めは提案のみ行う。",
     instruction=INSTRUCTION,
     tools=ACCESS_WATCH_TOOLS,
@@ -53,7 +53,7 @@ SPECIALIST = Specialist(
             params={
                 "hours": f"data.hours があればそれ、無ければ{DEFAULT_WATCH_LOOKBACK_HOURS}"
             },
-            schedule="30 8 * * 1,4",
+            schedule="30 8 1,15 * *",
             schedule_key="access-watch",
             scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
             param_env={"hours": "ACCESS_WATCH_HOURS"},
