@@ -294,6 +294,17 @@ def test_revision_materializes_only_the_single_container_default_name():
     assert cloud.writes == []
 
 
+def test_revision_may_carry_only_the_service_ingress_setting():
+    cloud = FakeCloud()
+    annotations = cloud.revisions[NEW]["metadata"]["annotations"]
+    annotations["run.googleapis.com/ingress"] = "all"
+    assert promote(cloud, apply=False)["status"] == "plan_only"
+    annotations["run.googleapis.com/ingress"] = "internal"
+    with pytest.raises(RuntimeError, match="Candidate runtime differs"):
+        promote(cloud, apply=False)
+    assert cloud.writes == []
+
+
 @pytest.mark.parametrize("latest", [False, True])
 def test_normal_source_deploy_stages_then_promotes_explicit_revision(latest):
     cloud = FakeCloud()

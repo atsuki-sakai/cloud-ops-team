@@ -203,6 +203,30 @@ def template_config(template):
     return {"metadata": metadata_config(template.get("metadata", {})), "spec": spec}
 
 
+INGRESS = "run.googleapis.com/ingress"
+
+
+def revision_config(revision, service):
+    """Template settings of a revision, compared with the baseline service template.
+
+    Newer Cloud Run releases copy the service-level ingress setting onto each
+    new revision. Ignore that annotation only when it equals the baseline
+    service's ingress and the template does not set it; any other value is
+    still a runtime difference.
+    """
+    metadata = copy.deepcopy(revision["metadata"])
+    annotations = metadata.get("annotations", {})
+    template = service["spec"]["template"].get("metadata", {}).get("annotations", {})
+    service_ingress = service["metadata"].get("annotations", {}).get(INGRESS)
+    if (
+        INGRESS not in template
+        and service_ingress is not None
+        and annotations.get(INGRESS) == service_ingress
+    ):
+        annotations.pop(INGRESS)
+    return template_config({"spec": revision["spec"], "metadata": metadata})
+
+
 def service_config(service):
     require(service.get("metadata", {}).get("name") == SERVICE, "Wrong service")
     return {
@@ -467,15 +491,13 @@ def validate(
     old = cloud.revision(previous)
     ready(old, previous, uid, previous_digest)
     require(
-        template_config({"spec": old["spec"], "metadata": old["metadata"]})
-        == template_config(before["spec"]["template"]),
+        revision_config(old, before) == template_config(before["spec"]["template"]),
         "Serving revision runtime differs from baseline",
     )
     new = cloud.revision(candidate)
     ready(new, candidate, uid, digest)
     require(
-        template_config({"spec": new["spec"], "metadata": new["metadata"]})
-        == template_config(before["spec"]["template"]),
+        revision_config(new, before) == template_config(before["spec"]["template"]),
         "Candidate runtime differs from baseline",
     )
     build = cloud.build(build_id)
