@@ -56,6 +56,7 @@ constraint-dependencies = [
     "authlib>=1.9.9",          # google-adk: CVE-2026-96760 and later JOSE/OAuth fixes
     "certifi>=2026.10.19",     # httpx/requests CA bundle: GHSA-6q48-6c7w-9gw2
     "pyasn1>=0.6.5",           # google-auth via pyasn1-modules: CVE-2026-119194..119197
+    "oauthlib>=4.0.1",         # gcsfs -> google-auth-oauthlib -> requests-oauthlib: CVE-2026-49272
 ]
 
 [tool.ruff]
