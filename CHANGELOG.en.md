@@ -21,6 +21,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Corrected outdated defaults left in the Japanese README (a daily error watch and a dozen or so runs a month) to the current Monday/Thursday watches and about 27 scheduled runs a month.
 
 ### Fixed
+- `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` promotion no longer stops when Cloud Run copies the service ingress annotation (`run.googleapis.com/ingress`) onto a new revision. The annotation is ignored only when it equals the baseline service ingress; any other value still stops the promotion.
 - Recorded the real Yadora dedicated-SA build/push, promotion to a named revision at 100%, authenticated read paths and serving digest/source SHA. Default Compute SA Editor removal remains on hold.
 - Stage the fixed profile's recorded source privately and apply its checked ignore there instead of using `--ignore-file`, which SDK 568.0.0 rejects for `run deploy`. The original checkout/generic profile, complete upload attestation and traffic guards are retained.
 - The Yadora-only profile now validates actual build/source/digest/Ready/runtime before pinning 100% to a named revision even when an old pin remains. Etag conflicts stop the write; added a plan-only-by-default resume and a profile source ignore preserving exact base bytes. Extra Ruff caches are not accepted as exceptions.
