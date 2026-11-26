@@ -12,15 +12,24 @@ import datetime as dt
 from typing import Any
 
 from app.config import CONFIG
+from app.core.payloads import Payload, clamp_int
 from app.core.timeutil import iso_utc, parse_time, utcnow
 from app.providers.gcp.client import (
     failure_payload,
+    failure_result,
     gcp_get,
     gcp_list,
     items_payload,
     project_path,
 )
-from app.providers.gcp.observability import MONITORING, _run_parent, _short
+from app.providers.gcp.observability import MONITORING, series_label
+from app.providers.gcp.run import (
+    is_ready,
+    ready_condition,
+    revisions_url,
+    services_url,
+    short_name,
+)
 
 MAX_SERVICES = 10
 MIN_BASELINE = dt.timedelta(minutes=15)
@@ -28,17 +37,13 @@ MAX_BASELINE = dt.timedelta(minutes=60)
 
 
 def _ready(resource: dict[str, Any]) -> tuple[bool, str]:
-    condition = next(
-        (c for c in resource.get("conditions") or [] if c.get("type") == "Ready"), {}
-    )
-    return condition.get("state") == "CONDITION_SUCCEEDED", str(
-        condition.get("message") or ""
-    )[:300]
+    condition = ready_condition(resource)
+    return is_ready(condition), str(condition.get("message") or "")[:300]
 
 
 def _series(
     metric: str, service: str, start: dt.datetime, end: dt.datetime, *, latency: bool
-) -> tuple[bool, list[Any] | dict[str, Any]]:
+) -> tuple[bool, Payload]:
     seconds = max(60, int((end - start).total_seconds()))
     params: dict[str, Any] = {
         "filter": (
@@ -99,15 +104,11 @@ def _window(
         return {**out, "status": failure_payload(counts).get("status", "error")}
     revisions: set[str] = set()
     for series in items_payload(counts):
-        revision = ((series.get("resource") or {}).get("labels") or {}).get(
-            "revision_name", ""
-        )
+        revision = series_label(series, "resource", "revision_name")
         if not selected(revision):
             continue
         revisions.add(revision)
-        klass = ((series.get("metric") or {}).get("labels") or {}).get(
-            "response_code_class", ""
-        )
+        klass = series_label(series, "metric", "response_code_class")
         total = int(sum(_value(point) for point in series.get("points") or []))
         out["requests"] += total
         if klass in ("5xx", "4xx"):
@@ -117,11 +118,7 @@ def _window(
         values = [
             _value(point)
             for series in items_payload(latencies)
-            if selected(
-                ((series.get("resource") or {}).get("labels") or {}).get(
-                    "revision_name", ""
-                )
-            )
+            if selected(series_label(series, "resource", "revision_name"))
             for point in series.get("points") or []
         ]
         # Several points can come back when the window crosses an alignment
@@ -136,7 +133,7 @@ def _window(
 
 def _metrics(
     service: str, revision: str, created: dt.datetime, now: dt.datetime
-) -> dict:
+) -> dict[str, Any]:
     after_len = now - created
     baseline = min(max(after_len, MIN_BASELINE), MAX_BASELINE)
     after = _window(service, created, now, include={revision}, exclude=set())
@@ -152,17 +149,14 @@ def _metrics(
     }
 
 
-def list_recent_rollouts(minutes: int) -> dict:
+def list_recent_rollouts(minutes: int) -> dict[str, Any]:
     """Cloud Run revisions created in the last ``minutes`` minutes with serving state."""
-    minutes = max(5, min(int(minutes), 1440))
+    minutes = clamp_int(minutes, 5, 1440)
     now = utcnow()
     since = now - dt.timedelta(minutes=minutes)
-    ok, services = gcp_list(
-        f"{_run_parent()}/services", "services", params={"pageSize": 100}
-    )
+    ok, services = gcp_list(services_url(), "services", params={"pageSize": 100})
     if not ok:
-        error = failure_payload(services)
-        return {"status": error.get("status", "error"), "error": error}
+        return failure_result(services)
     services = items_payload(services)
     recent = [
         svc
@@ -178,10 +172,10 @@ def list_recent_rollouts(minutes: int) -> dict:
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for svc in recent[:MAX_SERVICES]:
-        name = _short(svc.get("name")) or ""
+        name = short_name(svc.get("name")) or ""
         traffic = [
             {
-                "revision": _short(row.get("revision")) or "",
+                "revision": short_name(row.get("revision")) or "",
                 "percent": int(row.get("percent") or 0),
                 "tag": row.get("tag") or "",
                 "uri": row.get("uri") or "",
@@ -190,9 +184,7 @@ def list_recent_rollouts(minutes: int) -> dict:
             for row in svc.get("trafficStatuses") or []
         ]
         # ast-grep-ignore: api-call-in-loop -- bounded: at most MAX_SERVICES (10) services; revisions are listed per service
-        ok, payload = gcp_get(
-            f"{_run_parent()}/services/{name}/revisions", params={"pageSize": 20}
-        )
+        ok, payload = gcp_get(revisions_url(name), params={"pageSize": 20})
         if not ok:
             errors.append({"service": name, "status": payload.get("status", "error")})
             continue
@@ -207,7 +199,7 @@ def list_recent_rollouts(minutes: int) -> dict:
         ]
         revisions.sort(key=lambda rev: rev.get("createTime") or "", reverse=True)
         for index, rev in enumerate(revisions):
-            revision = _short(rev.get("name")) or ""
+            revision = short_name(rev.get("name")) or ""
             created = parse_time(rev.get("createTime") or "") or now
             ready, message = _ready(rev)
             row = {
@@ -217,8 +209,9 @@ def list_recent_rollouts(minutes: int) -> dict:
                 "create_time": iso_utc(created),
                 "ready": ready,
                 "ready_message": message,
-                "latest_ready_revision": _short(svc.get("latestReadyRevision")) or "",
-                "latest_created_revision": _short(svc.get("latestCreatedRevision"))
+                "latest_ready_revision": short_name(svc.get("latestReadyRevision"))
+                or "",
+                "latest_created_revision": short_name(svc.get("latestCreatedRevision"))
                 or "",
                 "traffic": traffic,
                 "superseded": index > 0,

@@ -9,13 +9,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 import uuid
-from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core.contextutil import bind_var
+from app.core.jsonutil import unique_pairs_hook
 
 
 @dataclass(frozen=True)
@@ -35,28 +36,17 @@ def current_delivery_identity() -> DeliveryIdentity | None:
     return _delivery.get()
 
 
-@contextmanager
 def bind_delivery_identity(
     identity: DeliveryIdentity | None,
-) -> Generator[None, None, None]:
-    token = _delivery.set(identity)
-    try:
-        yield
-    finally:
-        _delivery.reset(token)
+) -> AbstractContextManager[None]:
+    return bind_var(_delivery, identity)
 
 
 def _opaque(trigger: str, values: list[str]) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([trigger, *values])))
 
 
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("Duplicate delivery fields")
-        value[key] = item
-    return value
+_unique_object = unique_pairs_hook(ValueError, "Duplicate delivery fields")
 
 
 def _scheduler_identity(scope: Scope) -> DeliveryIdentity | None:

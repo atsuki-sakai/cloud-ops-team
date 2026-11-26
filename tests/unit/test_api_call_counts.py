@@ -6,6 +6,7 @@ code and count the calls it actually makes through the patched entry points.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import pytest
@@ -15,7 +16,11 @@ from app.tools import issues
 
 
 @pytest.fixture(autouse=True)
-def _fresh_label_cache():
+def _fresh_label_cache(monkeypatch):
+    # Label creation is a GitHub write: it refuses to run while dry-run is on.
+    monkeypatch.setattr(
+        issues, "CONFIG", dataclasses.replace(issues.CONFIG, dry_run=False)
+    )
     issues._ensured_labels.clear()
     yield
     issues._ensured_labels.clear()
@@ -101,3 +106,40 @@ def test_image_scan_calls_once_per_image_with_bounded_concurrency(api_calls):
     assert all(fetched[image][1][0]["image"] == image for image in images)
     assert api_calls.count("gcp_list") == len(images)
     assert 1 < api_calls.peak_concurrency <= security._SCAN_WORKERS
+
+
+@pytest.mark.parametrize("file_count", [1, 6, 14])
+def test_repo_files_are_fetched_in_one_graphql_query(
+    api_calls, monkeypatch, file_count
+):
+    from types import SimpleNamespace
+
+    from app.integrations import github
+    from app.tools import repo
+
+    monkeypatch.setattr(repo, "CONFIG", SimpleNamespace(github_repo="o/r"))
+    queries = []
+
+    def fake_rest(method, path, **kwargs):
+        assert (method, path) == ("POST", "/graphql")
+        queries.append(kwargs["json"])
+        variables = kwargs["json"]["variables"]
+        return True, {
+            "data": {
+                "repository": {
+                    f"f{key[1:]}": {"text": f"FROM {value}"}
+                    for key, value in variables.items()
+                    if key.startswith("e")
+                }
+            }
+        }
+
+    api_calls.patch(github, "gh_rest", fake_rest)
+    paths = [f"svc{i}/Dockerfile" for i in range(file_count)]
+
+    ok, texts = repo._raw_files(paths, "main")
+
+    assert ok and texts == {p: f"FROM main:{p}" for p in paths}
+    assert api_calls.count("gh_rest") == 1
+    # Paths travel as GraphQL variables, never spliced into the query text.
+    assert "svc0/Dockerfile" not in queries[0]["query"]

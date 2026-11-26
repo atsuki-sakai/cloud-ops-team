@@ -24,9 +24,15 @@ from google.genai import types
 from pydantic import Field, model_validator
 
 from app.config import CONFIG
+from app.core.audit import log_event
+from app.core.jsonutil import unique_pairs_hook
 from app.core.redact import redact
 from app.core.run_budget import invocation_budget
-from app.execution_history import begin_execution, bind_execution
+from app.execution_history import (
+    ExecutionHistory,
+    begin_execution,
+    bind_execution,
+)
 from app.specialists.base import Job, Specialist
 
 logger = logging.getLogger(__name__)
@@ -72,13 +78,9 @@ JobRunnerFactory = Callable[
 ]
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise JobRequestError("Duplicate JSON fields are not allowed.")
-        result[key] = value
-    return result
+_unique_object = unique_pairs_hook(
+    JobRequestError, "Duplicate JSON fields are not allowed."
+)
 
 
 def _reject_constant(_value: str) -> None:
@@ -197,7 +199,8 @@ def parse_job_request(
     return tuple(_normalize_job(specialist, job, data) for specialist, job in jobs)
 
 
-def _text(event: Event) -> str:
+def event_text(event: Event) -> str:
+    """Visible text of an event (thoughts excluded); empty without content."""
     return (
         "".join(
             part.text
@@ -206,6 +209,16 @@ def _text(event: Event) -> str:
         )
         if event.content
         else ""
+    )
+
+
+def text_event(invocation_id: str, author: str, text: str, **fields: Any) -> Event:
+    """A model-role text event; ``fields`` (e.g. ``error_code``) pass through as given."""
+    return Event(
+        invocation_id=invocation_id,
+        author=author,
+        content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
+        **fields,
     )
 
 
@@ -243,32 +256,17 @@ class ScheduledRouter(Agent):
                 ctx.user_content, self.specialists, allow_full=self.allow_full
             )
         except JobRequestError as exc:
-            self._audit(ctx, "job_rejected", code="invalid_job_request")
-            yield self._result(
-                ctx,
-                json.dumps({"status": "rejected", "reason": redact(str(exc))}),
-                error_code="invalid_job_request",
-            )
+            yield self._rejected(ctx, redact(str(exc)))
             return
         if jobs is None:
             if self.conversation_agent is None:
-                self._audit(ctx, "job_rejected", code="invalid_job_request")
-                yield self._result(
-                    ctx,
-                    json.dumps(
-                        {
-                            "status": "rejected",
-                            "reason": "A JSON job request is required.",
-                        }
-                    ),
-                    error_code="invalid_job_request",
-                )
+                yield self._rejected(ctx, "A JSON job request is required.")
                 return
             final_text = ""
             async with aclosing(self.conversation_agent.run_async(ctx)) as events:
                 async for event in events:
-                    if event.is_final_response() and _text(event):
-                        final_text = _text(event)
+                    if event.is_final_response() and event_text(event):
+                        final_text = event_text(event)
                     yield event
             if final_text:
                 yield self._result(ctx, final_text)
@@ -324,46 +322,32 @@ class ScheduledRouter(Agent):
                             if (
                                 not event.partial
                                 and event.is_final_response()
-                                and _text(event)
+                                and event_text(event)
                             ):
-                                report = _text(event)
+                                report = event_text(event)
                             yield event
                     if not report.strip():
                         raise RuntimeError("The selected job produced no final report.")
                     if execution is not None:
                         execution.ensure_active()
-                        status = (
-                            "report_failed"
-                            if execution.report_failed
-                            else "partial"
-                            if execution.partial or execution.evidence_read_required
-                            else "succeeded"
-                        )
                         execution.finish(
-                            status, report=report, reason="stream_completed"
+                            execution.completed_status(),
+                            report=report,
+                            reason="stream_completed",
                         )
             except (asyncio.CancelledError, GeneratorExit):
                 if execution is not None:
-                    try:
-                        execution.finish("interrupted", reason="cancelled")
-                    except Exception:  # noqa: BLE001 -- history is best effort; the cancellation must propagate
-                        self._audit(
-                            ctx, "history_failed", code="history_finalization_failed"
-                        )
+                    self._finish_best_effort(ctx, execution, "interrupted", "cancelled")
                 raise
             except Exception as exc:  # noqa: BLE001 -- job boundary: one failed job becomes an error result
                 if execution is not None:
-                    try:
-                        execution.finish(
-                            "timed_out" if isinstance(exc, TimeoutError) else "failed",
-                            reason="deadline"
-                            if isinstance(exc, TimeoutError)
-                            else "execution_error",
-                        )
-                    except Exception:  # noqa: BLE001 -- history is best effort; the job failure is still reported
-                        self._audit(
-                            ctx, "history_failed", code="history_finalization_failed"
-                        )
+                    timed_out = isinstance(exc, TimeoutError)
+                    self._finish_best_effort(
+                        ctx,
+                        execution,
+                        "timed_out" if timed_out else "failed",
+                        "deadline" if timed_out else "execution_error",
+                    )
                 self._audit(
                     ctx,
                     "job_failed",
@@ -379,17 +363,35 @@ class ScheduledRouter(Agent):
         yield self._result(ctx, "\n\n".join(reports))
 
     def _audit(self, ctx: InvocationContext, event: str, **details: Any) -> None:
-        logger.info(
-            json.dumps(
-                {
-                    "event": event,
-                    "invocation_id": ctx.invocation_id,
-                    "router": self.name,
-                    **details,
-                },
-                sort_keys=True,
-            )
+        log_event(
+            logger,
+            event,
+            sort_keys=True,
+            invocation_id=ctx.invocation_id,
+            router=self.name,
+            **details,
         )
+
+    def _rejected(self, ctx: InvocationContext, reason: str) -> Event:
+        self._audit(ctx, "job_rejected", code="invalid_job_request")
+        return self._result(
+            ctx,
+            json.dumps({"status": "rejected", "reason": reason}),
+            error_code="invalid_job_request",
+        )
+
+    def _finish_best_effort(
+        self,
+        ctx: InvocationContext,
+        execution: ExecutionHistory,
+        status: str,
+        reason: str,
+    ) -> None:
+        """Record the terminal status; history is best effort and never masks the job outcome."""
+        try:
+            execution.finish(status, reason=reason)
+        except Exception:  # noqa: BLE001 -- history is best effort; the job outcome is still reported
+            self._audit(ctx, "history_failed", code="history_finalization_failed")
 
     def _job_failed(
         self, ctx: InvocationContext, job: str, completed: list[str]
@@ -404,14 +406,7 @@ class ScheduledRouter(Agent):
     def _result(
         self, ctx: InvocationContext, text: str, *, error_code: str | None = None
     ) -> Event:
-        return Event(
-            invocation_id=ctx.invocation_id,
-            author=self.name,
-            content=types.Content(
-                role="model", parts=[types.Part.from_text(text=text)]
-            ),
-            error_code=error_code,
-        )
+        return text_event(ctx.invocation_id, self.name, text, error_code=error_code)
 
     @staticmethod
     def _job_context(ctx: InvocationContext, routed: RoutedJob) -> InvocationContext:
@@ -481,7 +476,7 @@ class ScheduledJobAdapter(ScheduledRouter):
                 if event.author:
                     ctx.event_author = event.author
                 if event.author == self.name and event.is_final_response():
-                    event.output = _text(event) or None
+                    event.output = event_text(event) or None
                 yield event
 
 

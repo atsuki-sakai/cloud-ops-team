@@ -12,11 +12,13 @@ import contextlib
 import contextvars
 import datetime as dt
 import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.config import CONFIG
 from app.core.findings import error_result, finding, result
+from app.core.payloads import Payload, clamp_int
 from app.core.redact import redact
 from app.core.timeutil import utcnow
 from app.providers.gcp.client import (
@@ -27,7 +29,8 @@ from app.providers.gcp.client import (
     items_payload,
     project_path,
 )
-from app.providers.gcp.observability import RUN, _run_services_raw, compact_service
+from app.providers.gcp.observability import compact_service
+from app.providers.gcp.run import RUN, list_services_raw
 
 CRM = "https://cloudresourcemanager.googleapis.com/v1"
 IAM = "https://iam.googleapis.com/v1"
@@ -103,11 +106,11 @@ def _mask_principal(member: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def audit_iam_policy() -> dict:
+def audit_iam_policy() -> dict[str, Any]:
     """Audit the project IAM policy: public principals, primitive roles,
     risky project-level roles and Data Access audit-log configuration."""
     ok, policy = gcp_post(
-        f"{CRM}/projects/{CONFIG.target}:getIamPolicy",
+        f"{CRM}/{project_path()}:getIamPolicy",
         {"options": {"requestedPolicyVersion": 3}},
     )
     if not ok:
@@ -218,11 +221,11 @@ def audit_iam_policy() -> dict:
     return result("iam_policy", findings, summary)
 
 
-def audit_service_account_keys() -> dict:
+def audit_service_account_keys() -> dict[str, Any]:
     """Find user-managed service-account keys (and their age). Long-lived
     JSON keys are the most common credential-leak vector on GCP."""
     ok, accounts = gcp_list(
-        f"{IAM}/projects/{CONFIG.target}/serviceAccounts",
+        f"{IAM}/{project_path()}/serviceAccounts",
         "accounts",
         params={"pageSize": 100},
     )
@@ -239,7 +242,7 @@ def audit_service_account_keys() -> dict:
         email = account.get("email", "")
         # ast-grep-ignore: api-call-in-loop -- bounded: at most 60 service accounts; IAM has no batch key listing
         ok2, keys = gcp_get(
-            f"{IAM}/projects/{CONFIG.target}/serviceAccounts/{email}/keys",
+            f"{IAM}/{project_path()}/serviceAccounts/{email}/keys",
             params={"keyTypes": "USER_MANAGED"},
         )
         if not ok2:
@@ -280,10 +283,10 @@ def audit_service_account_keys() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def audit_cloud_run_security() -> dict:
+def audit_cloud_run_security() -> dict[str, Any]:
     """Audit Cloud Run services: public access vs ingress, runtime service
     account, plain-text secret-looking env vars, image pinning and deploy age."""
-    ok, services = _run_services_raw()
+    ok, services = list_services_raw()
     if not ok:
         return error_result("cloud_run", failure_payload(services))
     services = items_payload(services)
@@ -424,10 +427,10 @@ def _engine_major(version: str | None) -> str:
     return parts[1] if len(parts) > 1 else ""
 
 
-def get_cloud_sql_instances() -> dict:
+def get_cloud_sql_instances() -> dict[str, Any]:
     """List Cloud SQL instances with state, version, maintenance and network
     settings (no credentials)."""
-    ok, payload = gcp_get(f"{SQLADMIN}/projects/{CONFIG.target}/instances")
+    ok, payload = gcp_get(f"{SQLADMIN}/{project_path()}/instances")
     if not ok:
         return error_result("cloud_sql", payload)
     rows = []
@@ -485,7 +488,7 @@ def get_cloud_sql_instances() -> dict:
     return {"status": "ok", "count": len(rows), "instances": rows}
 
 
-def audit_cloud_sql() -> dict:
+def audit_cloud_sql() -> dict[str, Any]:
     """Audit Cloud SQL instances: exposure (public IP / authorized networks /
     SSL), backups & PITR, deletion protection, pending maintenance updates."""
     data = get_cloud_sql_instances()
@@ -663,17 +666,15 @@ def _ports_cover(ports: list[str], target: str) -> bool:
     return False
 
 
-def audit_firewall_rules() -> dict:
+def audit_firewall_rules() -> dict[str, Any]:
     """Audit VPC firewall rules for ingress open to the internet on sensitive
     ports (SSH/RDP/DB) or all ports."""
-    ok, rules = gcp_list(
-        f"{COMPUTE}/projects/{CONFIG.target}/global/firewalls", "items"
-    )
+    ok, rules = gcp_list(f"{COMPUTE}/{project_path()}/global/firewalls", "items")
     if not ok:
         return error_result("firewall", failure_payload(rules))
     rules = items_payload(rules)
     ok_i, agg = gcp_get(
-        f"{COMPUTE}/projects/{CONFIG.target}/aggregated/instances",
+        f"{COMPUTE}/{project_path()}/aggregated/instances",
         params={"maxResults": 500},
     )
     instance_count = (
@@ -770,11 +771,11 @@ def audit_firewall_rules() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def audit_security_services() -> dict:
+def audit_security_services() -> dict[str, Any]:
     """Check which security-relevant Google APIs are enabled and recommend
     missing ones (SCC, container scanning, Asset Inventory, Recommender...)."""
     ok, services = gcp_list(
-        f"{SERVICEUSAGE}/projects/{CONFIG.target}/services",
+        f"{SERVICEUSAGE}/{project_path()}/services",
         "services",
         params={"filter": "state:ENABLED", "pageSize": 200},
         max_pages=5,
@@ -808,14 +809,14 @@ def audit_security_services() -> dict:
     return result("security_services", findings, summary)
 
 
-def list_scc_findings(max_findings: int) -> dict:
+def list_scc_findings(max_findings: int) -> dict[str, Any]:
     """List active Security Command Center findings (CRITICAL/HIGH/MEDIUM).
 
     Args:
         max_findings: Maximum findings to return (1-200).
     """
-    max_findings = max(1, min(int(max_findings), 200))
-    url = f"{SCC}/projects/{CONFIG.target}/sources/-/findings"
+    max_findings = clamp_int(max_findings, 1, 200)
+    url = f"{SCC}/{project_path()}/sources/-/findings"
     params = {
         "filter": 'state="ACTIVE" AND (severity="CRITICAL" OR severity="HIGH" OR severity="MEDIUM")',
         "pageSize": max_findings,
@@ -848,9 +849,7 @@ def list_scc_findings(max_findings: int) -> dict:
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
     rows.sort(key=lambda r: order.get(r["severity"], 9))
     # SCC can omit severity; the missing bucket is kept as-is (None).
-    counts: dict[str | None, int] = {}
-    for r in rows:
-        counts[r["severity"]] = counts.get(r["severity"], 0) + 1
+    counts: dict[str | None, int] = dict(Counter(r["severity"] for r in rows))
     return {
         "status": "ok",
         "count": len(rows),
@@ -865,7 +864,7 @@ def list_scc_findings(max_findings: int) -> dict:
 _SCAN_WORKERS = 4
 
 
-def _image_occurrences(image: str) -> tuple[bool, list[Any] | dict[str, Any]]:
+def _image_occurrences(image: str) -> tuple[bool, Payload]:
     params = {
         "filter": f'kind="VULNERABILITY" AND resourceUrl="https://{image}"',
         "pageSize": 1000,
@@ -880,7 +879,7 @@ def _image_occurrences(image: str) -> tuple[bool, list[Any] | dict[str, Any]]:
 
 def _image_occurrences_bounded(
     images: list[str],
-) -> dict[str, tuple[bool, list[Any] | dict[str, Any]]]:
+) -> dict[str, tuple[bool, Payload]]:
     """List occurrences for every image, at most ``_SCAN_WORKERS`` at a time."""
     with ThreadPoolExecutor(max_workers=_SCAN_WORKERS) as pool:
         futures = [
@@ -890,10 +889,94 @@ def _image_occurrences_bounded(
         return {image: f.result() for image, f in zip(images, futures, strict=True)}
 
 
-def scan_deployed_images() -> dict:
+def _serving_revisions(
+    raw: dict[str, Any], svc_name: str, errors: list[dict[str, Any]]
+) -> set[str]:
+    """Revisions receiving traffic (or tagged); unresolved targets go to ``errors``."""
+    traffic = raw.get("trafficStatuses")
+    if traffic is None:
+        # Older responses can omit trafficStatuses; retain the existing
+        # latest-ready fallback only when actual traffic is unavailable.
+        return {str(raw.get("latestReadyRevision") or "")} - {""}
+    revisions: set[str] = set()
+    for target in traffic:
+        if not (target.get("percent", 0) > 0 or target.get("tag")):
+            continue
+        rev = str(target.get("revision") or "")
+        if not rev and target.get("type") == "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST":
+            rev = str(raw.get("latestReadyRevision") or "")
+        if rev:
+            revisions.add(rev)
+        else:
+            errors.append(
+                {
+                    "service": svc_name,
+                    "status": "unknown",
+                    "message": "A serving traffic target has no resolved revision.",
+                }
+            )
+    return revisions
+
+
+def _container_digests(revision: dict[str, Any]) -> tuple[list[str], bool]:
+    """Image digests of a revision's containers and whether every one resolved."""
+    containers = revision.get("containers") or []
+    statuses = revision.get("containerStatuses") or []
+    statuses_by_name = {s["name"]: s for s in statuses if s.get("name")}
+    digests: list[str] = []
+    for idx, container in enumerate(containers):
+        image = container.get("image", "")
+        status = statuses_by_name.get(container.get("name"), {})
+        if not status and idx < len(statuses) and not statuses[idx].get("name"):
+            status = statuses[idx]
+        digest = status.get("imageDigest") or (image if "@sha256:" in image else "")
+        if digest and "@" not in digest:
+            image_base = image.split("@", 1)[0]
+            if ":" in image_base.rsplit("/", 1)[-1]:
+                image_base = image_base.rsplit(":", 1)[0]
+            digest = image_base + "@" + digest
+        if digest:
+            digests.append(digest)
+    return digests, bool(digests) and len(digests) >= len(containers)
+
+
+def _vulnerability_summary(occurrences: list[Any]) -> dict[str, Any]:
+    """Severity counts and the top CRITICAL/HIGH findings of one image."""
+    severities: list[str] = []
+    fixable = 0
+    top = []
+    for occ in occurrences:
+        vuln = occ.get("vulnerability") or {}
+        sev = vuln.get("effectiveSeverity") or vuln.get("severity") or "UNKNOWN"
+        severities.append(sev)
+        if vuln.get("fixAvailable"):
+            fixable += 1
+        if sev in ("CRITICAL", "HIGH") and len(top) < 15:
+            issue = (vuln.get("packageIssue") or [{}])[0]
+            top.append(
+                {
+                    "cve": str(occ.get("noteName", "")).rsplit("/", 1)[-1],
+                    "severity": sev,
+                    "package": issue.get("affectedPackage"),
+                    "version": (issue.get("affectedVersion") or {}).get("fullName"),
+                    "fixed_version": (issue.get("fixedVersion") or {}).get("fullName"),
+                    "cvss": vuln.get("cvssScore"),
+                    "fix_available": vuln.get("fixAvailable"),
+                }
+            )
+    return {
+        "total": len(occurrences),
+        "by_severity": dict(Counter(severities)),
+        "fix_available": fixable,
+        "top_findings": top,
+        "scanned": bool(occurrences),
+    }
+
+
+def scan_deployed_images() -> dict[str, Any]:
     """Summarise Artifact Analysis vulnerability results for the container
     images currently serving each Cloud Run service."""
-    ok, services = _run_services_raw()
+    ok, services = list_services_raw()
     if not ok:
         return error_result("image_scan", failure_payload(services))
     services = items_payload(services)
@@ -902,33 +985,7 @@ def scan_deployed_images() -> dict:
     for raw in services:
         service_path = str(raw.get("name", ""))
         svc_name = service_path.rsplit("/", 1)[-1]
-        traffic = raw.get("trafficStatuses")
-        if traffic is None:
-            # Older responses can omit trafficStatuses; retain the existing
-            # latest-ready fallback only when actual traffic is unavailable.
-            revisions = {str(raw.get("latestReadyRevision") or "")} - {""}
-        else:
-            revisions = set()
-            for target in traffic:
-                if not (target.get("percent", 0) > 0 or target.get("tag")):
-                    continue
-                rev = str(target.get("revision") or "")
-                if (
-                    not rev
-                    and target.get("type") == "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
-                ):
-                    rev = str(raw.get("latestReadyRevision") or "")
-                if rev:
-                    revisions.add(rev)
-                else:
-                    errors.append(
-                        {
-                            "service": svc_name,
-                            "status": "unknown",
-                            "message": "A serving traffic target has no resolved revision.",
-                        }
-                    )
-        for rev in sorted(revisions):
+        for rev in sorted(_serving_revisions(raw, svc_name, errors)):
             revision_path = (
                 rev
                 if rev.startswith("projects/")
@@ -950,26 +1007,8 @@ def scan_deployed_images() -> dict:
                     }
                 )
                 continue
-            containers = revision.get("containers") or []
-            statuses = revision.get("containerStatuses") or []
-            statuses_by_name = {s["name"]: s for s in statuses if s.get("name")}
-            digests: list[str] = []
-            for idx, container in enumerate(containers):
-                image = container.get("image", "")
-                status = statuses_by_name.get(container.get("name"), {})
-                if not status and idx < len(statuses) and not statuses[idx].get("name"):
-                    status = statuses[idx]
-                digest = status.get("imageDigest") or (
-                    image if "@sha256:" in image else ""
-                )
-                if digest and "@" not in digest:
-                    image_base = image.split("@", 1)[0]
-                    if ":" in image_base.rsplit("/", 1)[-1]:
-                        image_base = image_base.rsplit(":", 1)[0]
-                    digest = image_base + "@" + digest
-                if digest:
-                    digests.append(digest)
-            if len(digests) < len(containers) or not digests:
+            digests, resolved = _container_digests(revision)
+            if not resolved:
                 errors.append(
                     {
                         "service": svc_name,
@@ -982,57 +1021,24 @@ def scan_deployed_images() -> dict:
                 images.setdefault(digest, []).append(svc_name)
     results = []
     fetched = _image_occurrences_bounded(list(images))
-    for image, used_by in images.items():
+    for image, services_using in images.items():
+        used_by = sorted(set(services_using))
         ok3, occurrences = fetched[image]
         if not ok3:
             failure = failure_payload(occurrences)
-            errors.append({"image": image, "used_by": sorted(set(used_by)), **failure})
+            errors.append({"image": image, "used_by": used_by, **failure})
             results.append(
                 {
                     "image": image,
-                    "used_by": sorted(set(used_by)),
+                    "used_by": used_by,
                     "status": failure.get("status", "error"),
                     "scanned": False,
                     "complete": False,
                 }
             )
             continue
-        occurrences = items_payload(occurrences)
-        counts: dict[str, int] = {}
-        fixable = 0
-        top = []
-        for occ in occurrences:
-            vuln = occ.get("vulnerability") or {}
-            sev = vuln.get("effectiveSeverity") or vuln.get("severity") or "UNKNOWN"
-            counts[sev] = counts.get(sev, 0) + 1
-            if vuln.get("fixAvailable"):
-                fixable += 1
-            if sev in ("CRITICAL", "HIGH") and len(top) < 15:
-                issue = (vuln.get("packageIssue") or [{}])[0]
-                top.append(
-                    {
-                        "cve": str(occ.get("noteName", "")).rsplit("/", 1)[-1],
-                        "severity": sev,
-                        "package": issue.get("affectedPackage"),
-                        "version": (issue.get("affectedVersion") or {}).get("fullName"),
-                        "fixed_version": (issue.get("fixedVersion") or {}).get(
-                            "fullName"
-                        ),
-                        "cvss": vuln.get("cvssScore"),
-                        "fix_available": vuln.get("fixAvailable"),
-                    }
-                )
-        results.append(
-            {
-                "image": image,
-                "used_by": sorted(set(used_by)),
-                "total": len(occurrences),
-                "by_severity": counts,
-                "fix_available": fixable,
-                "top_findings": top,
-                "scanned": bool(occurrences),
-            }
-        )
+        summary = _vulnerability_summary(items_payload(occurrences))
+        results.append({"image": image, "used_by": used_by, **summary})
     return {
         "status": "error" if errors else "ok",
         "complete": not errors,

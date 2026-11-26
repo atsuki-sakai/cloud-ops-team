@@ -157,7 +157,6 @@ def _team_sections(template: str) -> str:
         template.replace("__TEAM_SIZE__", str(len(SPECIALISTS)))
         .replace("__SPECIALIST_LIST__", specialist_list)
         .replace("__JOB_TABLE__", "\n".join(rows))
-        .replace("__ALL_SPECIALISTS__", " → ".join(s.name for s in SPECIALISTS))
     )
 
 

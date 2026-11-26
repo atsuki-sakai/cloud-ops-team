@@ -14,7 +14,7 @@ utils:
     kind: call
     has:
       field: function
-      regex: ^(gh_rest|gh_graphql|gcp_request|gcp_get|gcp_post|gcp_list|httpx\.\w+|_list_issues|_get_scoped_issue|_series|_window|_metrics|_fetch|_supersede_report)$
+      regex: ^(gh_rest|gh_graphql|gcp_request|gcp_get|gcp_post|gcp_list|httpx\.\w+|list_services_raw|_entries_preview|_list_issues|_get_scoped_issue|_repo_label_names|_create_issue|_post_comment|_add_labels|_close|_raw_files|_gh_get|_open_bot_prs|_series|_window|_metrics|_fetch|_supersede_report)$
   literal-iter:
     any:
       - kind: tuple

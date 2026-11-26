@@ -15,6 +15,7 @@ import httpx
 from app.config import CONFIG
 from app.core.cache import TtlValue
 from app.core.errors import error_message, tool_error
+from app.core.payloads import clamp_int
 from app.core.redact import redact
 from app.core.timeutil import utcnow
 from app.tools.context import effective_stack_keywords
@@ -33,7 +34,7 @@ def fetch_cisa_kev(days: int) -> dict:
     Args:
         days: Look-back window in days (1-365).
     """
-    days = max(1, min(int(days), 365))
+    days = clamp_int(days, 1, 365)
     cached = _kev_cache.get()
     if cached is not None:
         data = cached
@@ -221,7 +222,7 @@ def web_threat_research(focus: str, days: int) -> dict:
     from google import genai
     from google.genai import types as genai_types
 
-    days = max(7, min(int(days), 90))
+    days = clamp_int(days, 7, 90)
     today = utcnow().date()
     since = today - dt.timedelta(days=days)
     prompt = (

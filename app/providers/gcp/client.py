@@ -23,6 +23,12 @@ from google.auth.transport.requests import Request
 from app.config import CONFIG
 from app.core.cache import TtlValue
 from app.core.errors import tool_error
+from app.core.payloads import (
+    failure_payload,
+    failure_result,
+    items_payload,
+    object_payload,
+)
 
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 _lock = threading.Lock()
@@ -34,6 +40,20 @@ _gcloud_token: TtlValue[str] = TtlValue(ttl_s=45 * 60)
 # OPS_GCP_AUTH=gcloud: local-development escape hatch that borrows the active
 # `gcloud` account's token (useful when ADC belongs to a different account).
 _AUTH_MODE = (os.getenv("OPS_GCP_AUTH") or "adc").strip().lower()
+
+# ``(ok, payload)`` narrowing helpers are re-exported for provider modules.
+__all__ = [
+    "failure_payload",
+    "failure_result",
+    "gcp_get",
+    "gcp_list",
+    "gcp_post",
+    "gcp_request",
+    "items_payload",
+    "location_path",
+    "object_payload",
+    "project_path",
+]
 
 
 def _gcloud_access_token() -> str:
@@ -204,29 +224,9 @@ def gcp_list(
     return True, items
 
 
-def failure_payload(payload: list[Any] | dict[str, Any]) -> dict[str, Any]:
-    """Return the error dict of a failed ``gcp_list`` / ``gcp_request`` call.
-
-    Failures always carry a dict; a list here means the call contract broke.
-    """
-    if isinstance(payload, dict):
-        return payload
-    return {"status": "error", "message": "The API returned an unexpected payload."}
-
-
-def items_payload(payload: list[Any] | dict[str, Any]) -> list[Any]:
-    """Return the items of a successful ``gcp_list`` call."""
-    if not isinstance(payload, list):
-        raise TypeError("A successful list call must return a list")
-    return payload
-
-
-def object_payload(payload: list[Any] | dict[str, Any]) -> dict[str, Any]:
-    """Return the body of a successful single-object call."""
-    if not isinstance(payload, dict):
-        raise TypeError("A successful object call must return a dict")
-    return payload
-
-
 def project_path() -> str:
     return f"projects/{CONFIG.target}"
+
+
+def location_path() -> str:
+    return f"{project_path()}/locations/{CONFIG.region}"

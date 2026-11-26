@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.config import CONFIG
+from app.core.i18n import localized
 
 SERVICE_PREFIX = "service_check:"
 NEEDS_ANALYSIS = frozenset(
@@ -56,7 +57,7 @@ _LABELS = {
 
 
 def _label(key: str) -> str:
-    return _LABELS.get(CONFIG.report_language, _LABELS["en"])[key]
+    return localized(_LABELS, CONFIG.report_language, key)
 
 
 def service_incidents(result: Any) -> Any:

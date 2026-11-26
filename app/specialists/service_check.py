@@ -73,7 +73,6 @@ SPECIALIST = Specialist(
             schedule="",
             schedule_key="service-check",
             scheduled_params={"attempts": 2},
-            cron_env="SERVICE_CHECK_CRON",
             param_env={"attempts": "SERVICE_CHECK_ATTEMPTS"},
         ),
     ),

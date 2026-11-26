@@ -67,7 +67,6 @@ SPECIALIST = Specialist(
             schedule="0 8 * * 1,4",
             schedule_key="error-watch",
             scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
-            cron_env="ERROR_WATCH_CRON",
             param_env={"hours": "ERROR_WATCH_HOURS"},
         ),
     ),

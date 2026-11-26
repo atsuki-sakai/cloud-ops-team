@@ -17,6 +17,11 @@ def iso_utc(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def local_stamp(value: dt.datetime, tz: dt.tzinfo) -> str:
+    """Format for humans in ``tz`` as ``YYYY-MM-DD HH:MM <zone>``."""
+    return value.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
+
+
 def parse_time(value: str) -> dt.datetime | None:
     """Parse RFC 3339 timestamps (nanosecond fractions allowed); ``None`` if invalid."""
     if not value:

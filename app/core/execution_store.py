@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.core.jsonutil import unique_pairs_hook
 from app.core.redact import redact, redact_obj
 
 MAX_PAGE_CHARS = 16_384
@@ -61,11 +62,9 @@ def _positive(value: int, name: str) -> int:
     return value
 
 
-def _json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result = dict(pairs)
-    if len(result) != len(pairs):
-        raise ValueError("duplicate JSON keys would discard evidence")
-    return result
+_json_object = unique_pairs_hook(
+    ValueError, "duplicate JSON keys would discard evidence"
+)
 
 
 def _protected_json(value: Any) -> Any:

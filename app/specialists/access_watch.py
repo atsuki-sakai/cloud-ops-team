@@ -56,7 +56,6 @@ SPECIALIST = Specialist(
             schedule="30 8 * * 1,4",
             schedule_key="access-watch",
             scheduled_params={"hours": DEFAULT_WATCH_LOOKBACK_HOURS},
-            cron_env="ACCESS_WATCH_CRON",
             param_env={"hours": "ACCESS_WATCH_HOURS"},
         ),
     ),

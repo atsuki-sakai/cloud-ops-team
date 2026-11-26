@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from app.integrations import github
 from app.tools import repo, threat_intel
 
 BASE = "/repos/example/repo"
@@ -48,10 +49,27 @@ def mock_repo(monkeypatch, overrides=None, *, admin=False):
     monkeypatch.setattr(repo, "CONFIG", SimpleNamespace(github_repo="example/repo"))
 
     def request(method, path, **kwargs):
+        if method == "POST" and path == "/graphql":
+            return graphql(kwargs["json"]["variables"])
         assert method == "GET"
+        assert "accept" not in kwargs
         return responses[path]
 
+    def graphql(variables):
+        """Answer the batched file query from the per-file ``contents`` fixtures."""
+        repository = {}
+        for key, expression in variables.items():
+            if not key.startswith("e"):
+                continue
+            ok, content = responses[f"{BASE}/contents/{expression.split(':', 1)[1]}"]
+            if not ok:
+                return False, content
+            raw = content.get("raw") if isinstance(content, dict) else None
+            repository[f"f{key[1:]}"] = {"text": raw} if isinstance(raw, str) else None
+        return True, {"data": {"repository": repository}}
+
     monkeypatch.setattr(repo, "gh_rest", request)
+    monkeypatch.setattr(github, "gh_rest", request)
 
 
 @pytest.mark.parametrize("http_status", [403, 429, 503])

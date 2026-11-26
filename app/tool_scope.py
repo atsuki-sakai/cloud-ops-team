@@ -21,6 +21,7 @@ from typing import Any
 from google.adk.tools.tool_context import ToolContext
 
 from app.config import CONFIG
+from app.core.evidence import is_incomplete
 from app.core.run_budget import (
     ISSUES_CREATED_STATE_KEY,
     RunBudget,
@@ -298,12 +299,8 @@ class ToolScope:
 
         def checked_result(result: Any) -> Any:
             if self._execution is not None:
-                # Import lazily: workflows depends on routing and this module is
-                # also imported while specialist agents are being constructed.
-                from app.workflows import _incomplete
-
                 self._execution.observe_tool(
-                    tool_name(function), result, incomplete=_incomplete(result)
+                    tool_name(function), result, incomplete=is_incomplete(result)
                 )
             if tool_name(function) == "get_collected_evidence" and isinstance(
                 result, dict

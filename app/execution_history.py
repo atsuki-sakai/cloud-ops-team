@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from threading import RLock
@@ -14,7 +14,9 @@ from typing import Any
 
 from app.app_utils.execution_identity import current_delivery_identity
 from app.config import CONFIG
+from app.core.contextutil import bind_var
 from app.core.execution_store import ExecutionScope, ExecutionStore, RunRecord
+from app.core.jsonutil import unique_pairs_hook
 from app.core.redact import redact, redact_obj
 
 WORKFLOW_VERSION = "fixed-collection-v1-history-v1"
@@ -59,17 +61,38 @@ def _version(value: Any) -> str:
     )
 
 
+_unique_object = unique_pairs_hook(ValueError, "Ambiguous structured evidence")
+
+# CONFIG fields that change what a run does; their values version each run.
+_CONFIG_VERSION_FIELDS: tuple[str, ...] = (
+    "provider",
+    "target",
+    "region",
+    "github_repo",
+    "model",
+    "research_model",
+    "report_language",
+    "dry_run",
+    "auto_close_issues",
+    "max_issues_per_run",
+    "error_lookback_hours",
+    "recurrence_cooldown_hours",
+    "timezone",
+    "stack_keywords",
+    "error_labels",
+    "security_labels",
+    "severity_labels",
+    "issue_label",
+    "execution_max_evidence_bytes",
+    "execution_retention_seconds",
+)
+
+
 def _json(value: Any) -> str:
     # Validate before protection, so non-JSON values cannot disappear silently.
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result = dict(pairs)
-        if len(result) != len(pairs):
-            raise ValueError("Ambiguous structured evidence")
-        return result
-
     checked = json.loads(
         json.dumps(value, ensure_ascii=False, allow_nan=False),
-        object_pairs_hook=unique_object,
+        object_pairs_hook=_unique_object,
     )
     return json.dumps(redact_obj(checked), ensure_ascii=False, allow_nan=False)
 
@@ -112,6 +135,33 @@ class ExecutionHistory:
             if self._stopped:
                 raise ExecutionStopped("Execution has already ended")
 
+    def completed_status(self) -> str:
+        """Terminal status for a job whose stream finished with a report."""
+        if self.report_failed:
+            return "report_failed"
+        if self.partial or self.evidence_read_required:
+            return "partial"
+        return "succeeded"
+
+    def _mark_storage_failure(self, error: Exception) -> None:
+        self.storage_failed = True
+        self.storage_error_type = self.storage_error_type or _safe_storage_error_type(
+            error
+        )
+
+    def _put(
+        self, source: str, content: str, *, media_type: str, **options: Any
+    ) -> dict[str, Any]:
+        return self.store.put_evidence(
+            self.scope,
+            self.run.run_id,
+            source,
+            content,
+            media_type=media_type,
+            protection_confirmed=True,
+            **options,
+        )
+
     def record_json(
         self,
         source: str,
@@ -133,13 +183,10 @@ class ExecutionHistory:
                 content = '{"status":"error","message":"Invalid structured evidence"}'
                 incomplete = True
             try:
-                metadata = self.store.put_evidence(
-                    self.scope,
-                    self.run.run_id,
+                metadata = self._put(
                     source,
                     content,
                     media_type="application/json",
-                    protection_confirmed=True,
                     acquisition_complete=not incomplete,
                     missing_reason="incomplete_source" if incomplete else None,
                 )
@@ -158,10 +205,7 @@ class ExecutionHistory:
                 # ADK may convert tool exceptions into a response and continue.
                 # Keep a shared stop signal outside that response so subsequent
                 # collectors/writers cannot proceed without their audit trail.
-                self.storage_failed = True
-                self.storage_error_type = (
-                    self.storage_error_type or _safe_storage_error_type(error)
-                )
+                self._mark_storage_failure(error)
                 self._stopped = True
                 raise
 
@@ -192,9 +236,7 @@ class ExecutionHistory:
             # before writing the terminal record, and never let it resurrect us.
             self._stopped = True
             try:
-                self.store.put_evidence(
-                    self.scope,
-                    self.run.run_id,
+                self._put(
                     "execution_outcome",
                     _json(
                         {
@@ -207,26 +249,19 @@ class ExecutionHistory:
                         }
                     ),
                     media_type="application/json",
-                    protection_confirmed=True,
                     acquisition_complete=True,
                     run_status=None if report else status,
                 )
                 if report:
-                    self.store.put_evidence(
-                        self.scope,
-                        self.run.run_id,
+                    self._put(
                         "final_report",
                         redact(report),
                         media_type="text/plain",
-                        protection_confirmed=True,
                         acquisition_complete=True,
                         run_status=status,
                     )
             except Exception as error:
-                self.storage_failed = True
-                self.storage_error_type = (
-                    self.storage_error_type or _safe_storage_error_type(error)
-                )
+                self._mark_storage_failure(error)
                 raise
             self._finished = True
 
@@ -235,13 +270,10 @@ def current_execution() -> ExecutionHistory | None:
     return _CURRENT.get()
 
 
-@contextmanager
-def bind_execution(execution: ExecutionHistory | None) -> Generator[None, None, None]:
-    token = _CURRENT.set(execution)
-    try:
-        yield
-    finally:
-        _CURRENT.reset(token)
+def bind_execution(
+    execution: ExecutionHistory | None,
+) -> AbstractContextManager[None]:
+    return bind_var(_CURRENT, execution)
 
 
 def begin_execution(
@@ -260,31 +292,7 @@ def begin_execution(
         {
             "job": job,
             "params": dict(params),
-            "config": {
-                name: getattr(CONFIG, name)
-                for name in (
-                    "provider",
-                    "target",
-                    "region",
-                    "github_repo",
-                    "model",
-                    "research_model",
-                    "report_language",
-                    "dry_run",
-                    "auto_close_issues",
-                    "max_issues_per_run",
-                    "error_lookback_hours",
-                    "recurrence_cooldown_hours",
-                    "timezone",
-                    "stack_keywords",
-                    "error_labels",
-                    "security_labels",
-                    "severity_labels",
-                    "issue_label",
-                    "execution_max_evidence_bytes",
-                    "execution_retention_seconds",
-                )
-            },
+            "config": {name: getattr(CONFIG, name) for name in _CONFIG_VERSION_FIELDS},
         }
     )
     event_id = (

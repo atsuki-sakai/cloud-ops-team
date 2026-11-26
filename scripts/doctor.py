@@ -383,13 +383,17 @@ def gcp_identity() -> str:
     import subprocess
 
     if (os.getenv("OPS_GCP_AUTH") or "adc").strip().lower() == "gcloud":
-        out = subprocess.run(
-            ["gcloud", "config", "get-value", "account"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return f"{out.stdout.strip() or 'unknown'} (gcloud login, OPS_GCP_AUTH=gcloud)"
+        try:
+            out = subprocess.run(
+                ["gcloud", "config", "get-value", "account"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        return f"{out or 'unknown'} (gcloud login, OPS_GCP_AUTH=gcloud)"
     try:
         import google.auth
         import httpx
