@@ -1,0 +1,9 @@
+# ast-grep project config. Same rules for CI (`make lint`), the Claude Code
+# edit hook (scripts/quality/hook.py) and humans: `ast-grep scan`.
+# Each rule's `note` is the fix guidance the hook returns to the agent.
+ruleDirs:
+  - lint/ast-grep/rules
+testConfigs:
+  - testDir: lint/ast-grep/rule-tests
+utilDirs:
+  - lint/ast-grep/utils

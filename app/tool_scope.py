@@ -11,6 +11,7 @@ import datetime as dt
 import inspect
 import json
 import re
+import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import wraps
@@ -27,7 +28,7 @@ from app.core.run_budget import (
 )
 from app.execution_history import ExecutionHistory, current_execution
 from app.providers import CAPABILITIES
-from app.specialists.base import Specialist
+from app.specialists.base import Specialist, tool_name
 
 ToolFunction = Callable[..., Any]
 
@@ -69,7 +70,7 @@ _TEXT_LIMITS = {
 
 def tool_names(tools: Iterable[ToolFunction]) -> tuple[str, ...]:
     """Derive the names actually exposed to the model, preserving order."""
-    return tuple(tool.__name__ for tool in tools)
+    return tuple(tool_name(tool) for tool in tools)
 
 
 def capabilities_for(tools: Iterable[ToolFunction]) -> tuple[str, ...]:
@@ -87,7 +88,7 @@ def _check_timestamp(value: str, *, empty_allowed: bool) -> bool:
     if not value:
         return empty_allowed
     try:
-        stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        stamp = dt.datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return False
     if stamp.tzinfo is None:
@@ -174,7 +175,9 @@ class ToolScope:
             ),
             "tools": records,
         }
-        print(json.dumps(payload, ensure_ascii=False), flush=True)
+        # Structured stdout line: Cloud Logging and the routing recorder parse it.
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
     def validate(
         self,
@@ -186,7 +189,7 @@ class ToolScope:
         """Reject unknown tools/arguments, excessive queries and scope escapes."""
         if self._execution is not None:
             self._execution.ensure_active()
-        functions = {function.__name__: function for function in self.originals}
+        functions = {tool_name(function): function for function in self.originals}
         function = functions.get(name)
         if function is None:
             return _reject(name, "tool_not_allowed_in_this_stage")
@@ -285,7 +288,9 @@ class ToolScope:
         return rejected
 
     def _wrap(self, function: ToolFunction) -> ToolFunction:
-        def arguments_for(args: tuple[Any, ...], kwargs: dict[str, Any]):
+        def arguments_for(
+            args: tuple[Any, ...], kwargs: dict[str, Any]
+        ) -> dict[str, Any] | None:
             try:
                 return inspect.signature(function).bind(*args, **kwargs).arguments
             except TypeError:
@@ -298,16 +303,16 @@ class ToolScope:
                 from app.workflows import _incomplete
 
                 self._execution.observe_tool(
-                    function.__name__, result, incomplete=_incomplete(result)
+                    tool_name(function), result, incomplete=_incomplete(result)
                 )
-            if function.__name__ == "get_collected_evidence" and isinstance(
+            if tool_name(function) == "get_collected_evidence" and isinstance(
                 result, dict
             ):
                 # Only the real wrapper's completed read satisfies the prerequisite.
                 # Partial/error evidence still has to be reportable; calling the
                 # callback or starting an async read must never unlock other tools.
                 self._evidence_read.set()
-            if function.__name__ == "get_run_context" and isinstance(result, dict):
+            if tool_name(function) == "get_run_context" and isinstance(result, dict):
                 result = dict(result)
                 for key in ("capabilities", "unsupported_capabilities"):
                     result[key] = [
@@ -326,10 +331,10 @@ class ToolScope:
                 arguments = arguments_for(args, kwargs)
                 if arguments is None:
                     return checked_result(
-                        _reject(function.__name__, "invalid_arguments")
+                        _reject(tool_name(function), "invalid_arguments")
                     )
                 rejected = self.validate(
-                    function.__name__, arguments, with_context=True
+                    tool_name(function), arguments, with_context=True
                 )
                 if rejected:
                     return checked_result(rejected)
@@ -343,17 +348,22 @@ class ToolScope:
                 self._execution.ensure_active()
             arguments = arguments_for(args, kwargs)
             if arguments is None:
-                return checked_result(_reject(function.__name__, "invalid_arguments"))
-            rejected = self.validate(function.__name__, arguments, with_context=True)
+                return checked_result(_reject(tool_name(function), "invalid_arguments"))
+            rejected = self.validate(tool_name(function), arguments, with_context=True)
             if rejected:
                 return checked_result(rejected)
-            if function.__name__ == "create_ops_issue" and self._run_budget is not None:
+            if (
+                tool_name(function) == "create_ops_issue"
+                and self._run_budget is not None
+            ):
                 # Keep the existing issue function's dry-run, duplicate and cap
                 # behavior. Only its trusted count crosses the stage boundary;
                 # all other state and conversation history remain isolated.
                 context = arguments.get("tool_context")
                 if not isinstance(context, ToolContext):
-                    return _reject(function.__name__, "tool_context_is_runtime_managed")
+                    return _reject(
+                        tool_name(function), "tool_context_is_runtime_managed"
+                    )
                 with self._run_budget.lock:
                     context.state[ISSUES_CREATED_STATE_KEY] = (
                         self._run_budget.issues_created
@@ -368,7 +378,7 @@ class ToolScope:
                     return checked_result(result)
             return checked_result(function(*args, **kwargs))
 
-        if function.__name__ == "get_run_context":
+        if tool_name(function) == "get_run_context":
             wrapper.__doc__ = (
                 "Return current time, configured target/repository, dry-run flags "
                 "and only the cloud capabilities available in this stage."

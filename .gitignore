@@ -216,3 +216,5 @@ credentials*.json
 
 # eval traces / grade results (may contain log excerpts)
 artifacts/
+.claude/logs/
+.claude/settings.local.json

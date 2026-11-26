@@ -194,11 +194,11 @@ def get_repo_security_posture() -> dict:
                 text = content.get("raw", "") if isinstance(content, dict) else ""
                 if ok_v and text:
                     if vf == "package.json":
-                        m = re.search(r'"engines"\s*:\s*\{[^}]*\}', text, re.S)
+                        m = re.search(r'"engines"\s*:\s*\{[^}]*\}', text, re.DOTALL)
                         version_pins[vf] = (
                             m.group(0)[:200] if m else "(no engines field)"
                         )
-                    elif vf.endswith(".yml") or vf.endswith(".json"):
+                    elif vf.endswith((".yml", ".json")):
                         version_pins[vf] = "(present)"
                     else:
                         version_pins[vf] = text.strip()[:120]
@@ -246,18 +246,18 @@ def get_repo_security_posture() -> dict:
                 "PR 必須 + 必須チェック + レビュー 1 名以上を設定。",
             )
         )
-    for wf in workflows_out:
-        if wf["latest_conclusion"] in ("failure", "timed_out", "cancelled"):
-            findings.append(
-                finding(
-                    "repo.security_workflow_failing",
-                    "medium",
-                    f"セキュリティ系ワークフロー失敗: {wf['name']}",
-                    wf["path"],
-                    f"最新実行 {wf['latest_run_at']} → {wf['latest_conclusion']}",
-                    "失敗原因を確認し、スキャン結果が継続的に得られる状態に戻す。",
-                )
-            )
+    findings.extend(
+        finding(
+            "repo.security_workflow_failing",
+            "medium",
+            f"セキュリティ系ワークフロー失敗: {wf['name']}",
+            str(wf["path"] or ""),
+            f"最新実行 {wf['latest_run_at']} → {wf['latest_conclusion']}",
+            "失敗原因を確認し、スキャン結果が継続的に得られる状態に戻す。",
+        )
+        for wf in workflows_out
+        if wf["latest_conclusion"] in ("failure", "timed_out", "cancelled")
+    )
     summary = {
         "default_branch": default_branch,
         "visibility": repo.get("visibility"),

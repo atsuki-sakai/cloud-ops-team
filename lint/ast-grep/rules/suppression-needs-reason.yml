@@ -1,0 +1,14 @@
+id: suppression-needs-reason
+language: python
+severity: error
+message: 理由のない抑制コメントです。
+note: |
+  抑制は「コード + -- + 理由」で書く。例:
+    except Exception as exc:  # noqa: BLE001 -- tool boundary: a provider bug must not crash the run
+    # ast-grep-ignore: api-call-in-loop -- bounded: at most 6 Dockerfiles
+  ファイル全体の `# ruff: noqa` は使わない。直せるなら抑制せずに直す。
+rule:
+  kind: comment
+  regex: (noqa|ast-grep-ignore|type:\s*ignore|ty:\s*ignore)
+  not:
+    regex: \s--\s+\S

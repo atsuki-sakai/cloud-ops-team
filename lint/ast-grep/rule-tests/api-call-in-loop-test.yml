@@ -1,0 +1,20 @@
+id: api-call-in-loop
+valid:
+  - |
+    for state in ("open", "closed"):
+        gh_rest("GET", f"/issues?state={state}")
+  - |
+    for page in range(5):
+        gcp_list(url, page)
+  - |
+    labels = gh_rest("GET", "/labels")
+    by_name = {label["name"]: label for label in labels}
+invalid:
+  - |
+    for account in accounts:
+        keys = gcp_get(f"{account}/keys")
+  - |
+    results = [gh_rest("GET", f"/runs/{w}") for w in workflows]
+  - |
+    for name in names:
+        httpx.get(f"https://example.com/{name}", timeout=5)

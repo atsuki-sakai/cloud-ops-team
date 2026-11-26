@@ -21,7 +21,7 @@ from typing import Any
 
 OK, INFO, WARN, FAIL = "ok", "info", "warn", "fail"
 SYMBOL = {OK: "✓", INFO: "·", WARN: "!", FAIL: "✗"}
-PLACEHOLDER = re.compile(r"^(your-|owner/repo$|my-)", re.I)
+PLACEHOLDER = re.compile(r"^(your-|owner/repo$|my-)", re.IGNORECASE)
 # Optional security services: missing ones are reported by the audit itself, not a setup failure.
 OPTIONAL_CAPABILITIES = {"list_security_findings", "scan_deployed_images"}
 AUDITS = {
@@ -409,9 +409,10 @@ def gcp_identity() -> str:
                 timeout=10,
             ).json()
             email = info.get("email", "")
-        return f"{email or 'unknown'} (Application Default Credentials)"
     except Exception as exc:
         return f"no Application Default Credentials ({type(exc).__name__})"
+    else:
+        return f"{email or 'unknown'} (Application Default Credentials)"
 
 
 def call_deployments(provider: Any, service: str) -> Any:

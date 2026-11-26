@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -32,7 +32,7 @@ def current_run_budget() -> RunBudget | None:
 
 
 @contextmanager
-def invocation_budget(invocation_id: str) -> Iterator[RunBudget]:
+def invocation_budget(invocation_id: str) -> Generator[RunBudget, None, None]:
     """Reuse a root budget on adapter re-entry, then reset at invocation exit."""
     previous = current_run_budget()
     if previous is not None and previous.invocation_id == invocation_id:

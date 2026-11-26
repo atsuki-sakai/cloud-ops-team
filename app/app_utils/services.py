@@ -23,21 +23,25 @@ from __future__ import annotations
 
 import functools
 import os
+from pathlib import Path
 
-from google.adk.artifacts import GcsArtifactService, InMemoryArtifactService
+from google.adk.artifacts import (
+    BaseArtifactService,
+    GcsArtifactService,
+    InMemoryArtifactService,
+)
 from google.adk.cli.service_registry import get_service_registry
 from google.adk.cli.utils.service_factory import create_session_service_from_options
+from google.adk.sessions import BaseSessionService
 
 SESSION_SERVICE_URI = "shared://session"
 ARTIFACT_SERVICE_URI = "shared://artifact"
 
-_AGENT_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+_AGENT_DIR = str(Path(__file__).absolute().parents[2])
 
 
 @functools.cache
-def get_session_service():
+def get_session_service() -> BaseSessionService:
     """Process-wide session service shared across every serving surface."""
     if uri := os.environ.get("SESSION_SERVICE_URI"):
         return create_session_service_from_options(
@@ -60,7 +64,7 @@ def get_session_service():
 
 
 @functools.cache
-def get_artifact_service():
+def get_artifact_service() -> BaseArtifactService:
     """Process-wide artifact service: GCS when a bucket is set, else in-memory."""
     if bucket := os.environ.get("LOGS_BUCKET_NAME"):
         return GcsArtifactService(bucket_name=bucket)

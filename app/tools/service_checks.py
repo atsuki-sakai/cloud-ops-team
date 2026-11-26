@@ -18,6 +18,7 @@ from typing import Any
 
 from app.config import CONFIG
 from app.core.deploy_verification import evaluate_rollout
+from app.core.redact import redact
 from app.core.service_checks import (
     DEPLOY_DEFAULTS,
     RUN_LIMITATIONS,
@@ -49,7 +50,7 @@ def _load() -> tuple[Any, dict | None]:
         return None, {
             "status": "invalid_input",
             "complete": False,
-            "message": f"The service check file is invalid: {exc}",
+            "message": f"The service check file is invalid: {redact(str(exc))}",
         }
     if suite is None:
         return None, {

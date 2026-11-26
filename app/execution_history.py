@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -236,7 +236,7 @@ def current_execution() -> ExecutionHistory | None:
 
 
 @contextmanager
-def bind_execution(execution: ExecutionHistory | None) -> Iterator[None]:
+def bind_execution(execution: ExecutionHistory | None) -> Generator[None, None, None]:
     token = _CURRENT.set(execution)
     try:
         yield

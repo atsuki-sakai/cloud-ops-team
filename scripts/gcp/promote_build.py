@@ -383,7 +383,7 @@ class Cloud:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 -- fixed https Cloud Run Admin API URL
                 return decode(response.read())
         except urllib.error.HTTPError as exc:
             raise RuntimeError(

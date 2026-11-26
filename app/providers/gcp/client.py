@@ -14,7 +14,6 @@ import os
 import shutil
 import subprocess
 import threading
-import time
 from typing import Any
 
 import google.auth
@@ -22,11 +21,13 @@ import httpx
 from google.auth.transport.requests import Request
 
 from app.config import CONFIG
+from app.core.cache import TtlValue
+from app.core.errors import tool_error
 
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 _lock = threading.Lock()
 _creds = None
-_gcloud_token: tuple[float, str] | None = None
+_gcloud_token: TtlValue[str] = TtlValue(ttl_s=45 * 60)
 
 # OPS_GCP_AUTH=adc (default): Application Default Credentials — the runtime
 # service account when deployed, `gcloud auth application-default login` locally.
@@ -36,19 +37,19 @@ _AUTH_MODE = (os.getenv("OPS_GCP_AUTH") or "adc").strip().lower()
 
 
 def _gcloud_access_token() -> str:
-    global _gcloud_token
-    if _gcloud_token and time.time() - _gcloud_token[0] < 45 * 60:
-        return _gcloud_token[1]
-    if not shutil.which("gcloud"):
+    if cached := _gcloud_token.get():
+        return cached
+    gcloud = shutil.which("gcloud")
+    if not gcloud:
         raise RuntimeError("OPS_GCP_AUTH=gcloud but the gcloud CLI is not installed")
-    token = subprocess.run(
-        ["gcloud", "auth", "print-access-token"],
+    token = subprocess.run(  # noqa: S603 -- fixed argv, resolved gcloud binary
+        [gcloud, "auth", "print-access-token"],
         capture_output=True,
         text=True,
         timeout=30,
         check=True,
     ).stdout.strip()
-    _gcloud_token = (time.time(), token)
+    _gcloud_token.set(token)
     return token
 
 
@@ -116,12 +117,8 @@ def gcp_request(
         resp = httpx.request(
             method, url, params=params, json=json, headers=headers, timeout=timeout
         )
-    except Exception as exc:  # network / auth failures
-        return False, {
-            "status": "error",
-            "message": f"{type(exc).__name__}: {exc}",
-            "url": url,
-        }
+    except Exception as exc:  # noqa: BLE001 -- transport boundary: network / auth failures become an error result
+        return False, tool_error(exc, url=url)
     if resp.status_code >= 400:
         return False, _normalize_error(resp)
     if not resp.content:
@@ -205,6 +202,30 @@ def gcp_list(
             "next_page_token": token,
         }
     return True, items
+
+
+def failure_payload(payload: list[Any] | dict[str, Any]) -> dict[str, Any]:
+    """Return the error dict of a failed ``gcp_list`` / ``gcp_request`` call.
+
+    Failures always carry a dict; a list here means the call contract broke.
+    """
+    if isinstance(payload, dict):
+        return payload
+    return {"status": "error", "message": "The API returned an unexpected payload."}
+
+
+def items_payload(payload: list[Any] | dict[str, Any]) -> list[Any]:
+    """Return the items of a successful ``gcp_list`` call."""
+    if not isinstance(payload, list):
+        raise TypeError("A successful list call must return a list")
+    return payload
+
+
+def object_payload(payload: list[Any] | dict[str, Any]) -> dict[str, Any]:
+    """Return the body of a successful single-object call."""
+    if not isinstance(payload, dict):
+        raise TypeError("A successful object call must return a dict")
+    return payload
 
 
 def project_path() -> str:

@@ -32,6 +32,10 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run codespell
+      - name: ast-grep rules
+        run: |
+          uv run ast-grep test --skip-snapshot-tests
+          uv run ast-grep scan
       - name: Type check
         run: uv run ty check .
       - name: Unit tests

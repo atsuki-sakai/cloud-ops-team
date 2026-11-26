@@ -16,10 +16,12 @@ from typing import Any
 import httpx
 
 from app.config import CONFIG
+from app.core.cache import TtlValue
+from app.core.errors import error_message, tool_error
 
 API = "https://api.github.com"
 _lock = threading.Lock()
-_token_cache: str | None = None
+_token_cache: TtlValue[str] = TtlValue()
 
 
 class GitHubAuthError(RuntimeError):
@@ -27,15 +29,14 @@ class GitHubAuthError(RuntimeError):
 
 
 def github_token() -> str:
-    global _token_cache
     with _lock:
-        if _token_cache:
-            return _token_cache
+        if cached := _token_cache.get():
+            return cached
         token = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
-        if not token and shutil.which("gh"):
+        if not token and (gh := shutil.which("gh")):
             try:
-                token = subprocess.run(
-                    ["gh", "auth", "token"],
+                token = subprocess.run(  # noqa: S603 -- fixed argv, resolved gh binary
+                    [gh, "auth", "token"],
                     capture_output=True,
                     text=True,
                     timeout=10,
@@ -48,7 +49,7 @@ def github_token() -> str:
                 "GitHub token not found. Set GITHUB_TOKEN (recommended: from Secret Manager) "
                 "or log in with `gh auth login` for local development."
             )
-        _token_cache = token
+        _token_cache.set(token)
         return token
 
 
@@ -102,9 +103,9 @@ def gh_rest(
             timeout=timeout,
         )
     except GitHubAuthError as exc:
-        return False, {"status": "auth_error", "message": str(exc)}
+        return False, {"status": "auth_error", "message": error_message(exc)}
     except httpx.HTTPError as exc:
-        return False, {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+        return False, tool_error(exc)
     if resp.status_code >= 400:
         return False, _error(resp)
     if accept and "application/vnd.github.raw" in accept:

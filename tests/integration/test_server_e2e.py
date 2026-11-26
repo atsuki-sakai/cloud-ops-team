@@ -76,7 +76,7 @@ def start_server() -> subprocess.Popen[str]:
         "uvicorn",
         "app.fast_api_app:app",
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
         "8000",
     ]
@@ -116,7 +116,7 @@ def wait_for_server(timeout: int = 90, interval: int = 1) -> bool:
         except RequestException:
             pass
         time.sleep(interval)
-    logger.error(f"Server did not become ready within {timeout} seconds")
+    logger.error("Server did not become ready within %s seconds", timeout)
     return False
 
 

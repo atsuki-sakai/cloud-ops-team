@@ -9,7 +9,7 @@ comparison unevaluated instead of passing it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 VERDICTS = (
@@ -94,7 +94,7 @@ def evaluate_metrics(metrics: Mapping[str, Any] | None, cfg: Mapping[str, Any]) 
 
 def evaluate_rollout(
     rollout: Mapping[str, Any],
-    scenario_results: list[Mapping[str, Any]],
+    scenario_results: Sequence[Mapping[str, Any]],
     cfg: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Combine readiness, traffic, scenarios and metrics into one verdict."""

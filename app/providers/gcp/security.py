@@ -8,15 +8,25 @@ enabled come back as ``status: api_disabled`` with an enablement hint.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import datetime as dt
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.config import CONFIG
 from app.core.findings import error_result, finding, result
 from app.core.redact import redact
 from app.core.timeutil import utcnow
-from app.providers.gcp.client import gcp_get, gcp_list, gcp_post, project_path
+from app.providers.gcp.client import (
+    failure_payload,
+    gcp_get,
+    gcp_list,
+    gcp_post,
+    items_payload,
+    project_path,
+)
 from app.providers.gcp.observability import RUN, _run_services_raw, compact_service
 
 CRM = "https://cloudresourcemanager.googleapis.com/v1"
@@ -110,18 +120,18 @@ def audit_iam_policy() -> dict:
         members = binding.get("members") or []
         roles_summary[role] = [_mask_principal(m) for m in members]
         members_seen.update(members)
-        for member in members:
-            if member in ("allUsers", "allAuthenticatedUsers"):
-                findings.append(
-                    finding(
-                        "iam.public",
-                        "critical",
-                        "公開プリンシパルにプロジェクトロールが付与",
-                        f"{member} → {role}",
-                        "プロジェクトレベルで allUsers/allAuthenticatedUsers にロールが付いています。",
-                        "直ちにバインディングを削除し、必要なら個別リソース（Cloud Run invoker 等）に限定する。",
-                    )
-                )
+        findings.extend(
+            finding(
+                "iam.public",
+                "critical",
+                "公開プリンシパルにプロジェクトロールが付与",
+                f"{member} → {role}",
+                "プロジェクトレベルで allUsers/allAuthenticatedUsers にロールが付いています。",
+                "直ちにバインディングを削除し、必要なら個別リソース（Cloud Run invoker 等）に限定する。",
+            )
+            for member in members
+            if member in ("allUsers", "allAuthenticatedUsers")
+        )
         if role in ("roles/owner", "roles/editor"):
             users = [m for m in members if m.startswith("user:")]
             sas = [m for m in members if m.startswith("serviceAccount:")]
@@ -217,8 +227,8 @@ def audit_service_account_keys() -> dict:
         params={"pageSize": 100},
     )
     if not ok:
-        return error_result("sa_keys", accounts)
-    assert isinstance(accounts, list)
+        return error_result("sa_keys", failure_payload(accounts))
+    accounts = items_payload(accounts)
     findings: list[dict[str, Any]] = []
     with_keys = 0
     key_total = 0
@@ -227,6 +237,7 @@ def audit_service_account_keys() -> dict:
         if account.get("disabled"):
             continue
         email = account.get("email", "")
+        # ast-grep-ignore: api-call-in-loop -- bounded: at most 60 service accounts; IAM has no batch key listing
         ok2, keys = gcp_get(
             f"{IAM}/projects/{CONFIG.target}/serviceAccounts/{email}/keys",
             params={"keyTypes": "USER_MANAGED"},
@@ -242,12 +253,8 @@ def audit_service_account_keys() -> dict:
             key_total += 1
             created = key.get("validAfterTime", "")
             age_days = None
-            try:
-                age_days = (
-                    utcnow() - dt.datetime.fromisoformat(created.replace("Z", "+00:00"))
-                ).days
-            except ValueError:
-                pass
+            with contextlib.suppress(ValueError):
+                age_days = (utcnow() - dt.datetime.fromisoformat(created)).days
             sev = "high" if (age_days or 0) > 90 else "medium"
             findings.append(
                 finding(
@@ -278,13 +285,14 @@ def audit_cloud_run_security() -> dict:
     account, plain-text secret-looking env vars, image pinning and deploy age."""
     ok, services = _run_services_raw()
     if not ok:
-        return error_result("cloud_run", services)
-    assert isinstance(services, list)
+        return error_result("cloud_run", failure_payload(services))
+    services = items_payload(services)
     findings: list[dict[str, Any]] = []
     rows = []
     for raw in services:
         svc = compact_service(raw)
         name = svc["name"] or ""
+        # ast-grep-ignore: api-call-in-loop -- Cloud Run has no batch getIamPolicy; bounded by the paged service list
         ok2, policy = gcp_get(f"{RUN}/{raw.get('name')}:getIamPolicy")
         public = False
         if ok2:
@@ -360,9 +368,7 @@ def audit_cloud_run_security() -> dict:
                     )
                 )
         try:
-            updated = dt.datetime.fromisoformat(
-                str(svc["update_time"]).replace("Z", "+00:00")
-            )
+            updated = dt.datetime.fromisoformat(str(svc["update_time"]))
             age = (utcnow() - updated).days
         except ValueError:
             age = None
@@ -664,8 +670,8 @@ def audit_firewall_rules() -> dict:
         f"{COMPUTE}/projects/{CONFIG.target}/global/firewalls", "items"
     )
     if not ok:
-        return error_result("firewall", rules)
-    assert isinstance(rules, list)
+        return error_result("firewall", failure_payload(rules))
+    rules = items_payload(rules)
     ok_i, agg = gcp_get(
         f"{COMPUTE}/projects/{CONFIG.target}/aggregated/instances",
         params={"maxResults": 500},
@@ -774,8 +780,8 @@ def audit_security_services() -> dict:
         max_pages=5,
     )
     if not ok:
-        return error_result("security_services", services)
-    assert isinstance(services, list)
+        return error_result("security_services", failure_payload(services))
+    services = items_payload(services)
     enabled = {(s.get("config") or {}).get("name") for s in services}
     findings: list[dict[str, Any]] = []
     for api, (desc, severity) in _RECOMMENDED_APIS.items():
@@ -841,7 +847,8 @@ def list_scc_findings(max_findings: int) -> dict:
         )
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
     rows.sort(key=lambda r: order.get(r["severity"], 9))
-    counts: dict[str, int] = {}
+    # SCC can omit severity; the missing bucket is kept as-is (None).
+    counts: dict[str | None, int] = {}
     for r in rows:
         counts[r["severity"]] = counts.get(r["severity"], 0) + 1
     return {
@@ -853,13 +860,43 @@ def list_scc_findings(max_findings: int) -> dict:
     }
 
 
+# Container Analysis has no verified multi-image filter, so each image needs its
+# own list call. Run them with a fixed upper bound instead of one after another.
+_SCAN_WORKERS = 4
+
+
+def _image_occurrences(image: str) -> tuple[bool, list[Any] | dict[str, Any]]:
+    params = {
+        "filter": f'kind="VULNERABILITY" AND resourceUrl="https://{image}"',
+        "pageSize": 1000,
+    }
+    return gcp_list(
+        f"{CONTAINERANALYSIS}/{project_path()}/occurrences",
+        "occurrences",
+        params=params,
+        max_pages=3,
+    )
+
+
+def _image_occurrences_bounded(
+    images: list[str],
+) -> dict[str, tuple[bool, list[Any] | dict[str, Any]]]:
+    """List occurrences for every image, at most ``_SCAN_WORKERS`` at a time."""
+    with ThreadPoolExecutor(max_workers=_SCAN_WORKERS) as pool:
+        futures = [
+            pool.submit(contextvars.copy_context().run, _image_occurrences, image)
+            for image in images
+        ]
+        return {image: f.result() for image, f in zip(images, futures, strict=True)}
+
+
 def scan_deployed_images() -> dict:
     """Summarise Artifact Analysis vulnerability results for the container
     images currently serving each Cloud Run service."""
     ok, services = _run_services_raw()
     if not ok:
-        return error_result("image_scan", services)
-    assert isinstance(services, list)
+        return error_result("image_scan", failure_payload(services))
+    services = items_payload(services)
     images: dict[str, list[str]] = {}
     errors: list[dict[str, Any]] = []
     for raw in services:
@@ -897,6 +934,7 @@ def scan_deployed_images() -> dict:
                 if rev.startswith("projects/")
                 else f"{service_path}/revisions/{rev}"
             )
+            # ast-grep-ignore: api-call-in-loop -- bounded: only revisions currently serving traffic (usually 1-2 per service)
             ok2, revision = gcp_get(f"{RUN}/{revision_path}")
             if not ok2:
                 errors.append(
@@ -943,32 +981,23 @@ def scan_deployed_images() -> dict:
             for digest in digests:
                 images.setdefault(digest, []).append(svc_name)
     results = []
+    fetched = _image_occurrences_bounded(list(images))
     for image, used_by in images.items():
-        params = {
-            "filter": f'kind="VULNERABILITY" AND resourceUrl="https://{image}"',
-            "pageSize": 1000,
-        }
-        ok3, occurrences = gcp_list(
-            f"{CONTAINERANALYSIS}/{project_path()}/occurrences",
-            "occurrences",
-            params=params,
-            max_pages=3,
-        )
+        ok3, occurrences = fetched[image]
         if not ok3:
-            errors.append(
-                {"image": image, "used_by": sorted(set(used_by)), **occurrences}
-            )
+            failure = failure_payload(occurrences)
+            errors.append({"image": image, "used_by": sorted(set(used_by)), **failure})
             results.append(
                 {
                     "image": image,
                     "used_by": sorted(set(used_by)),
-                    "status": occurrences.get("status", "error"),
+                    "status": failure.get("status", "error"),
                     "scanned": False,
                     "complete": False,
                 }
             )
             continue
-        assert isinstance(occurrences, list)
+        occurrences = items_payload(occurrences)
         counts: dict[str, int] = {}
         fixable = 0
         top = []

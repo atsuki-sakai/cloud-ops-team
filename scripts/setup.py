@@ -49,7 +49,7 @@ def detect() -> dict[str, str | bool]:
     """Best-effort defaults from the local gcloud / gh setup."""
     project = _run(["gcloud", "config", "get-value", "project"])
     return {
-        "gcloud_project": "" if project in ("(unset)",) else project,
+        "gcloud_project": "" if project == "(unset)" else project,
         "gcloud_account": _run(["gcloud", "config", "get-value", "account"]),
         "adc": bool(
             _run(["gcloud", "auth", "application-default", "print-access-token"])
@@ -229,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{env_path} exists; pass --force to back it up and overwrite."
             )
         backup = env_path.with_name(
-            f"{env_path.name}.backup-{dt.datetime.now():%Y%m%d-%H%M%S}"
+            f"{env_path.name}.backup-{dt.datetime.now().astimezone():%Y%m%d-%H%M%S}"
         )
         shutil.copy2(env_path, backup)
         backup.chmod(0o600)

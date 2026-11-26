@@ -14,12 +14,15 @@ from typing import Any
 _PRIVATE_IP = re.compile(
     r"^(0\.0\.0\.0$|10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)"
 )
-_SECRET_KEYS = (
+# Regex of secret key *names*, not a credential.
+_SENSITIVE_KEY_NAMES = (
     r"password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret"
 )
-_SECRET_KEY = re.compile(rf"(?:{_SECRET_KEYS})", re.I)
-_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.I)
-_QUOTED_SECRET = re.compile(rf"[\"'](?:{_SECRET_KEYS})[\"']\s*:\s*", re.I)
+_SECRET_KEY = re.compile(rf"(?:{_SENSITIVE_KEY_NAMES})", re.IGNORECASE)
+_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.IGNORECASE)
+_QUOTED_SECRET = re.compile(
+    rf"[\"'](?:{_SENSITIVE_KEY_NAMES})[\"']\s*:\s*", re.IGNORECASE
+)
 
 
 def _redact_quoted_secrets(text: str) -> str:

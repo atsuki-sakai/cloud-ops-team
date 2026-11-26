@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -139,6 +139,8 @@ class StepFailure(Exception):
         self.failure = failure
         self.detail = detail
         self.observed = observed or {}
+        # Steps completed before the failure; filled in by the step runner.
+        self.steps: list[StepResult] = []
 
 
 def _ms(start: float) -> int:
@@ -539,13 +541,15 @@ def run_browser_steps(
                     {**observed, **exc.observed},
                 )
             )
-            exc.steps = results  # type: ignore[attr-defined]
+            exc.steps = results
             raise
     return results
 
 
 def _load_playwright() -> Any:
-    from playwright.sync_api import sync_playwright  # optional dependency
+    from playwright.sync_api import (
+        sync_playwright,
+    )
 
     return sync_playwright
 
@@ -578,7 +582,7 @@ def run_browser_attempt(
         with factory() as playwright:
             try:
                 browser = playwright.chromium.launch(headless=True)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- checker boundary: report launch failure as a result
                 return AttemptResult(
                     number,
                     started_at,
@@ -620,7 +624,7 @@ def run_browser_attempt(
                 version = browser.version
             finally:
                 browser.close()
-    except Exception as exc:  # the checker itself failed, not the site
+    except Exception as exc:  # noqa: BLE001 -- checker boundary: the checker itself failed, not the site
         return AttemptResult(
             number, started_at, steps, _ms(started), "checker_error", type(exc).__name__
         )
@@ -693,7 +697,7 @@ def severity_for(scenario: Scenario, outcome: str) -> str:
 
 
 @contextmanager
-def _deadline(seconds: int) -> Iterator[Callable[[], bool]]:
+def _deadline(seconds: int) -> Generator[Callable[[], bool], None, None]:
     end = time.monotonic() + seconds
     yield lambda: time.monotonic() >= end
 
@@ -802,7 +806,7 @@ def run_suite(
     """Run scenarios sequentially within the suite's time budget."""
     selected = suite.scenarios if scenarios is None else scenarios
     control = control_check(suite.control_url, http_client)
-    rows = []
+    rows: list[dict[str, Any]] = []
     with _deadline(suite.run_budget_seconds) as expired:
         for scenario in selected:
             if expired():

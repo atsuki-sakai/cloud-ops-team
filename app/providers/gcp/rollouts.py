@@ -13,7 +13,13 @@ from typing import Any
 
 from app.config import CONFIG
 from app.core.timeutil import iso_utc, parse_time, utcnow
-from app.providers.gcp.client import gcp_get, gcp_list, project_path
+from app.providers.gcp.client import (
+    failure_payload,
+    gcp_get,
+    gcp_list,
+    items_payload,
+    project_path,
+)
 from app.providers.gcp.observability import MONITORING, _run_parent, _short
 
 MAX_SERVICES = 10
@@ -32,7 +38,7 @@ def _ready(resource: dict[str, Any]) -> tuple[bool, str]:
 
 def _series(
     metric: str, service: str, start: dt.datetime, end: dt.datetime, *, latency: bool
-):
+) -> tuple[bool, list[Any] | dict[str, Any]]:
     seconds = max(60, int((end - start).total_seconds()))
     params: dict[str, Any] = {
         "filter": (
@@ -90,9 +96,9 @@ def _window(
 
     ok, counts = _series("request_count", service, start, end, latency=False)
     if not ok:
-        return {**out, "status": counts.get("status", "error")}
+        return {**out, "status": failure_payload(counts).get("status", "error")}
     revisions: set[str] = set()
-    for series in counts:
+    for series in items_payload(counts):
         revision = ((series.get("resource") or {}).get("labels") or {}).get(
             "revision_name", ""
         )
@@ -110,7 +116,7 @@ def _window(
     if ok:
         values = [
             _value(point)
-            for series in latencies
+            for series in items_payload(latencies)
             if selected(
                 ((series.get("resource") or {}).get("labels") or {}).get(
                     "revision_name", ""
@@ -122,7 +128,7 @@ def _window(
         # boundary; the highest one is reported rather than an invented mean.
         out["p95_ms"] = round(max(values), 1) if values else None
     else:
-        out["latency_status"] = latencies.get("status", "error")
+        out["latency_status"] = failure_payload(latencies).get("status", "error")
     out["revisions"] = sorted(revisions)
     out["status"] = "ok"
     return out
@@ -155,7 +161,9 @@ def list_recent_rollouts(minutes: int) -> dict:
         f"{_run_parent()}/services", "services", params={"pageSize": 100}
     )
     if not ok:
-        return {"status": services.get("status", "error"), "error": services}
+        error = failure_payload(services)
+        return {"status": error.get("status", "error"), "error": error}
+    services = items_payload(services)
     recent = [
         svc
         for svc in services
@@ -181,6 +189,7 @@ def list_recent_rollouts(minutes: int) -> dict:
             }
             for row in svc.get("trafficStatuses") or []
         ]
+        # ast-grep-ignore: api-call-in-loop -- bounded: at most MAX_SERVICES (10) services; revisions are listed per service
         ok, payload = gcp_get(
             f"{_run_parent()}/services/{name}/revisions", params={"pageSize": 20}
         )
@@ -215,6 +224,7 @@ def list_recent_rollouts(minutes: int) -> dict:
                 "superseded": index > 0,
             }
             if index == 0:
+                # ast-grep-ignore: api-call-in-loop -- bounded: newest revision only, at most MAX_SERVICES (10) services
                 row["metrics"] = _metrics(name, revision, created, now)
             rows.append(row)
     return {

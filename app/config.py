@@ -50,7 +50,7 @@ _PROVIDER_ENV: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
 }
 
 
-def _env_bool(name: str, default: bool) -> bool:
+def _env_bool(name: str, *, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         return default
@@ -183,8 +183,8 @@ def load_config() -> OpsConfig:
         model=model,
         research_model=(os.getenv("OPS_RESEARCH_MODEL") or model).strip(),
         report_language=_first_word(os.getenv("OPS_REPORT_LANGUAGE"), "ja"),
-        dry_run=_env_bool("OPS_DRY_RUN", True),
-        auto_close_issues=_env_bool("OPS_AUTO_CLOSE_ISSUES", False),
+        dry_run=_env_bool("OPS_DRY_RUN", default=True),
+        auto_close_issues=_env_bool("OPS_AUTO_CLOSE_ISSUES", default=False),
         max_issues_per_run=_env_int("OPS_MAX_ISSUES_PER_RUN", 10),
         error_lookback_hours=_env_int(
             "OPS_ERROR_LOOKBACK_HOURS", DEFAULT_WATCH_LOOKBACK_HOURS

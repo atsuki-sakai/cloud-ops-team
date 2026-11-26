@@ -247,7 +247,7 @@ def evaluate_run(
     _require(run.get("mode") in {"runtime_stubbed", "live_model"}, "mode required")
     conditions = run.get("conditions")
     _require(
-        isinstance(conditions, dict) and CONDITION_FIELDS <= conditions.keys(),
+        isinstance(conditions, dict) and conditions.keys() >= CONDITION_FIELDS,
         "fixed conditions missing",
     )
     for key in CONDITION_FIELDS - {"model_config"}:

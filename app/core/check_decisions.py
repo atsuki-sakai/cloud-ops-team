@@ -96,7 +96,7 @@ def service_check_decision(
             "reason": "collection_failed",
             "transitions": [],
         }
-    if run.get("status") in ("not_configured",):
+    if run.get("status") == "not_configured":
         return {
             "analysis_required": False,
             "reason": "not_configured",
@@ -238,7 +238,7 @@ def _deploy_lines(evidence: Mapping[str, Any]) -> list[str]:
         before, after = metrics.get("before") or {}, metrics.get("after") or {}
         samples = (
             f"{before.get('requests', '-')}/{after.get('requests', '-')}"
-            if metrics.get("verdict") not in ("unavailable",)
+            if metrics.get("verdict") != "unavailable"
             else "unavailable"
         )
         if not row.get("metrics_evaluated") and metrics.get("verdict") != "unavailable":

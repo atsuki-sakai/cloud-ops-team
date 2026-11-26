@@ -52,7 +52,7 @@ ALLOWED_HEADERS = ("accept", "accept-language", "cache-control")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _HOST = re.compile(r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _CREDENTIAL_WORDS = re.compile(
-    r"password|passwd|secret|token|api[_-]?key|cookie|authorization", re.I
+    r"password|passwd|secret|token|api[_-]?key|cookie|authorization", re.IGNORECASE
 )
 
 DEFAULTS: dict[str, Any] = {

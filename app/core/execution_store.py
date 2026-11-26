@@ -8,6 +8,7 @@ raw-media sanitization, and it is not connected to job execution automatically.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -18,7 +19,7 @@ import sqlite3
 import stat
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +32,7 @@ TERMINAL_STATUSES = frozenset(
     {"succeeded", "failed", "timed_out", "partial", "report_failed", "interrupted"}
 )
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}\Z")
-_UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z", re.I)
+_UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z", re.IGNORECASE)
 _SECRET_KEY = re.compile(
     r"secret|token|password|passwd|pwd|credential|authorization|cookie|private.?key|api.?key|access.?key",
     re.IGNORECASE,
@@ -213,18 +214,16 @@ class ExecutionStore:
             )
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
         self._check_ancestors()
         self._check_private(self._path.parent, directory=True)
         self._check_private(self._path)
         for suffix in ("-journal", "-wal", "-shm"):
             sidecar = Path(str(self._path) + suffix)
-            try:
+            # Another connection may remove its journal while committing.
+            # Only these optional files may disappear; the DB stays required.
+            with contextlib.suppress(FileNotFoundError):
                 self._check_private(sidecar, allow_unlinked=True)
-            except FileNotFoundError:
-                # Another connection may remove its journal while committing.
-                # Only these optional files may disappear; the DB stays required.
-                pass
         conn = sqlite3.connect(self._path, timeout=10)
         conn.row_factory = sqlite3.Row
         try:

@@ -20,7 +20,7 @@ def no_external_requests(monkeypatch):
 
     monkeypatch.setattr(httpx, "request", fail)
     monkeypatch.setattr(httpx, "get", fail)
-    monkeypatch.setattr(threat_intel, "_kev_cache", None)
+    threat_intel._kev_cache.clear()
 
 
 def mock_repo(monkeypatch, overrides=None, *, admin=False):
@@ -299,7 +299,7 @@ def test_invalid_json_feed_returns_error(monkeypatch, tool):
     )
 
     assert out["status"] == "error"
-    assert threat_intel._kev_cache is None
+    assert threat_intel._kev_cache.get() is None
 
 
 @pytest.mark.parametrize(
@@ -320,7 +320,7 @@ def test_malformed_kev_feed_returns_error_without_caching(monkeypatch, payload):
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: response)
 
     assert threat_intel.fetch_cisa_kev(30)["status"] == "error"
-    assert threat_intel._kev_cache is None
+    assert threat_intel._kev_cache.get() is None
 
 
 @pytest.mark.parametrize(

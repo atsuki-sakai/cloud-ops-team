@@ -9,13 +9,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,9 @@ def current_delivery_identity() -> DeliveryIdentity | None:
 
 
 @contextmanager
-def bind_delivery_identity(identity: DeliveryIdentity | None) -> Iterator[None]:
+def bind_delivery_identity(
+    identity: DeliveryIdentity | None,
+) -> Generator[None, None, None]:
     token = _delivery.set(identity)
     try:
         yield
@@ -67,7 +69,7 @@ def _scheduler_identity(scope: Scope) -> DeliveryIdentity | None:
     job, schedule = (group[0].decode("ascii") for group in values)
     if not job or len(job) > 1024 or any(ord(char) <= 32 for char in job):
         raise ValueError("Invalid scheduler job")
-    moment = dt.datetime.fromisoformat(schedule.replace("Z", "+00:00"))
+    moment = dt.datetime.fromisoformat(schedule)
     if moment.tzinfo is None or moment.timestamp() < 0:
         raise ValueError("Invalid scheduler time")
     normalized = moment.astimezone(dt.UTC).isoformat()
@@ -149,7 +151,7 @@ class ExecutionIdentityMiddleware:
 
         delivered = False
 
-        async def replay() -> dict:
+        async def replay() -> Message:
             nonlocal delivered
             if not delivered:
                 delivered = True

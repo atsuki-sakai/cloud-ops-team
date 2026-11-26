@@ -1,0 +1,6 @@
+id: in-except
+language: python
+rule:
+  inside:
+    kind: except_clause
+    stopBy: end

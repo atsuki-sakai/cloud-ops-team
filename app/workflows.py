@@ -18,11 +18,12 @@ from typing import Any
 
 from app import tools
 from app.core import check_decisions
+from app.core.errors import tool_error
 from app.core.redact import redact_obj
 from app.core.timeutil import parse_time, utcnow
 from app.execution_history import current_execution
 from app.routing import normalize_job_params
-from app.specialists.base import Job, Specialist
+from app.specialists.base import Job, Specialist, tool_name
 
 MAX_RESULT_CHARACTERS = 16_000
 MAX_EVIDENCE_CHARACTERS = 64_000
@@ -159,13 +160,10 @@ def _bounded_result(value: Any, limit: int = MAX_RESULT_CHARACTERS) -> dict[str,
             json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
         )
         if not isinstance(clean, dict):
-            raise ValueError("Collector must return an object")
+            raise TypeError("Collector must return an object")
         encoded = json.dumps(clean, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError, OverflowError):
-        return {
-            "status": "error",
-            "message": "Collector returned invalid structured data",
-        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        return tool_error(exc, message="Collector returned invalid structured data")
     if len(encoded) <= limit:
         return clean
     return {
@@ -217,7 +215,7 @@ def prepare_job(
         raise ValueError("Job is not registered to this specialist")
     params = normalize_job_params(job, params)
     steps = collection_steps(job.name, params)
-    original = {tool.__name__: tool for tool in specialist.tools}
+    original = {tool_name(tool): tool for tool in specialist.tools}
     if any(step.name not in original for step in steps):
         raise ValueError("Collection workflow uses a tool outside the specialist scope")
     checks: dict[str, dict[str, Any]] = {}
@@ -235,13 +233,9 @@ def prepare_job(
         if context_valid:
             try:
                 raw = getattr(tools, step.name)(**step.arguments)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- collector boundary: one failing source must not stop the job
                 # Exception strings can contain credentials or request URLs.
-                raw = {
-                    "status": "error",
-                    "message": "Collector failed",
-                    "error_type": type(exc).__name__,
-                }
+                raw = tool_error(exc, message="Collector failed")
         else:
             raw = {
                 "status": "error",
@@ -272,7 +266,7 @@ def prepare_job(
             raw = _pr_review_candidates(raw)
         if job.name == "service_check" and step.name == "list_ops_issues":
             raw = check_decisions.service_incidents(raw)
-        value = _bounded_result(raw)
+        value: dict[str, Any] = _bounded_result(raw)
         if step.name == "get_run_context":
             context_valid = (
                 isinstance(value.get("target"), str)
@@ -324,7 +318,7 @@ def prepare_job(
             )
         )
     context = checks.pop("get_run_context")
-    evidence = {
+    evidence: dict[str, Any] = {
         "status": "partial" if _incomplete(checks) or _incomplete(context) else "ok",
         "phase": "collect",
         "job": job.name,
@@ -379,7 +373,7 @@ def prepare_job(
         specialist,
         tools=[
             get_collected_evidence,
-            *(tool for tool in specialist.tools if tool.__name__ not in collected),
+            *(tool for tool in specialist.tools if tool_name(tool) not in collected),
         ],
     )
     if decide is None:

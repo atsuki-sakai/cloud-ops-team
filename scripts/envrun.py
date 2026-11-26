@@ -24,7 +24,7 @@ def main() -> None:
     values = dotenv_values(env_file) if env_file.exists() else {}
     env = {key: value for key, value in values.items() if value is not None}
     env.update(os.environ)
-    os.execvpe(sys.argv[1], sys.argv[1:], env)
+    os.execvpe(sys.argv[1], sys.argv[1:], env)  # noqa: S606 -- exec wrapper: runs the developer's own command
 
 
 if __name__ == "__main__":

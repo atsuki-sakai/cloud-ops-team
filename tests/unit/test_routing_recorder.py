@@ -307,17 +307,16 @@ def test_deadline_snapshot_sees_adk_model_task_before_timeout_cleanup():
             session_service=sessions,
         )
         snapshot = DeadlineTaskSnapshot(0.05, time.monotonic())
-        with pytest.raises(TimeoutError):
-            with snapshot:
-                async with asyncio.timeout(0.05):
-                    async for _event in runner.run_async(
-                        user_id="fixture",
-                        session_id=session.id,
-                        new_message=types.Content(
-                            role="user", parts=[types.Part.from_text(text="fixture")]
-                        ),
-                    ):
-                        pass
+        with pytest.raises(TimeoutError), snapshot:
+            async with asyncio.timeout(0.05):
+                async for _event in runner.run_async(
+                    user_id="fixture",
+                    session_id=session.id,
+                    new_message=types.Content(
+                        role="user", parts=[types.Part.from_text(text="fixture")]
+                    ),
+                ):
+                    pass
         assert entered.is_set()
         assert cancelled.is_set()
         assert snapshot.handle is not None and snapshot.handle.cancelled()

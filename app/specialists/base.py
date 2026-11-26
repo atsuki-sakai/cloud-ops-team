@@ -16,6 +16,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def tool_name(tool: Callable[..., Any]) -> str:
+    """Return the name ADK registers a function tool under (its ``__name__``)."""
+    name = getattr(tool, "__name__", None)
+    if not isinstance(name, str):
+        raise TypeError(f"Tool {tool!r} has no __name__")
+    return name
+
+
 @dataclass(frozen=True)
 class Job:
     """A unit of work the leader can be asked to do (by the scheduler or a human).

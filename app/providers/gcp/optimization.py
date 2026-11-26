@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.config import CONFIG
+from app.core.errors import tool_error
 from app.core.redact import redact
 from app.providers.gcp.client import gcp_list
 
@@ -166,8 +167,10 @@ def _recommendation(item: dict[str, Any], source: dict[str, Any]) -> dict[str, A
     impacts = []
     if isinstance(item.get("primaryImpact"), dict):
         impacts.append({"primary": True, **_impact(item["primaryImpact"])})
-    for impact in item.get("additionalImpact", []):
-        impacts.append({"primary": False, **_impact(impact)})
+    impacts.extend(
+        {"primary": False, **_impact(impact)}
+        for impact in item.get("additionalImpact", [])
+    )
     out = _safe(
         {
             "name": item.get("name", ""),
@@ -215,16 +218,17 @@ def list_optimization_recommendations() -> dict[str, Any]:
             "required_viewer_role": role,
         }
         try:
+            # ast-grep-ignore: api-call-in-loop -- bounded: fixed _SOURCES tuple of recommenders
             ok, payload = gcp_list(
                 url,
                 "recommendations",
                 params={"filter": "stateInfo.state = ACTIVE", "pageSize": 100},
                 max_pages=MAX_PAGES,
             )
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError) as exc:
             ok, payload = (
                 False,
-                {"status": "error", "message": "Malformed recommendation response."},
+                tool_error(exc, message="Malformed recommendation response."),
             )
         rows: list[dict[str, Any]] = []
         if ok and isinstance(payload, list):
@@ -237,10 +241,10 @@ def list_optimization_recommendations() -> dict[str, Any]:
                         raise ValueError("Missing recommendation state")
                     if item["stateInfo"]["state"] == "ACTIVE":
                         rows.append(_recommendation(item, source))
-            except (AttributeError, KeyError, TypeError, ValueError):
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 ok, payload = (
                     False,
-                    {"status": "error", "message": "Malformed recommendation record."},
+                    tool_error(exc, message="Malformed recommendation record."),
                 )
         elif ok:
             ok, payload = (

@@ -14,16 +14,17 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequen
 from contextlib import aclosing
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.context import Context
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 from google.genai import types
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.config import CONFIG
+from app.core.redact import redact
 from app.core.run_budget import invocation_budget
 from app.execution_history import begin_execution, bind_execution
 from app.specialists.base import Job, Specialist
@@ -245,7 +246,7 @@ class ScheduledRouter(Agent):
             self._audit(ctx, "job_rejected", code="invalid_job_request")
             yield self._result(
                 ctx,
-                json.dumps({"status": "rejected", "reason": str(exc)}),
+                json.dumps({"status": "rejected", "reason": redact(str(exc))}),
                 error_code="invalid_job_request",
             )
             return
@@ -345,12 +346,12 @@ class ScheduledRouter(Agent):
                 if execution is not None:
                     try:
                         execution.finish("interrupted", reason="cancelled")
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- history is best effort; the cancellation must propagate
                         self._audit(
                             ctx, "history_failed", code="history_finalization_failed"
                         )
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- job boundary: one failed job becomes an error result
                 if execution is not None:
                     try:
                         execution.finish(
@@ -359,7 +360,7 @@ class ScheduledRouter(Agent):
                             if isinstance(exc, TimeoutError)
                             else "execution_error",
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 -- history is best effort; the job failure is still reported
                         self._audit(
                             ctx, "history_failed", code="history_finalization_failed"
                         )
@@ -369,17 +370,7 @@ class ScheduledRouter(Agent):
                     job=routed.job.name,
                     code="job_execution_failed",
                 )
-                yield self._result(
-                    ctx,
-                    json.dumps(
-                        {
-                            "status": "error",
-                            "job": routed.job.name,
-                            "completed_jobs": completed,
-                        }
-                    ),
-                    error_code="job_execution_failed",
-                )
+                yield self._job_failed(ctx, routed.job.name, completed)
                 return
             completed.append(routed.job.name)
             reports.append(
@@ -398,6 +389,16 @@ class ScheduledRouter(Agent):
                 },
                 sort_keys=True,
             )
+        )
+
+    def _job_failed(
+        self, ctx: InvocationContext, job: str, completed: list[str]
+    ) -> Event:
+        """Job result contract: no exception detail leaves the router."""
+        return self._result(
+            ctx,
+            json.dumps({"status": "error", "job": job, "completed_jobs": completed}),
+            error_code="job_execution_failed",
         )
 
     def _result(
@@ -444,9 +445,18 @@ class ScheduledJobAdapter(ScheduledRouter):
     tool, so collector/analysis events remain visible in the parent's stream.
     """
 
-    # Narrowed on purpose: an adapter is always single-turn and never runs full.
-    mode: Literal["single_turn"] = "single_turn"  # ty: ignore[incompatible-mutable-override]
-    allow_full: Literal[False] = False  # ty: ignore[incompatible-mutable-override]
+    @model_validator(mode="before")
+    @classmethod
+    def _single_turn_only(cls, data: Any) -> Any:
+        """An adapter is always single-turn and never runs a full job."""
+        if not isinstance(data, dict):
+            return data
+        data = {"mode": "single_turn", "allow_full": False, **data}
+        if data["mode"] != "single_turn" or data["allow_full"] is not False:
+            raise ValueError(
+                "ScheduledJobAdapter must be single_turn with allow_full=False"
+            )
+        return data
 
     async def _run_impl(
         self, *, ctx: Context, node_input: Any
@@ -481,7 +491,9 @@ def conversation_tool_guard(
     """Reject extra outer tool arguments before ADK's adapter consumes request."""
     allowed = {adapter.name for adapter in adapters}
 
-    def before_tool_callback(tool: Any, args: dict, tool_context: Any):
+    def before_tool_callback(
+        tool: Any, args: dict, tool_context: Any
+    ) -> dict[str, str] | None:
         if getattr(tool, "name", None) not in allowed:
             return {"status": "rejected", "reason": "workflow_not_allowed"}
         if not isinstance(args, dict) or set(args) != {"request"}:

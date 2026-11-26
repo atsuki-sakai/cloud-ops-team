@@ -464,7 +464,7 @@ def test_url_expectation_waits_for_navigation_and_counts_the_wait(monkeypatch):
 
     def navigates_later(predicate, timeout):
         page.url = "https://www.example.com/done"
-        return None
+        return
 
     page.wait_for_url = navigates_later
     monkeypatch.setattr(synthetic.time, "monotonic", lambda: next(clock, 10.0))

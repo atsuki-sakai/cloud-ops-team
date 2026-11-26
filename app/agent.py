@@ -1,4 +1,3 @@
-# ruff: noqa
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +28,7 @@ from contextlib import aclosing
 
 from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.agents.invocation_context import InvocationContext
 from google.adk.apps import App
 from google.adk.events import Event
 from google.adk.models import Gemini
@@ -83,7 +83,7 @@ def build_specialist(specialist: Specialist, *, phase: str = "legacy") -> Agent:
     )
 
 
-def _report_event(ctx, author: str, text: str) -> Event:
+def _report_event(ctx: InvocationContext, author: str, text: str) -> Event:
     return Event(
         invocation_id=ctx.invocation_id,
         author=author,
@@ -96,7 +96,9 @@ class FixedReportAgent(BaseAgent):
 
     report: str
 
-    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(
+        self, ctx: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
         yield _report_event(ctx, self.name, self.report)
 
 
@@ -112,7 +114,9 @@ class VerdictGuardAgent(BaseAgent):
     verdict_summary: str
     failure_report: str
 
-    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(
+        self, ctx: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
         final = ""
         try:
             async with aclosing(self.analysis.run_async(ctx)) as events:
@@ -129,7 +133,7 @@ class VerdictGuardAgent(BaseAgent):
                             # The combined report below replaces this final text.
                             continue
                     yield event
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- analysis boundary: any failure must still yield the code-verdict report
             logger.info(
                 json.dumps(
                     {

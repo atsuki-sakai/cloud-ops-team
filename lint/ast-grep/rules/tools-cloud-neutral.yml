@@ -1,0 +1,18 @@
+id: tools-cloud-neutral
+language: python
+severity: error
+message: app/tools/ はクラウドに依存してはいけません（クラウド SDK / 個別プロバイダの import）。
+note: |
+  クラウド固有の処理は app/providers/<cloud>/ に置き、CloudProvider の契約（app/providers/base.py）に追加する。
+  ツールからは app.providers.get_provider() 経由でだけ呼ぶ（docs/providers.md）。
+files:
+  - app/tools/**/*.py
+rule:
+  any:
+    - kind: import_from_statement
+      has:
+        field: module_name
+        regex: ^(google\.cloud|googleapiclient|boto3|botocore|azure|app\.providers\.\w+)
+    - kind: import_statement
+      has:
+        regex: ^(google\.cloud|googleapiclient|boto3|botocore|azure|app\.providers\.\w+)

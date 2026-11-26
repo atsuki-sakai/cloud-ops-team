@@ -87,13 +87,12 @@ async def run_request(router, text, *, state=None):
         app_name="app", user_id="offline", state=state or {}
     )
     runner = Runner(agent=router, app_name="app", session_service=service)
-    events = [
+    return [
         event
         async for event in runner.run_async(
             user_id="offline", session_id=session.id, new_message=content(text)
         )
     ]
-    return events
 
 
 @pytest.mark.asyncio
@@ -726,3 +725,15 @@ async def test_parallel_conversation_adapters_share_the_invocation_issue_cap(
     assert budgets[0] is not None and all(budget is budgets[0] for budget in budgets)
     assert budgets[0].issues_created == 1
     assert current_run_budget() is None
+
+
+@pytest.mark.parametrize("override", [{"allow_full": True}, {"mode": "chat"}])
+def test_job_adapter_rejects_full_or_multi_turn_configuration(override):
+    specialist = SPECIALISTS[0]
+    with pytest.raises(ValueError, match="single_turn"):
+        ScheduledJobAdapter(
+            name=specialist.name,
+            specialists=(specialist,),
+            job_runner_factory=lambda *a, **k: None,
+            **override,
+        )

@@ -1,0 +1,24 @@
+id: boundary-error-dict
+language: python
+severity: error
+message: except の中でエラーの辞書を手で組み立てています。境界のエラーは共通の形で返します。
+note: |
+  return tool_error(exc, provider=..., hint=...) を使う（app/core/errors.py）。
+  status / error_type / message の形が全境界でそろい、message は秘匿化・300 文字に制限される。
+  例外の文字列を一切出したくない場合は tool_error(exc, message="固定の説明") と上書きする。
+files:
+  - app/**/*.py
+ignores:
+  - app/core/errors.py
+rule:
+  kind: dictionary
+  has:
+    kind: pair
+    all:
+      - has:
+          field: key
+          regex: ^["']status["']$
+      - has:
+          field: value
+          regex: ^["']error["']$
+  matches: in-except

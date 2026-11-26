@@ -1,0 +1,36 @@
+id: exception-text-unredacted
+language: python
+severity: error
+message: 例外の文字列を秘匿化せずに使っています（認証情報や URL が漏れるおそれ）。
+note: |
+  例外の文字列は app.core.errors の error_message(exc) / tool_error(exc, ...) を通して返す。
+  ログに型名だけ残すなら type(exc).__name__ を使う。
+  投げ直すなら raise NewError("固定の説明") from exc とし、メッセージに exc を埋め込まない。
+files:
+  - app/**/*.py
+ignores:
+  - app/core/errors.py
+utils:
+  exc-name:
+    regex: ^(exc|e|err|error|ex|exception)$
+rule:
+  any:
+    - pattern: str($E)
+    - pattern: repr($E)
+    - pattern: format($E)
+    - kind: interpolation
+      has:
+        kind: identifier
+        matches: exc-name
+  matches: in-except
+  not:
+    any:
+      - inside:
+          stopBy: end
+          any:
+            - pattern: redact($$$)
+            - pattern: error_message($$$)
+            - pattern: tool_error($$$)
+constraints:
+  E:
+    regex: ^(exc|e|err|error|ex|exception)$

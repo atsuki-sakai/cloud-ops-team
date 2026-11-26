@@ -12,7 +12,6 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Any
-from urllib.parse import quote
 
 from google.adk.tools import ToolContext
 
@@ -98,24 +97,56 @@ def _now_local() -> str:
     return dt.datetime.now(CONFIG.tz).strftime("%Y-%m-%d %H:%M %Z")
 
 
-def _ensure_labels(labels: list[str]) -> tuple[bool, list[str] | dict[str, Any]]:
-    """Cache only confirmed labels and stop on failed reads or creation."""
-    created = []
-    for label in labels:
-        if label in _ensured_labels:
-            continue
-        ok, payload = gh_rest("GET", f"{repo_path()}/labels/{quote(label, safe='')}")
+_LABEL_PAGE_SIZE = 100
+_LABEL_MAX_PAGES = 10
+
+
+def _repo_label_names() -> tuple[bool, set[str] | dict[str, Any]]:
+    """List the repository's labels once (case-folded, as GitHub compares them)."""
+    names: set[str] = set()
+    for page in range(1, _LABEL_MAX_PAGES + 1):
+        ok, payload = gh_rest(
+            "GET",
+            f"{repo_path()}/labels",
+            params={"per_page": _LABEL_PAGE_SIZE, "page": page},
+        )
         if not ok:
-            if payload.get("status") != "not_found":
-                return False, payload
+            return False, _failure(payload)
+        items = _items(payload)
+        names.update(
+            item["name"].casefold()
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        )
+        if len(items) < _LABEL_PAGE_SIZE:
+            break
+    return True, names
+
+
+def _ensure_labels(labels: list[str]) -> tuple[bool, list[str] | dict[str, Any]]:
+    """Cache only confirmed labels and stop on failed reads or creation.
+
+    One paged list call replaces a GET per label; only labels that are still
+    missing are created, one POST each (GitHub has no batch label creation).
+    """
+    missing = [label for label in dict.fromkeys(labels) if label not in _ensured_labels]
+    if not missing:
+        return True, []
+    _, existing = _repo_label_names()
+    if not isinstance(existing, set):
+        return False, existing
+    created = []
+    for label in missing:
+        if label.casefold() not in existing:
             color, description = LABEL_DEFS.get(label, ("EDEDED", ""))
+            # ast-grep-ignore: api-call-in-loop -- GitHub has no batch label creation; runs only for labels missing from the single list call
             ok, payload = gh_rest(
                 "POST",
                 f"{repo_path()}/labels",
                 json={"name": label, "color": color, "description": description},
             )
             if not ok:
-                return False, payload
+                return False, _failure(payload)
             created.append(label)
         _ensured_labels.add(label)
     return True, created
@@ -196,6 +227,20 @@ def _compact_issue(issue: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _failure(payload: list[Any] | dict[str, Any]) -> dict[str, Any]:
+    """Return the error dict of a failed GitHub call (failures carry a dict)."""
+    if isinstance(payload, dict):
+        return payload
+    return {"status": "error", "message": "GitHub returned an unexpected payload."}
+
+
+def _items(payload: list[Any] | dict[str, Any]) -> list[Any]:
+    """Return the items of a successful GitHub list call."""
+    if not isinstance(payload, list):
+        raise TypeError("A successful GitHub list call must return a list")
+    return payload
+
+
 def _list_issues(
     state: str, labels: list[str], per_page: int = 100
 ) -> tuple[bool, list[dict[str, Any]] | dict[str, Any]]:
@@ -251,8 +296,9 @@ def find_existing_ops_issue(fingerprint: str) -> dict:
     for state in ("open", "closed"):
         ok, issues = _list_issues(state, [CONFIG.issue_label])
         if not ok:
-            return {"status": issues.get("status", "error"), "error": issues}
-        assert isinstance(issues, list)
+            error = _failure(issues)
+            return {"status": error.get("status", "error"), "error": error}
+        issues = _items(issues)
         for issue in issues:
             if state == "closed" and (issue.get("closed_at") or "") < cutoff:
                 continue
@@ -385,8 +431,8 @@ def create_ops_issue(
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
+        error = _failure(payload)
+        return {"status": error.get("status", "error"), "error": error}
     ok, issue = gh_rest(
         "POST",
         f"{repo_path()}/issues",
@@ -446,9 +492,7 @@ def _same_report_series(issue: dict[str, Any], report_kind: str) -> bool:
     previous = str(meta.get("report_kind") or "").strip().lower()
     title = str(issue.get("title") or "")
     if previous == report_kind:
-        if report_kind == "security" and _legacy_security_series(title):
-            return False
-        return True
+        return not (report_kind == "security" and _legacy_security_series(title))
     return previous == "security" and _legacy_security_series(title) == report_kind
 
 
@@ -458,7 +502,7 @@ def _open_series_reports(
     ok, issues = _list_issues("open", [CONFIG.issue_label, "ops:report"])
     if not ok:
         return False, issues
-    assert isinstance(issues, list)
+    issues = _items(issues)
     return True, [issue for issue in issues if _same_report_series(issue, report_kind)]
 
 
@@ -544,9 +588,9 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     full_body = redact(body) + _footer(meta)
     ok, previous = _open_series_reports(kind)
     if not ok:
-        assert isinstance(previous, dict)
-        return {"status": previous.get("status", "error"), "error": previous}
-    assert isinstance(previous, list)
+        error = _failure(previous)
+        return {"status": error.get("status", "error"), "error": error}
+    previous = _items(previous)
     if CONFIG.dry_run:
         return {
             "status": "dry_run",
@@ -558,8 +602,8 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
+        error = _failure(payload)
+        return {"status": error.get("status", "error"), "error": error}
     ok, issue = gh_rest(
         "POST",
         f"{repo_path()}/issues",
@@ -570,6 +614,7 @@ def publish_report(kind: str, title: str, body: str, tool_context: ToolContext) 
     number = issue.get("number")
     url = issue.get("html_url") or ""
     superseded = [
+        # ast-grep-ignore: api-call-in-loop -- GitHub has no batch close; one call per superseded report of this series
         _supersede_report(int(old["number"]), number, url)
         for old in previous
         if old.get("number") not in (None, number)
@@ -641,8 +686,8 @@ def add_issue_labels(issue_number: int, labels: list[str]) -> dict:
         }
     ok, payload = _ensure_labels(labels)
     if not ok:
-        assert isinstance(payload, dict)
-        return {"status": payload.get("status", "error"), "error": payload}
+        error = _failure(payload)
+        return {"status": error.get("status", "error"), "error": error}
     ok, payload = gh_rest(
         "POST",
         f"{repo_path()}/issues/{int(issue_number)}/labels",
@@ -685,12 +730,12 @@ def close_issue(issue_number: int, reason_comment: str) -> dict:
         }
     ok, payload = _ensure_labels(["ops:verified"])
     if not ok:
-        assert isinstance(payload, dict)
+        error = _failure(payload)
         return {
-            "status": payload.get("status", "error"),
+            "status": error.get("status", "error"),
             "number": issue_number,
             "failed_step": "ensure_labels",
-            "error": payload,
+            "error": error,
         }
     ok_c, payload = gh_rest(
         "POST",
@@ -755,8 +800,9 @@ def list_ops_issues(state: str, kind: str) -> dict:
         state if state in ("open", "closed", "all") else "open", labels
     )
     if not ok:
-        return {"status": issues.get("status", "error"), "error": issues}
-    assert isinstance(issues, list)
+        error = _failure(issues)
+        return {"status": error.get("status", "error"), "error": error}
+    issues = _items(issues)
     rows = [
         _compact_issue(i)
         for i in issues

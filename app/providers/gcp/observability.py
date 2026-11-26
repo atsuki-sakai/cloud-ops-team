@@ -13,7 +13,15 @@ from app.config import CONFIG
 from app.core.fingerprint import fingerprint, message_template, search_text_from
 from app.core.redact import is_safe_literal, redact
 from app.core.timeutil import iso_utc, parse_time, utcnow
-from app.providers.gcp.client import gcp_get, gcp_list, gcp_post, project_path
+from app.providers.gcp.client import (
+    failure_payload,
+    gcp_get,
+    gcp_list,
+    gcp_post,
+    items_payload,
+    object_payload,
+    project_path,
+)
 
 LOGGING = "https://logging.googleapis.com/v2"
 RUN = "https://run.googleapis.com/v2"
@@ -45,7 +53,7 @@ _MSG_KEYS = (
     "reason",
     "status",
 )
-_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.I)
+_MASKED_TEXT = re.compile(r"\[REDACTED[^\]]*\]|\*{3}|(?<=\.)x\b", re.IGNORECASE)
 
 
 def _search_text_for(entry: dict[str, Any], raw_message: str) -> str:
@@ -209,8 +217,9 @@ def summarize_error_groups(hours: int) -> dict:
         filter_, page_size=1000, order="timestamp desc", max_pages=3
     )
     if not ok:
-        return {"status": entries.get("status", "error"), "error": entries}
-    assert isinstance(entries, list)
+        error = failure_payload(entries)
+        return {"status": error.get("status", "error"), "error": error}
+    entries = items_payload(entries)
 
     groups: dict[str, dict[str, Any]] = {}
     by_service: dict[str, int] = defaultdict(int)
@@ -220,7 +229,7 @@ def summarize_error_groups(hours: int) -> dict:
         template = message_template(raw_message)
         key = fingerprint(compact["resource_type"] or "", compact["service"], template)
         by_service[compact["service"]] += 1
-        group = groups.get(key)
+        group: dict[str, Any] | None = groups.get(key)
         ts = compact["timestamp"]
         if group is None:
             group = groups[key] = {
@@ -294,8 +303,9 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
         full_response=True,
     )
     if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
-    assert isinstance(payload, dict)
+        error = failure_payload(payload)
+        return {"status": error.get("status", "error"), "error": error}
+    payload = object_payload(payload)
     entries = payload.get("entries") or []
     token = payload.get("nextPageToken")
     truncated = bool(token) or len(entries) > limit
@@ -350,8 +360,9 @@ def get_log_context(
         full_response=True,
     )
     if not ok:
-        return {"status": payload.get("status", "error"), "error": payload}
-    assert isinstance(payload, dict)
+        error = failure_payload(payload)
+        return {"status": error.get("status", "error"), "error": error}
+    payload = object_payload(payload)
     entries = payload.get("entries") or []
     token = payload.get("nextPageToken")
     truncated = bool(token) or len(entries) > 80
@@ -396,17 +407,18 @@ def count_matching_errors(service_name: str, search_text: str, since: str) -> di
         " AND ".join(clauses), page_size=1000, order="timestamp desc", max_pages=2
     )
     if not ok:
-        out = {"status": entries.get("status", "error"), "error": entries}
-        if entries.get("incomplete"):
+        error = failure_payload(entries)
+        out = {"status": error.get("status", "error"), "error": error}
+        if error.get("incomplete"):
             out.update(
                 capped=True,
                 complete=False,
-                count=entries["count"],
+                count=error["count"],
                 since=iso_utc(start),
             )
         return out
-    assert isinstance(entries, list)
-    timestamps = [e.get("timestamp") for e in entries if e.get("timestamp")]
+    entries = items_payload(entries)
+    timestamps = [str(e["timestamp"]) for e in entries if e.get("timestamp")]
     return {
         "status": "ok",
         "since": iso_utc(start),
@@ -478,8 +490,9 @@ def get_cloud_run_services() -> dict:
     """
     ok, services = _run_services_raw()
     if not ok:
-        return {"status": services.get("status", "error"), "error": services}
-    assert isinstance(services, list)
+        error = failure_payload(services)
+        return {"status": error.get("status", "error"), "error": error}
+    services = items_payload(services)
     return {
         "status": "ok",
         "target": CONFIG.target,
@@ -553,8 +566,9 @@ def get_scheduler_jobs() -> dict:
     parent = f"{SCHEDULER}/projects/{CONFIG.target}/locations/{CONFIG.region}"
     ok, jobs = gcp_list(f"{parent}/jobs", "jobs", params={"pageSize": 100})
     if not ok:
-        return {"status": jobs.get("status", "error"), "error": jobs}
-    assert isinstance(jobs, list)
+        error = failure_payload(jobs)
+        return {"status": error.get("status", "error"), "error": error}
+    jobs = items_payload(jobs)
     out = []
     for job in jobs:
         status = job.get("status") or {}
@@ -613,8 +627,9 @@ def get_request_error_rates(hours: int) -> dict:
         f"{MONITORING}/{project_path()}/timeSeries", "timeSeries", params=params
     )
     if not ok:
-        return {"status": series.get("status", "error"), "error": series}
-    assert isinstance(series, list)
+        error = failure_payload(series)
+        return {"status": error.get("status", "error"), "error": error}
+    series = items_payload(series)
     per_service: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for ts in series:
         service = ((ts.get("resource") or {}).get("labels") or {}).get(
@@ -661,8 +676,9 @@ def get_alerting_setup() -> dict:
         params={"pageSize": 100},
     )
     if not ok:
-        return {"status": policies.get("status", "error"), "error": policies}
-    assert isinstance(policies, list)
+        error = failure_payload(policies)
+        return {"status": error.get("status", "error"), "error": error}
+    policies = items_payload(policies)
     ok2, uptime = gcp_list(
         f"{MONITORING}/{project_path()}/uptimeCheckConfigs",
         "uptimeCheckConfigs",

@@ -377,6 +377,7 @@ def investigate_access(hours: int) -> dict[str, Any]:
     groups: dict[tuple[str, str, str], dict[str, Any]] = {}
     http_sources: dict[str, str] = {}
     for source in _FILTERS:
+        # ast-grep-ignore: api-call-in-loop -- bounded: fixed _FILTERS sources, one bounded search each
         rows, observed = _fetch(source, start, end)
         coverage.append(observed)
         for entry in rows:
@@ -393,7 +394,12 @@ def investigate_access(hours: int) -> dict[str, Any]:
                     continue
             resource, hints = _resource(entry)
             subject, kind = _subject(entry)
-            timestamp = iso_utc(parse_time(entry["timestamp"]))
+            moment = parse_time(entry["timestamp"])
+            if moment is None:
+                raise ValueError(
+                    "_fetch must only return entries with a valid timestamp"
+                )
+            timestamp = iso_utc(moment)
             for check_id, category in _signals(source, entry):
                 group = groups.setdefault(
                     (check_id, resource, subject),
