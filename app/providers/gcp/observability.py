@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from app.config import CONFIG
+from app.config import CONFIG, MAX_WATCH_LOOKBACK_HOURS
 from app.core.fingerprint import fingerprint, message_template, search_text_from
 from app.core.payloads import Payload, clamp_int
 from app.core.redact import is_safe_literal, redact
@@ -230,6 +230,11 @@ def _service_clause(service_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Pages of 1,000 entries read for one error-group summary, sized for the
+# 18-day twice-monthly window.
+_ERROR_GROUP_PAGES = 10
+
+
 def summarize_error_groups(hours: int) -> dict[str, Any]:
     """Group ERROR-and-above log entries from the last ``hours`` hours.
 
@@ -239,18 +244,18 @@ def summarize_error_groups(hours: int) -> dict[str, Any]:
     a ``search_text`` usable with ``count_matching_errors``.
 
     Args:
-        hours: Look-back window in hours (1-168).
+        hours: Look-back window in hours (1-720).
 
     Returns:
         dict with ``status``, ``window``, ``total_entries``, ``truncated``,
         ``by_service`` and ``groups`` (sorted by count, max 30).
     """
-    hours = clamp_int(hours, 1, 168)
+    hours = clamp_int(hours, 1, MAX_WATCH_LOOKBACK_HOURS)
     end = utcnow()
     start = end - dt.timedelta(hours=hours)
     filter_ = f'severity>=ERROR AND timestamp>="{iso_utc(start)}" AND timestamp<="{iso_utc(end)}"'
     ok, entries = _list_entries(
-        filter_, page_size=1000, order="timestamp desc", max_pages=3
+        filter_, page_size=1000, order="timestamp desc", max_pages=_ERROR_GROUP_PAGES
     )
     if not ok:
         return failure_result(entries)
@@ -306,7 +311,7 @@ def summarize_error_groups(hours: int) -> dict[str, Any]:
         "target": CONFIG.target,
         "window": {"start": iso_utc(start), "end": iso_utc(end), "hours": hours},
         "total_entries": len(entries),
-        "truncated": len(entries) >= 3000,
+        "truncated": len(entries) >= _ERROR_GROUP_PAGES * 1000,
         "group_count": len(groups),
         "by_service": dict(
             sorted(by_service.items(), key=lambda kv: kv[1], reverse=True)
@@ -319,12 +324,12 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict[str, Any]
     """List individual ERROR-and-above log entries (newest first).
 
     Args:
-        hours: Look-back window in hours (1-168).
+        hours: Look-back window in hours (1-720).
         service_name: Cloud Run service / scheduler job / Cloud SQL database id
             to filter on. Pass an empty string for all services.
         limit: Maximum entries to return (1-200).
     """
-    hours = clamp_int(hours, 1, 168)
+    hours = clamp_int(hours, 1, MAX_WATCH_LOOKBACK_HOURS)
     limit = clamp_int(limit, 1, 200)
     start = utcnow() - dt.timedelta(hours=hours)
     clauses = [f'severity>=ERROR AND timestamp>="{iso_utc(start)}"']
@@ -575,9 +580,9 @@ def get_request_error_rates(hours: int) -> dict[str, Any]:
     """Per-service Cloud Run request totals and 5xx/4xx ratios (Cloud Monitoring).
 
     Args:
-        hours: Window in hours (1-168).
+        hours: Window in hours (1-720).
     """
-    hours = clamp_int(hours, 1, 168)
+    hours = clamp_int(hours, 1, MAX_WATCH_LOOKBACK_HOURS)
     end = utcnow()
     start = end - dt.timedelta(hours=hours)
     params = {

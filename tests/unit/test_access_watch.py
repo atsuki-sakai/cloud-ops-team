@@ -323,7 +323,7 @@ def test_invalid_timestamp_reports_insufficient_investigation(monkeypatch):
     assert out["coverage"][1]["invalid_entries"] == 1
 
 
-@pytest.mark.parametrize("hours", [0, -1, 169, True, "24", 1.5, None])
+@pytest.mark.parametrize("hours", [0, -1, 721, True, "24", 1.5, None])
 def test_invalid_hours_does_not_query(monkeypatch, hours):
     def forbidden(*args, **kwargs):
         pytest.fail("Invalid hours must not issue a query")

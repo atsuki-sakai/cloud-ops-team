@@ -32,7 +32,7 @@ INSTRUCTION = """
 - new_incident: create_ops_issue(kind="error", fingerprint=<シナリオの fingerprint>, service=<service または空文字>, search_text="", severity=<判定の severity>)。
   fingerprint はシナリオの値をそのまま使い、日付・試行回数を加えない。
 - ongoing: 同じ fingerprint で create_ops_issue を呼ぶ（既存 ISSUE への再発コメントと間隔制御はツールが判定する）。
-- recovered: comment_on_issue(issue_number, body) で復旧を確認した時刻・シナリオ版・試行結果を記録する。ISSUE はクローズしない（修正確認は週次レビューと人間が行う）。
+- recovered: comment_on_issue(issue_number, body) で復旧を確認した時刻・シナリオ版・試行結果を記録する。ISSUE はクローズしない（修正確認は隔週レビューと人間が行う）。
 - unstable（継続中の障害で再試行後のみ成功）は回復扱いにせず、comment_on_issue で不安定な状態を記録する。
 - transient（未起票で flaky）・unverified・not_checked はレポートだけに書き、起票しない。
 - dry_run の場合は起票予定・コメント予定として報告する。

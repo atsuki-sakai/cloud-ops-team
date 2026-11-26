@@ -1,8 +1,8 @@
 # Architecture
 
 cloud-ops-team runs the routine operations work of a cloud environment with a small team of AI agents:
-an **error watch**, twice-weekly **access investigation**, weekly **infrastructure review**, a **monthly security audit**,
-a **weekly fix review** that verifies whether merged pull requests fixed the issues, **service checks** that replay
+an **error watch**, twice-monthly **access investigation**, twice-monthly **infrastructure review**, a **monthly security audit**,
+a **twice-monthly fix review** that verifies whether merged pull requests fixed the issues, **service checks** that replay
 registered scenarios against public URLs, and **post-deployment verification** of the revision actually serving traffic
 (the last two: [service checks](service-checks.md)).
 Humans (often with AI coding tools) implement the fixes; the agents never change the cloud.
@@ -19,11 +19,11 @@ Humans (often with AI coding tools) implement the fixes; the agents never change
 ```mermaid
 flowchart LR
     subgraph Agents["cloud-ops-team (automated)"]
-        EW["error_watch<br/>twice a week: detect and analyse errors"]
-        AW["access_watch<br/>twice a week: investigate access"]
-        IR["infrastructure_review<br/>weekly: cost, permissions and configuration"]
+        EW["error_watch<br/>twice a month: detect and analyse errors"]
+        AW["access_watch<br/>twice a month: investigate access"]
+        IR["infrastructure_review<br/>twice a month: cost, permissions and configuration"]
         SA["security_audit<br/>monthly: posture, CVEs, EOL, threats"]
-        PR["pr_review<br/>weekly: verify merged fixes"]
+        PR["pr_review<br/>twice a month: verify merged fixes"]
         SC["service_check<br/>scheduled: replay scenarios, incidents and recovery"]
         DV["deploy_verification<br/>after deploys: verify the serving revision"]
     end
@@ -38,7 +38,7 @@ flowchart LR
     SC & DV -- "[ops/error] issue (AI investigates anomalies only)" --> H1
     H1 --> H2
     H2 -- "merge" --> PR
-    PR -- "ops:verified + weekly report" --> H3
+    PR -- "ops:verified + twice-monthly report" --> H3
     PR -. "recurred → comment" .-> H1
 ```
 
@@ -93,10 +93,10 @@ cloud-ops-team/
 │   ├── specialists/              ★ one module per team member
 │   │   ├── base.py               Specialist and Job types
 │   │   ├── error_watch.py        error watch: instruction, tools, jobs
-│   │   ├── access_watch.py       twice-weekly suspicious access investigation
-│   │   ├── infrastructure_review.py  weekly cost, IAM and configuration review
+│   │   ├── access_watch.py       twice-monthly suspicious access investigation
+│   │   ├── infrastructure_review.py  twice-monthly cost, IAM and configuration review
 │   │   ├── security_audit.py     monthly security audit
-│   │   ├── pr_review.py          weekly fix verification
+│   │   ├── pr_review.py          twice-monthly fix verification
 │   │   ├── _template.py          copy this to add a specialist
 │   │   └── __init__.py           registry (SPECIALISTS)
 │   ├── tools/                    ★ functions the model calls (cloud-neutral)
@@ -144,11 +144,14 @@ The issue-creation limit spans the whole invocation, including `full` and parall
 |---|---|---|---|
 | `error_watch` | Context, error groups/rates, scheduled jobs, services, DBs and alerting | Up to five follow-up investigations, hypotheses, duplicate checks and filing | 15 → 9 |
 | `security_audit` | Context, IAM/credential/configuration/DB/network audits, CVEs, findings, alerting, repository posture and KEV | Up to six EOL checks, one web research call, evidence-based filing and reporting | 19 → 8 |
-| `pr_review` | Context, open issues and unverified issues closed within 30 days, recent PRs and main CI | Linked PRs and recurrence per issue; comments, labels and weekly reporting | 13 → 10 |
+| `pr_review` | Context, open issues and unverified issues closed within 30 days, recent PRs and main CI | Linked PRs and recurrence per issue; comments, labels and twice-monthly reporting | 13 → 10 |
 | `access_watch` | Context, suspicious-access evidence and coverage | Necessary follow-up, filing and reporting that preserve unverified legitimacy/coverage | 8 → 7 |
 | `infrastructure_review` | Context, recommendations, identity/configuration audits, alerting and service/DB inventory | Evidence correlation, change impact/validation/rollback proposals, duplicate checks and reporting | 14 → 5 |
 
 Counts include `get_collected_evidence`. A specialist's declared `tools` is a superset, not the list passed unchanged to a model. Fixed collectors run once with defined arguments; exceptions and unsupported sources remain missing evidence. Results form a redacted, size-bounded snapshot with SHA-256. This per-run snapshot is not a completed durable execution-history service.
+
+`error_watch` narrows the evidence to problem rows before the analysis model reads it (`app/core/error_focus.py`): services with 5xx, scheduled jobs whose last attempt failed, services that are not ready or that an error group / 5xx names (status fields only), and databases that are not running or that an error group names. Omitted rows are counted in `focus.omitted`. When the error groups failed or were truncated, no service or database is dropped.
+When every source was read, there are no error groups and no 5xx, failing job, not-ready service or stopped database, the run reports the code verdict without calling the model (`check_decisions.error_watch_decision`).
 
 The actual tool list, schema, docstrings, cloud glossary and context capabilities use the same stage scope. Both the `ToolScope` callback and exposed wrappers reject unauthorized names, unknown arguments, invalid types, excessive query size/time ranges, foreign target resources and repository search overrides before execution.
 Analysis also rejects follow-up, issue creation and reporting until the actual `get_collected_evidence` read returns successfully. A snapshot containing partial/error sources still permits reporting those gaps after it has been read.
@@ -209,20 +212,20 @@ The scheduler posts a Pub/Sub-push-shaped body to ADK's trigger endpoint:
 
 ```text
 POST /apps/app/trigger/pubsub      Authorization: Bearer <OIDC token of the invoker service account>
-{"message": {"data": "<base64 of {"job":"error_watch","hours":120}>", "attributes": {...}},
+{"message": {"data": "<base64 of {"job":"error_watch","hours":432}>", "attributes": {...}},
  "subscription": "projects/<project>/subscriptions/cloud-ops-error-watch"}
 ```
 
 ADK (`trigger_sources=["pubsub"]`) decodes it and runs `ScheduledRouter` with
-`{"data": {"job": "error_watch", "hours": 120}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
+`{"data": {"job": "error_watch", "hours": 432}, "attributes": {...}}` in a fresh session; `subscription` becomes the session's
 `user_id`.
 
 | `job` | Parameters | Default schedule (configurable) | Specialist |
 |---|---|---|---|
-| `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`, default 120) | Monday and Thursday 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
-| `access_watch` | `hours` (120) | Monday and Thursday 08:30 (`ACCESS_WATCH_CRON`, `ACCESS_WATCH_HOURS`) | access_watch |
-| `infrastructure_review` | — | Monday 10:00 (`INFRASTRUCTURE_REVIEW_CRON`) | infrastructure_review |
-| `weekly_pr_review` | `days` (7) | Monday 09:00 (`WEEKLY_CRON`) | pr_review |
+| `error_watch` | `hours` (`OPS_ERROR_LOOKBACK_HOURS`, default 432) | 1st and 15th 08:00 (`ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`) | error_watch |
+| `access_watch` | `hours` (432) | 1st and 15th 08:30 (`ACCESS_WATCH_CRON`, `ACCESS_WATCH_HOURS`) | access_watch |
+| `infrastructure_review` | — | 1st and 15th 10:00 (`INFRASTRUCTURE_REVIEW_CRON`) | infrastructure_review |
+| `weekly_pr_review` | `days` (18) | 1st and 15th 09:00 (`WEEKLY_CRON`) | pr_review |
 | `monthly_security_audit` | `kev_days` (30) | 1st of the month 09:00 (`MONTHLY_CRON`) | security_audit |
 | `full` | — | manual | all five |
 
@@ -232,7 +235,7 @@ zero retries to suppress scheduler retries; other jobs and manual runs can still
 re-running the script updates jobs in place. On AWS the equivalent is EventBridge Scheduler calling the service URL; on Azure,
 a Container Apps job or Logic App.
 
-Direct JSON, Pub/Sub-shaped requests, `/run_sse` and A2A share the same root. Unknown jobs/arguments, duplicate JSON keys, numeric strings/bools, out-of-range values and target/repository overrides are rejected. `hours` is an integer in 1–168, `days` in 1–90 and `kev_days` in 1–365. Natural language selects a specialist adapter, which forwards strict JSON through the same validation, fixed collection and analysis.
+Direct JSON, Pub/Sub-shaped requests, `/run_sse` and A2A share the same root. Unknown jobs/arguments, duplicate JSON keys, numeric strings/bools, out-of-range values and target/repository overrides are rejected. `hours` is an integer in 1–720, `days` in 1–90 and `kev_days` in 1–365. Natural language selects a specialist adapter, which forwards strict JSON through the same validation, fixed collection and analysis.
 
 ### Access and infrastructure review boundaries
 
@@ -293,7 +296,7 @@ stateDiagram-v2
     Detected --> Filed: new fingerprint / create_ops_issue
     Detected --> RecurrenceComment: open issue with same fingerprint / 24h cooldown
     Filed --> InProgress: human opens PR (closes #N)
-    InProgress --> Verifying: PR merged / weekly review
+    InProgress --> Verifying: PR merged / twice-monthly review
     Verifying --> Verified: no recurrence and CI green / ops:verified
     Verifying --> RecurrenceComment: count_matching_errors > 0
     Filed --> Stale: no PR for 14 days / ops:stale
@@ -329,7 +332,7 @@ Normal issue creation is serialized within one invocation by `RunBudget`. There 
 separate invocations or instances, so overlapping runs can still create duplicate issues or recurrence comments within
 the same cooldown. Cooldown uses the issue's `updated_at`, not the last recurrence comment time, so human edits also suppress reports.
 
-`search_text` is what the weekly review later counts: for request logs the URL path up to the first id-like segment
+`search_text` is what the twice-monthly review later counts: for request logs the URL path up to the first id-like segment
 (`/api/v1/worker/sns-plans`), otherwise the longest alphabetic run of the message. Security findings use
 `"<check_id>:<resource>"` as their fingerprint.
 
@@ -380,7 +383,7 @@ Step-by-step guide: [deployment-gcp.md](deployment-gcp.md).
 - Runs: request logs of the trigger endpoint (latency = run time)
 - What the agents did: Cloud Trace via OpenTelemetry (`otel_to_cloud=True`, message content not captured), ADK session API while
   the instance is alive, or `scripts/run_job.py` locally (prints every tool call with timestamps)
-- Outcomes: GitHub issues labelled `ops-agent`, including the weekly and monthly reports. A scheduled watch does not always
+- Outcomes: GitHub issues labelled `ops-agent`, including the twice-monthly and monthly reports. A scheduled watch does not always
   publish a report issue. HTTP success with no issue does not distinguish a clean run from an incomplete investigation.
   Durable results and coverage are part of the [improvement plan](known-limitations.md).
 - Model exposure: `model_tool_presentation` JSON logs record each analysis call's actual tool names/count and schema/description character counts. Prompts, schema text, arguments and results are not written into these records.

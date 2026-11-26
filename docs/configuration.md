@@ -32,7 +32,7 @@ English: [docs/en/configuration.md](en/configuration.md)
 | 変数 | 既定値 | 説明 |
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | お試しモード。GitHub には一切書き込まず、作成する予定の内容をプレビューとして返します |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | 週次レビューで修正を確認できた finding を自動でクローズします（`false` のときは `ops:verified` ラベルとコメントを付けるだけです）。定期レポートの置き換えはこの設定を見ません |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | 隔週レビューで修正を確認できた finding を自動でクローズします（`false` のときは `ops:verified` ラベルとコメントを付けるだけです）。定期レポートの置き換えはこの設定を見ません |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | `create_ops_issue` の新規起票上限。実行単位で複数担当が予算を共有し、同じセッションの次の依頼でもリセットします。`publish_report` は対象外です |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | ISSUE の `updated_at` からこの時間以内なら再発コメントを省略します。人による編集も影響し、複数インスタンス間で投稿を一度に抑える保証はありません |
 
@@ -63,7 +63,7 @@ Cloud Run の一時領域で複数インスタンスや再配置をまたぐ永�
 | 変数 | 既定値 | 説明 |
 |---|---|---|
 | `OPS_REPORT_LANGUAGE` | `ja` | レポート・ISSUE・コメントの言語。`ja` または `en` |
-| `OPS_ERROR_LOOKBACK_HOURS` | `120` | ジョブが `hours` を指定しないときに、エラー監視がさかのぼる時間。週2回の長い間隔（96 時間）を覆います |
+| `OPS_ERROR_LOOKBACK_HOURS` | `432` | ジョブが `hours` を指定しないときに、エラー監視がさかのぼる時間。毎月1日・15日の長い方の間隔（408 時間）に 24 時間の重なりを足した値です |
 | `OPS_TIMEZONE` | `Asia/Tokyo` | レポートに書く時刻のタイムゾーン |
 | `OPS_STACK_KEYWORDS` | プロバイダーの既定値と一般的な OS・ランタイム | CISA KEV（実際に悪用が確認された脆弱性の一覧）の絞り込みと、Web での脅威調査の焦点に使うキーワード（カンマ区切り） |
 | `OPS_MODEL` | `gemini-3.8-flash` | すべてのエージェントが使うモデル |
@@ -115,18 +115,18 @@ A2A を使う場合は [デプロイ手順](deployment-gcp.md) に従って配�
 定期実行ジョブは、`app/specialists/` の各担当（専門家）が宣言しているジョブから生成されます。一覧は `make jobs` で確認できます。
 どの値も上書きできます。`make gcp-schedule` を再実行すると反映され、既存のジョブはそのまま更新されます。
 
-登録済みジョブは全サーバー入口で同じ引数検証を通ります。`hours`は1〜168、週次レビューの`days`は1〜90、
+登録済みジョブは全サーバー入口で同じ引数検証を通ります。`hours`は1〜720、隔週レビューの`days`は1〜90、
 月次診断の`kev_days`は1〜365、稼働確認の`attempts`は1〜5、デプロイ後検証の`minutes`は5〜1440の整数です。JSONの数値文字列・bool・未知の項目・対象やリポジトリの上書きを拒否し、
 範囲外の値を別の値へ丸めて実行しません。対話から選んだ担当も、同じ検証と固定収集へ進みます。
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | エラー監視（月曜・木曜 8:00）と、さかのぼる時間。長い間隔は木曜 8:00 から月曜 8:00 の 96 時間で、120 時間はそこに 24 時間の重なりを足したものです |
-| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | 不審アクセス調査（月曜・木曜 8:30）と、さかのぼる時間。調査窓は長い方の間隔以上にしてください |
-| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | インフラ・費用・権限の見直し（毎週月曜 10:00） |
+| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 1,15 * *` / `432` | エラー監視（毎月1日・15日 8:00）と、さかのぼる時間。長い方の間隔は 15 日から翌月 1 日までの最大 408 時間（17 日）で、432 時間はそこに 24 時間の重なりを足したものです |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 1,15 * *` / `432` | 不審アクセス調査（毎月1日・15日 8:30）と、さかのぼる時間。調査窓は長い方の間隔以上にしてください（上限 720 時間） |
+| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 1,15 * *` | インフラ・費用・権限の見直し（毎月1日・15日 10:00） |
 | `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | 未設定（手動のみ） / `2` | 登録シナリオによる稼働確認と、失敗を確定する最大試行回数。例: `*/15 * * * *`。[稼働確認](service-checks.md) |
 | `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | 未設定 / `60` | デプロイ後検証。通常はデプロイ完了時に起動し、定期実行は任意 |
-| `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | 週次の ISSUE・PR レビュー |
+| `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 1,15 * *` / `18` | 隔週（毎月1日・15日 9:00）の ISSUE・PR レビュー。名前は互換性のため `WEEKLY_*` のままです |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | 月次セキュリティ診断 |
 | `<SCHEDULE_KEY>_CRON` | ジョブの既定値 | 自分で追加したジョブ用。例: スケジュールキーが `deploy-watch` なら `DEPLOY_WATCH_CRON` |
 | `TZ_NAME` | `Asia/Tokyo` | cron 式のタイムゾーン |
@@ -158,7 +158,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 複数実行が同時に検索・起票すると重複が残る可能性があります。実行の重なりを避け、ISSUE と再発コメントを確認してください。
 観測範囲を広げると、モデルのトークン消費も増えます。
 
-`ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 120"` で指定します。
+`ACCESS_WATCH_HOURS` は定期ジョブの `hours` を設定します。手動では `make run JOB=access_watch ARGS="--hours 432"` で指定します。
 `ACCESS_WATCH_CRON`・`INFRASTRUCTURE_REVIEW_CRON`・`TZ_NAME` を変更したら `make gcp-schedule` を再実行してください。
 `OPS_TIMEZONE` はレポートの表示時刻、`TZ_NAME` は定期実行の時刻に使うため、そろえて設定すると分かりやすくなります。
 

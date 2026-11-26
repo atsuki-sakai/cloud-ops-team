@@ -52,7 +52,7 @@ ERROR_WATCH_CRON="0 */6 * * *" ERROR_WATCH_HOURS=6 make gcp-schedule   # every 6
 Built-in overrides: `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS`, `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS`,
 `INFRASTRUCTURE_REVIEW_CRON`, `WEEKLY_CRON` / `WEEKLY_DAYS`, `MONTHLY_CRON` / `MONTHLY_KEV_DAYS`,
 `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` (manual only by default) and `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` (normally triggered by deployments; see [service checks](service-checks.md)).
-Access review defaults to Monday and Thursday at 08:30 with a 120-hour window; infrastructure review defaults to Mondays at 10:00 (Asia/Tokyo). Error watch defaults to Monday and Thursday at 08:00 with the same 120-hour window.
+Access review defaults to the 1st and 15th at 08:30 with a 432-hour window; infrastructure review defaults to the 1st and 15th at 10:00 (Asia/Tokyo). Error watch defaults to the 1st and 15th at 08:00 with the same 432-hour window, and the fix review to the 1st and 15th at 09:00 with an 18-day window.
 Jobs you add get `<SCHEDULE_KEY>_CRON` (e.g. `DEPLOY_WATCH_CRON`). `ONLY_JOBS=error-watch` limits an update to some jobs.
 
 ## 3. Match your repository's labels (no code)

@@ -145,13 +145,13 @@ async def test_runner_routes_every_alias_without_calling_leader(
         '{"job":"error_watch","days":7}',
         '{"job":"infrastructure_review","hours":24}',
         '{"job":"full","target":"other-project"}',
-        '{"job":"full","hours":169}',
+        '{"job":"full","hours":721}',
         '{"job":"error_watch","hours":"24"}',
         '{"job":"error_watch","hours":24.0}',
         '{"job":"error_watch","hours":true}',
         '{"job":"error_watch","hours":NaN}',
         '{"job":"error_watch","hours":0}',
-        '{"job":"access_watch","hours":169}',
+        '{"job":"access_watch","hours":721}',
         '{"job":"pr_review","days":366}',
         '{"job":"pr_review","days":91}',
         '{"job":"security_audit","kev_days":-1}',
@@ -327,7 +327,7 @@ async def test_real_llm_agent_keeps_its_tool_roundtrip_in_isolated_context(monke
 
 
 @pytest.mark.parametrize("name", ["error_watch", "access_watch"])
-@pytest.mark.parametrize("hours", [1, 168])
+@pytest.mark.parametrize("hours", [1, 720])
 def test_inclusive_hour_bounds(name, hours):
     jobs = parse_job_request(
         content(json.dumps({"job": name, "hours": hours})), SPECIALISTS

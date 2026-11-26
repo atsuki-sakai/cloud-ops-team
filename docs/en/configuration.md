@@ -32,7 +32,7 @@ Provider-specific fallbacks when `OPS_TARGET` / `OPS_TARGET_REGION` are not set:
 | Variable | Default | Description |
 |---|---|---|
 | `OPS_DRY_RUN` | `true` | Never write to GitHub; tools return previews of what they would create |
-| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the weekly review close findings it verified (otherwise it labels `ops:verified` and comments). Replacing a periodic report does not consult this flag |
+| `OPS_AUTO_CLOSE_ISSUES` | `false` | Let the twice-monthly review close findings it verified (otherwise it labels `ops:verified` and comments). Replacing a periodic report does not consult this flag |
 | `OPS_MAX_ISSUES_PER_RUN` | `10` | New-issue cap for `create_ops_issue`, shared across one invocation (including `full`) and reset on the next standard-router request; `publish_report` is excluded |
 | `OPS_RECURRENCE_COOLDOWN_HOURS` | `24` | Skip recurrence comments within this interval of an issue's `updated_at`. Human edits affect the interval, and this does not guarantee one post across multiple instances |
 
@@ -65,7 +65,7 @@ Cloud Run temporary storage does not guarantee durability across multiple instan
 | Variable | Default | Description |
 |---|---|---|
 | `OPS_REPORT_LANGUAGE` | `ja` | Language of reports, issues and comments: `ja` or `en` |
-| `OPS_ERROR_LOOKBACK_HOURS` | `120` | Default error-watch window when a job does not pass `hours`. Covers the longer twice-weekly gap (96 hours) |
+| `OPS_ERROR_LOOKBACK_HOURS` | `432` | Default error-watch window when a job does not pass `hours`. The longest 1st/15th gap (408 hours) plus a 24-hour overlap |
 | `OPS_TIMEZONE` | `Asia/Tokyo` | Time zone of timestamps in reports |
 | `OPS_STACK_KEYWORDS` | provider defaults + common OS / runtimes | Comma-separated keywords that filter CISA KEV entries and focus web threat research |
 | `OPS_MODEL` | `gemini-3.8-flash` | Model of every agent |
@@ -117,16 +117,16 @@ if you use A2A, follow the [deployment guide](deployment-gcp.md) to set it after
 Scheduler jobs are generated from the jobs declared by the specialists in `app/specialists/` — `make jobs` lists them.
 Every value can be overridden; re-run `make gcp-schedule` to apply (existing jobs are updated in place).
 
-All server entry points enforce the same registered job contract. `hours` must be an integer in 1–168, weekly review `days` in 1–90, monthly audit `kev_days` in 1–365, service check `attempts` in 1–5 and deployment verification `minutes` in 5–1440. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
+All server entry points enforce the same registered job contract. `hours` must be an integer in 1–720, fix review `days` in 1–90, monthly audit `kev_days` in 1–365, service check `attempts` in 1–5 and deployment verification `minutes` in 5–1440. JSON numeric strings, bools, unknown fields and target/repository overrides are rejected; out-of-range values are not silently clamped. Conversation-selected specialists use the same validation and fixed collection.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 * * 1,4` / `120` | Error watch (Monday and Thursday at 08:00). The longer gap is 96 hours (Thursday 08:00 to Monday 08:00); 120 hours adds a 24-hour overlap |
-| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 * * 1,4` / `120` | Access investigation (Monday and Thursday at 08:30); keep the look-back window at least as long as the longer gap |
-| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 * * 1` | Infrastructure, cost and permissions review (Mondays at 10:00) |
+| `ERROR_WATCH_CRON` / `ERROR_WATCH_HOURS` | `0 8 1,15 * *` / `432` | Error watch (1st and 15th at 08:00). The longest gap is 408 hours (17 days, 15th to the 1st); 432 hours adds a 24-hour overlap |
+| `ACCESS_WATCH_CRON` / `ACCESS_WATCH_HOURS` | `30 8 1,15 * *` / `432` | Access investigation (1st and 15th at 08:30); keep the look-back window at least as long as the longest gap (max 720 hours) |
+| `INFRASTRUCTURE_REVIEW_CRON` | `0 10 1,15 * *` | Infrastructure, cost and permissions review (1st and 15th at 10:00) |
 | `SERVICE_CHECK_CRON` / `SERVICE_CHECK_ATTEMPTS` | unset (manual only) / `2` | Scenario-based service checks and the maximum attempts that confirm a failure, e.g. `*/15 * * * *`. See [service checks](service-checks.md) |
 | `DEPLOY_VERIFICATION_CRON` / `DEPLOY_VERIFICATION_MINUTES` | unset / `60` | Post-deployment verification. Normally triggered when a deployment finishes; a schedule is optional |
-| `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 * * 1` / `7` | Weekly issue and PR review |
+| `WEEKLY_CRON` / `WEEKLY_DAYS` | `0 9 1,15 * *` / `18` | Twice-monthly issue and PR review (1st and 15th at 09:00). The `WEEKLY_*` names are kept for compatibility |
 | `MONTHLY_CRON` / `MONTHLY_KEV_DAYS` | `0 9 1 * *` / `30` | Monthly security audit |
 | `<SCHEDULE_KEY>_CRON` | job default | Jobs you add, e.g. `DEPLOY_WATCH_CRON` for schedule key `deploy-watch` |
 | `TZ_NAME` | `Asia/Tokyo` | Time zone of the cron expressions |
@@ -157,7 +157,7 @@ gcloud scheduler jobs resume cloud-ops-error-watch --location asia-northeast1
 A longer look-back retrieves the same errors again. Existing issues are searched by fingerprint, but simultaneous runs can
 still create duplicates. Avoid overlapping runs and inspect issues and recurrence comments. A larger window also costs more tokens.
 
-`ACCESS_WATCH_HOURS` sets the scheduled job's `hours`. For a manual run, use `make run JOB=access_watch ARGS="--hours 120"`.
+`ACCESS_WATCH_HOURS` sets the scheduled job's `hours`. For a manual run, use `make run JOB=access_watch ARGS="--hours 432"`.
 Re-run `make gcp-schedule` after changing the cron variables or `TZ_NAME`. `OPS_TIMEZONE` formats report timestamps;
 `TZ_NAME` controls the scheduler, so keeping them aligned makes operations easier.
 

@@ -41,7 +41,7 @@ def summarize_error_groups(hours: int) -> dict:
     (GCP: Cloud Logging; AWS: CloudWatch Logs; Azure: Log Analytics.)
 
     Args:
-        hours: Look-back window in hours (1-168).
+        hours: Look-back window in hours (1-720).
     """
     return _call("summarize_error_groups", hours=hours)
 
@@ -50,7 +50,7 @@ def list_error_logs(hours: int, service_name: str, limit: int) -> dict:
     """List individual error-level log entries, newest first (redacted).
 
     Args:
-        hours: Look-back window in hours (1-168).
+        hours: Look-back window in hours (1-720).
         service_name: Service / job / database name to filter on, or an empty string for all.
         limit: Maximum entries to return (1-200).
     """
@@ -154,7 +154,7 @@ def get_request_error_rates(hours: int) -> dict:
     """Per-service request totals and 5xx / 4xx ratios from the cloud's metrics.
 
     Args:
-        hours: Window in hours (1-168).
+        hours: Window in hours (1-720).
     """
     return _call("get_request_error_rates", hours=hours)
 
@@ -233,7 +233,7 @@ def investigate_access(hours: int) -> dict:
     zero observed events cannot establish that no attack occurred.
 
     Args:
-        hours: Look-back window in hours (1-168).
+        hours: Look-back window in hours (1-720).
     """
     return _call("investigate_access", hours=hours)
 

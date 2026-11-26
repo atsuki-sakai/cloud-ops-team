@@ -184,7 +184,7 @@ def test_missing_context_stops_all_cloud_and_github_collectors(monkeypatch, capl
         {"hours": True},
         {"hours": "24"},
         {"hours": 0},
-        {"hours": 169},
+        {"hours": 721},
         {"hours": 24, "target": "other"},
     ],
 )

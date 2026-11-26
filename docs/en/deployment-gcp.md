@@ -3,7 +3,7 @@
 日本語版（メイン）: [docs/deployment-gcp.md](../deployment-gcp.md)
 
 The team runs as one Cloud Run service. Cloud Scheduler calls it with OIDC-authenticated HTTP requests.
-Model tokens are a main cost: twice-weekly error and access reviews, weekly fix and infrastructure reviews, and a monthly audit.
+Model tokens are a main cost: twice-monthly (1st and 15th) error, access, fix and infrastructure reviews, and a monthly audit. The error watch skips the model when it finds no errors or problems.
 Cost and runtime also depend on log volume, retries and manual runs; check log collection and retention costs.
 The default minimum instance count is zero. Read the [known limitations](known-limitations.md) before deployment:
 these steps do not guarantee complete audits or prevent duplicate issues.
@@ -122,9 +122,10 @@ make gcp-schedule            # create or update the jobs (the service URL is det
 gcloud scheduler jobs run cloud-ops-error-watch --project "$DEPLOY_PROJECT" --location "$DEPLOY_REGION"   # run once now
 ```
 
-Defaults (Asia/Tokyo): error watch Monday and Thursday at 08:00, access review Monday and Thursday at 08:30, fix review Mondays at 09:00,
-infrastructure review Mondays at 10:00, and monthly audit on the 1st at 09:00.
-The default look-back is 120 hours: it covers the 96-hour Thursday 08:00 to Monday 08:00 gap and adds 24 hours of overlap.
+Defaults (Asia/Tokyo): on the 1st and 15th, error watch at 08:00, access review at 08:30, fix review at 09:00 and
+infrastructure review at 10:00; monthly audit on the 1st at 09:00.
+Cron cannot express "every two weeks", so the twice-monthly cadence uses the 1st and 15th (gaps of 13 to 17 days).
+The default look-back is 432 hours: it covers the longest gap (up to 408 hours, 15th to the 1st) and adds 24 hours of overlap. The maximum is 720 hours. The fix review covers 18 days.
 Change any of them with environment variables — see [configuration.md](configuration.md#schedules-make-gcp-schedule).
 
 Changing the code defaults does not update Cloud Scheduler jobs that already exist until `make gcp-schedule` (`scripts/gcp/setup_schedules.sh`) is run again.
@@ -132,7 +133,7 @@ Old `ERROR_WATCH_CRON`, `ERROR_WATCH_HOURS`, `ACCESS_WATCH_CRON` or `ACCESS_WATC
 For the existing `yadora-prod` / `asia-northeast1` / `gcp-ops-team` service, pass the service name and job prefix already used in production.
 `SKIP_SERVICE_UPDATE=1` updates schedules only and leaves the service IAM and timeout alone.
 `OPS_BUILD_PROFILE=yadora-prod-gcp-ops` does not update runtime environment variables, so scheduled `hours` travel in the job payload.
-To keep manual runs that omit `hours` on the same window, also set Cloud Run `OPS_ERROR_LOOKBACK_HOURS` to `120`.
+To keep manual runs that omit `hours` on the same window, also set Cloud Run `OPS_ERROR_LOOKBACK_HOURS` to `432`.
 
 ## Runbook
 

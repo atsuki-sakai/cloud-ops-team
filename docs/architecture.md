@@ -1,8 +1,8 @@
 # アーキテクチャ
 
 cloud-ops-team は、クラウド環境の定常的な運用保守を小さな AI エージェントチームで回します。
-本番エラーを調査する **エラー監視**、週2回の **不審アクセス調査**、毎週の **インフラ見直し**、
-**月次セキュリティ診断**、マージされた PR の修正を確かめる **週次レビュー**、登録シナリオを公開 URL で再生する
+本番エラーを調査する **エラー監視**、隔週の **不審アクセス調査**、隔週の **インフラ見直し**、
+**月次セキュリティ診断**、マージされた PR の修正を確かめる **隔週レビュー**、登録シナリオを公開 URL で再生する
 **稼働確認**、配信中のリビジョンを確かめる **デプロイ後検証** の 7 つです（後の 2 つは [稼働確認](service-checks.md)）。修正は人間（＋AI コーディングツール）が行い、エージェントはクラウドを一切変更しません。
 
 - フレームワーク: [ADK](https://adk.dev/) 2.x（Python）、[agents-cli](https://github.com/google/agents-cli) でスキャフォールド
@@ -18,11 +18,11 @@ English: [docs/en/architecture.md](en/architecture.md) ・ カスタマイズ: [
 ```mermaid
 flowchart LR
     subgraph Agents["cloud-ops-team（自動）"]
-        EW["error_watch<br/>週2回: エラー検知・原因分析"]
-        AW["access_watch<br/>週2回: 不審アクセス調査"]
-        IR["infrastructure_review<br/>週次: 費用・権限・構成見直し"]
+        EW["error_watch<br/>隔週: エラー検知・原因分析"]
+        AW["access_watch<br/>隔週: 不審アクセス調査"]
+        IR["infrastructure_review<br/>隔週: 費用・権限・構成見直し"]
         SA["security_audit<br/>月次: 設定・CVE・EOL・脅威動向"]
-        PR["pr_review<br/>週次: マージ済み修正の検証"]
+        PR["pr_review<br/>隔週: マージ済み修正の検証"]
         SC["service_check<br/>定期: シナリオ再生・障害と復旧"]
         DV["deploy_verification<br/>デプロイ後: 配信リビジョンの検証"]
     end
@@ -37,7 +37,7 @@ flowchart LR
     SC & DV -- "[ops/error] ISSUE（異常時のみ AI 調査）" --> H1
     H1 --> H2
     H2 -- "マージ" --> PR
-    PR -- "ops:verified + 週次レポート" --> H3
+    PR -- "ops:verified + 隔週レポート" --> H3
     PR -. "再発あり → 再発コメント" .-> H1
 ```
 
@@ -91,10 +91,10 @@ cloud-ops-team/
 │   ├── specialists/              ★ 担当（専門家）の定義。1 ファイル 1 担当
 │   │   ├── base.py               Specialist / Job の型
 │   │   ├── error_watch.py        エラー監視（指示文・ツール・ジョブ）
-│   │   ├── access_watch.py       週2回の不審アクセス調査
-│   │   ├── infrastructure_review.py  週次の費用・権限・構成見直し
+│   │   ├── access_watch.py       隔週の不審アクセス調査
+│   │   ├── infrastructure_review.py  隔週の費用・権限・構成見直し
 │   │   ├── security_audit.py     月次セキュリティ診断
-│   │   ├── pr_review.py          週次の修正確認
+│   │   ├── pr_review.py          隔週の修正確認
 │   │   ├── _template.py          新しい担当のひな形
 │   │   └── __init__.py           登録一覧（SPECIALISTS）
 │   ├── tools/                    ★ エージェントが呼ぶ関数（クラウド非依存）
@@ -143,13 +143,17 @@ cloud-ops-team/
 |---|---|---|---|
 | `error_watch` | context、エラー集約、エラー率、定期ジョブ、サービス、DB、監視設定 | 最大5群の追加調査、原因候補、重複確認・起票 | 15 → 9 |
 | `security_audit` | context、IAM・鍵・構成・DB・ネットワーク監査、CVE、検出、監視、リポジトリ、KEV | 最大6件のEOL確認、1回のWeb調査、根拠付きの起票・報告 | 19 → 8 |
-| `pr_review` | context、open案件と直近30日以内の未検証closed案件、期間内PR、mainのCI | 案件ごとの紐付きPR・再発の確認、コメント・ラベル・週次報告 | 13 → 10 |
+| `pr_review` | context、open案件と直近30日以内の未検証closed案件、期間内PR、mainのCI | 案件ごとの紐付きPR・再発の確認、コメント・ラベル・隔週報告 | 13 → 10 |
 | `access_watch` | context、不審アクセスの証拠と取得範囲 | 必要な追加確認、正当性未確認・調査不足を維持した起票・報告 | 8 → 7 |
 | `infrastructure_review` | context、推薦、権限・鍵・構成・DB・ネットワーク監査、監視、サービス・DB一覧 | 証拠の照合、変更影響・確認・復旧案、重複確認・報告 | 14 → 5 |
 
 数には`get_collected_evidence`を含みます。担当定義の`tools`は母集団であり、そのままモデルへ渡す一覧ではありません。
 固定収集は各APIを所定の引数で一度ずつ呼び、例外や未対応を取得不足として保存します。収集結果は伏せ字・サイズ制限・SHA-256付きのスナップショットで、分析中に取得不足を正常へ書き換えません。
 このスナップショットは実行内の証拠であり、永続的な実行履歴基盤の完成を意味しません。
+
+`error_watch`は、分析AIへ渡す前に問題のある行だけへ絞ります（`app/core/error_focus.py`）。エラー率は5xxのあるサービス、定期ジョブは直近の実行が失敗したもの、サービスは準備未完了かエラー群・5xxが指すもの（状態の項目だけ）、DBは停止中かエラー群が指すものだけを残します。
+除いた件数は`focus.omitted`として残します。エラー群が取得失敗・切り捨てのときは、サービスとDBを除きません。
+すべての情報を取得でき、エラー群が0件で、5xx・失敗中ジョブ・準備未完了サービス・停止中DBもない場合は、AIを呼ばずにコードの判定だけを報告します（`check_decisions.error_watch_decision`）。
 
 分析Agentの実ツール・schema・docstring・用語集・contextのcapabilitiesを工程に限定します。
 `ToolScope`のcallbackと公開関数wrapperが、未許可ツール、未知引数、不正な型、過大な取得量・期間、別対象のリソースや別リポジトリ検索を実行前に拒否します。
@@ -211,14 +215,14 @@ POST /apps/app/trigger/pubsub      Authorization: Bearer <呼び出し用 SA の
 ```
 
 ADK（`trigger_sources=["pubsub"]`）がこれをデコードし、新しいセッションで
-`{"data": {"job": "error_watch", "hours": 120}, "attributes": {...}}` を`ScheduledRouter`に渡して実行します。`subscription` はセッションの `user_id` になります。
+`{"data": {"job": "error_watch", "hours": 432}, "attributes": {...}}` を`ScheduledRouter`に渡して実行します。`subscription` はセッションの `user_id` になります。
 
 | `job` | パラメータ | 既定の周期（変更可） | 担当 |
 |---|---|---|---|
-| `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`、既定 120） | 月曜・木曜 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
-| `access_watch` | `hours`（120） | 月曜・木曜 08:30（`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS`） | access_watch |
-| `infrastructure_review` | — | 月曜 10:00（`INFRASTRUCTURE_REVIEW_CRON`） | infrastructure_review |
-| `weekly_pr_review` | `days`（7） | 月曜 09:00（`WEEKLY_CRON`） | pr_review |
+| `error_watch` | `hours`（`OPS_ERROR_LOOKBACK_HOURS`、既定 432） | 毎月1日・15日 08:00（`ERROR_WATCH_CRON`、`ERROR_WATCH_HOURS`） | error_watch |
+| `access_watch` | `hours`（432） | 毎月1日・15日 08:30（`ACCESS_WATCH_CRON`、`ACCESS_WATCH_HOURS`） | access_watch |
+| `infrastructure_review` | — | 毎月1日・15日 10:00（`INFRASTRUCTURE_REVIEW_CRON`） | infrastructure_review |
+| `weekly_pr_review` | `days`（18） | 毎月1日・15日 09:00（`WEEKLY_CRON`） | pr_review |
 | `monthly_security_audit` | `kev_days`（30） | 毎月 1 日 09:00（`MONTHLY_CRON`） | security_audit |
 | `full` | — | 手動 | 5 人全員 |
 
@@ -230,7 +234,7 @@ Pub/Sub push は配信の上限が 10 分で、応答がないと再配送され
 AWS では EventBridge Scheduler がサービスの URL を呼ぶ形、Azure では Container Apps のジョブか Logic App が同じ役割を担います。
 
 直接JSON・Pub/Sub形式・`/run_sse`・A2Aは共通rootを通ります。未知job、重複JSONフィールド、未知パラメータ、数値文字列・bool、範囲外の値、別target/repoの指定を拒否します。
-`hours`は1〜168、`days`は1〜90、`kev_days`は1〜365の整数です。自然言語では対話窓口が担当の受付へ厳密JSONを送り、その後は同じ検証・固定収集・分析を実行します。
+`hours`は1〜720、`days`は1〜90、`kev_days`は1〜365の整数です。自然言語では対話窓口が担当の受付へ厳密JSONを送り、その後は同じ検証・固定収集・分析を実行します。
 
 ### 不審アクセス調査とインフラ見直しの判断境界
 
@@ -289,7 +293,7 @@ stateDiagram-v2
     検知 --> 起票: fingerprint が未登録 / create_ops_issue
     検知 --> 再発コメント: 同じ fingerprint の open ISSUE / 24h クールダウン
     起票 --> 対応中: 人間が PR 作成（closes #N）
-    対応中 --> 検証: PR マージ / 週次レビュー
+    対応中 --> 検証: PR マージ / 隔週レビュー
     検証 --> 検証済み: 再発 0 件 かつ CI 成功 / ops:verified
     検証 --> 再発コメント: count_matching_errors > 0
     起票 --> 停滞: 14 日 PR なし / ops:stale
@@ -303,7 +307,7 @@ stateDiagram-v2
   `OPS_SEVERITY_LABELS`・`OPS_ERROR_LABELS`・`OPS_SECURITY_LABELS` で自分のリポジトリに合わせられます。リポジトリにないラベルは自動で作成されます。
 - 本文: 概要 / 影響範囲 / 証跡 / 原因分析 / 推奨対応 / 確認方法 の順に書き、末尾に非表示の `<!-- ops-meta: {...} -->` を付けます。
 - 言語: `OPS_REPORT_LANGUAGE`（`ja` / `en`）で ISSUE・コメント・レポートの言語を切り替えます。
-- 定期レポート: `publish_report` は `ops:report` の ISSUE を作り、同じ `report_kind`・同じプロバイダーと監視対象の前回 open レポートを `not_planned` で閉じます。コメントは新しい ISSUE へのリンクです。このクローズは `OPS_AUTO_CLOSE_ISSUES` を見ません。`OPS_DRY_RUN=true` のときは書きません。finding（`create_ops_issue`）は指紋の重複防止のままで、対象外です。系列はアクセス調査が `access`、インフラ見直しが `infrastructure`、月次診断が `security`、週次レビューが `weekly` です。系列を分ける前に `security` で起票されたアクセス／インフラのレポートは、タイトルの定型句（「不審アクセス」「インフラ見直し」）でそれぞれの系列に含めます。月次診断はそれらのタイトルを閉じません。
+- 定期レポート: `publish_report` は `ops:report` の ISSUE を作り、同じ `report_kind`・同じプロバイダーと監視対象の前回 open レポートを `not_planned` で閉じます。コメントは新しい ISSUE へのリンクです。このクローズは `OPS_AUTO_CLOSE_ISSUES` を見ません。`OPS_DRY_RUN=true` のときは書きません。finding（`create_ops_issue`）は指紋の重複防止のままで、対象外です。系列はアクセス調査が `access`、インフラ見直しが `infrastructure`、月次診断が `security`、隔週レビューが `weekly` です。系列を分ける前に `security` で起票されたアクセス／インフラのレポートは、タイトルの定型句（「不審アクセス」「インフラ見直し」）でそれぞれの系列に含めます。月次診断はそれらのタイトルを閉じません。
 
 ## 8. データベースなしの重複排除
 
@@ -322,7 +326,7 @@ GitHub の ISSUE そのものを台帳として使います。
 同一実行内の通常起票は排他制御しますが、複数実行で共有する検索・書き込みのロックはありません。複数実行が同じ検索結果を読むと、重複起票や同じクールダウン内の再発コメントが起こります。
 クールダウンの基準は再発コメントの時刻ではなく ISSUE 全体の `updated_at` なので、人間の編集でも報告が抑制されます。
 
-`search_text` は、週次レビューがマージ後の再発件数を数えるときに使う文字列です。リクエストログでは URL パスの最初の ID らしき部分の手前まで
+`search_text` は、隔週レビューがマージ後の再発件数を数えるときに使う文字列です。リクエストログでは URL パスの最初の ID らしき部分の手前まで
 （例: `/api/v1/worker/sns-plans`）、それ以外ではメッセージ中で最も長い英字の並びを使います。
 セキュリティの検出結果は `"<check_id>:<resource>"` を fingerprint にします。
 
@@ -374,7 +378,7 @@ AWS / Azure のプロバイダーは、各 SDK の既定の認証チェーン（
 - **実行されたか**: トリガーエンドポイントのリクエストログで確認します。レイテンシがそのまま実行時間です。
 - **エージェントが何をしたか**: OpenTelemetry 経由の Cloud Trace（`otel_to_cloud=True`、メッセージ本文は記録しません）、
   インスタンスが生きている間は ADK のセッション API、ローカルでは `scripts/run_job.py`（すべてのツール呼び出しを時刻付きで表示）で確認します。
-- **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。週次・月次のレポートもここに残ります。
+- **結果**: `ops-agent` ラベルの付いた GitHub ISSUE です。隔週・月次のレポートもここに残ります。
   定期監視は必ずレポート ISSUE を作るわけではありません。HTTP 成功・起票なしだけでは、異常なしと調査不能を区別できません。
   実行結果と確認範囲の永続保存は [改善計画](known-limitations.md) に含めています。
 - **モデルへの提示範囲**: 分析呼び出しごとの`model_tool_presentation`構造化ログに、実際のツール名・件数・schemaと説明の文字数を記録します。この記録にプロンプト・schema本文・引数・結果本文は含めません。

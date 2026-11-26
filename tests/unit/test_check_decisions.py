@@ -214,6 +214,122 @@ def test_missing_context_never_skips_analysis_or_reports_healthy(monkeypatch):
     assert prepared.evidence["decision"]["analysis_required"] is True
 
 
+def _error_watch_results(*, groups=(), services=None, rates=None, jobs=None):
+    return {
+        "summarize_error_groups": {
+            "status": "ok",
+            "window": {"start": "s", "end": "e", "hours": 432},
+            "total_entries": sum(group["count"] for group in groups),
+            "truncated": False,
+            "by_service": {group["service"]: group["count"] for group in groups},
+            "groups": list(groups),
+        },
+        "get_request_error_rates": {
+            "status": "ok",
+            "services": rates
+            or [{"service": "api", "requests": 100, "5xx": 0, "4xx": 3}],
+        },
+        "list_scheduled_jobs": {
+            "status": "ok",
+            "jobs": jobs or [{"name": "nightly", "failing": False}],
+        },
+        "list_services": {
+            "status": "ok",
+            "services": services
+            or [
+                {"name": "api", "ready": True, "env_plain_names": ["A"]},
+                {"name": "worker", "ready": True, "env_plain_names": ["B"]},
+            ],
+        },
+        "list_databases": {
+            "status": "ok",
+            "instances": [
+                {"name": "main", "state": "RUNNABLE", "tier": "db-f1"},
+                {"name": "old", "state": "SUSPENDED", "tier": "db-f1"},
+            ],
+        },
+        "get_alerting_setup": {"status": "ok", "alert_policies": []},
+    }
+
+
+def test_clean_error_watch_returns_a_fixed_report_without_a_model(monkeypatch):
+    specialist, job = _job("error_watch")
+    results = _error_watch_results()
+    results["list_databases"]["instances"].pop()
+    _fake(monkeypatch, job, {"hours": 432}, results)
+    prepared = prepare_job(specialist, job, {"hours": 432})
+    assert prepared.evidence["decision"] == {
+        "analysis_required": False,
+        "reason": "no_errors",
+        "unavailable": [],
+        "counts": {
+            "groups": 0,
+            "get_request_error_rates": 0,
+            "list_scheduled_jobs": 0,
+            "list_databases": 0,
+            "list_services": 0,
+        },
+    }
+    assert "AI による調査は不要" in (prepared.fixed_report or "")
+
+
+def test_error_watch_passes_only_problem_rows_to_the_model(monkeypatch):
+    specialist, job = _job("error_watch")
+    group = {"fingerprint": "f" * 16, "service": "worker", "count": 4}
+    results = _error_watch_results(
+        groups=[group],
+        rates=[
+            {"service": "api", "requests": 100, "5xx": 0},
+            {"service": "web", "requests": 50, "5xx": 2},
+        ],
+        jobs=[{"name": "a", "failing": False}, {"name": "b", "failing": True}],
+        services=[
+            {"name": "api", "ready": True, "env_plain_names": ["A"]},
+            {"name": "worker", "ready": True, "env_plain_names": ["B"]},
+            {"name": "web", "ready": True},
+            {"name": "batch", "ready": False, "ready_message": "crash"},
+        ],
+    )
+    _fake(monkeypatch, job, {"hours": 432}, results)
+    prepared = prepare_job(specialist, job, {"hours": 432})
+    checks = prepared.evidence["checks"]
+    assert prepared.fixed_report is None
+    assert prepared.evidence["decision"]["reason"] == "problems_found"
+    assert [r["service"] for r in checks["get_request_error_rates"]["services"]] == [
+        "web"
+    ]
+    assert [r["name"] for r in checks["list_scheduled_jobs"]["jobs"]] == ["b"]
+    assert checks["list_scheduled_jobs"]["focus"]["omitted"] == 1
+    services = checks["list_services"]["services"]
+    assert [r["name"] for r in services] == ["worker", "web", "batch"]
+    assert all("env_plain_names" not in row for row in services)
+    assert [r["name"] for r in checks["list_databases"]["instances"]] == ["old"]
+    assert "get_collected_evidence" in {
+        tool.__name__ for tool in prepared.analysis_specialist.tools
+    }
+    assert "エラー監視（固定判定）" in (prepared.verdict_summary or "")
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"status": "error", "message": "permission denied"},
+        {"status": "ok", "groups": [], "truncated": True},
+    ],
+)
+def test_unreadable_error_groups_never_skip_the_model(monkeypatch, broken):
+    specialist, job = _job("error_watch")
+    results = _error_watch_results()
+    results["summarize_error_groups"] = broken
+    _fake(monkeypatch, job, {"hours": 432}, results)
+    prepared = prepare_job(specialist, job, {"hours": 432})
+    assert prepared.fixed_report is None
+    assert prepared.evidence["decision"]["reason"] == "source_unavailable"
+    # Without usable groups no service is dropped as "unaffected".
+    assert len(prepared.evidence["checks"]["list_services"]["services"]) == 2
+    assert len(prepared.evidence["checks"]["list_databases"]["instances"]) == 2
+
+
 # --------------------------------------------------------------------------- agents
 
 

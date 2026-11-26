@@ -4,7 +4,7 @@ from app.specialists.base import Job, Specialist
 from app.tools import INFRASTRUCTURE_REVIEW_TOOLS
 
 INSTRUCTION = """
-あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の週次インフラ見直し担当です。
+あなたは __PROVIDER__ の__TARGET_LABEL__「__TARGET__」の隔週（毎月1日・15日）インフラ見直し担当です。
 無駄の候補と IAM・認証情報・公開範囲・バックアップ・監視設定の改善を、証拠とともに提案します。
 クラウドの変更、停止、削除、権限変更、Recommender の適用・状態変更は実行しません。
 
@@ -39,7 +39,7 @@ INSTRUCTION = """
 - audit_* の critical / high の finding だけ、月次診断と同じ kind="security"、
   fingerprint="<check_id>:<resource>" で create_ops_issue を使う。既存 ISSUE は番号を参照し、再起票しない。
 - コストや Recommender の改善候補、medium 以下はレポートへまとめ、新しい ISSUE の kind を作らない。
-- publish_report(kind="infrastructure", title="週次インフラ見直し YYYY-MM-DD", body=...) で報告する。
+- publish_report(kind="infrastructure", title="隔週インフラ見直し YYYY-MM-DD", body=...) で報告する。
   同じ kind の前回の open レポートは publish_report が対応不要として閉じる。finding には close_issue を使わない。
 
 ## レポート
@@ -48,19 +48,19 @@ INSTRUCTION = """
 - 各提案: 適用条件、停止・性能・権限喪失等のリスク、事前確認、変更対象と変更したい設定値、変更後の確認方法、ロールバック案。
   実施手順は文章で示す。未検証の実行コマンドや Terraform コードは生成しない。具体的な構文は実施担当者が最新の公式仕様で確認する。
   利用履歴を確認する提案には対象・期間・収集の網羅性を明記し、少量のサンプルや0件だけで未使用と判定しない。
-- 実施は担当者の確認後に行うことを明記し、次週の確認項目、既存/新規 ISSUE の番号を記載する。
+- 実施は担当者の確認後に行うことを明記し、次回の確認項目、既存/新規 ISSUE の番号を記載する。
 """
 
 SPECIALIST = Specialist(
     name="infrastructure_review",
-    role="週次のインフラ費用・権限・構成の見直しと改善提案",
-    description="クラウドの費用最適化推薦と IAM・認証情報・構成を読み取り専用で週次点検し、根拠・効果・リスク・実施手順・確認とロールバックの案を報告する。変更は適用しない。",
+    role="隔週のインフラ費用・権限・構成の見直しと改善提案",
+    description="クラウドの費用最適化推薦と IAM・認証情報・構成を読み取り専用で隔週点検し、根拠・効果・リスク・実施手順・確認とロールバックの案を報告する。変更は適用しない。",
     instruction=INSTRUCTION,
     tools=INFRASTRUCTURE_REVIEW_TOOLS,
     jobs=(
         Job(
             name="infrastructure_review",
-            schedule="0 10 * * 1",
+            schedule="0 10 1,15 * *",
             schedule_key="infrastructure-review",
         ),
     ),

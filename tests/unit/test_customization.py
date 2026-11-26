@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import inspect
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -61,43 +62,46 @@ def test_template_specialist_is_valid_but_not_registered() -> None:
     assert _template.SPECIALIST.name not in {s.name for s in SPECIALISTS}
 
 
-def _longer_weekday_gap_hours(cron: str) -> int:
-    days = sorted(int(part) for part in cron.split()[4].split(","))
-    gaps = []
-    for index, day in enumerate(days):
-        nxt = days[(index + 1) % len(days)]
-        gaps.append(((nxt - day) % 7 or 7) * 24)
-    return max(gaps)
+def _longest_month_day_gap_hours(cron: str) -> int:
+    """Longest gap between runs on the given days of the month (31-day months)."""
+    days = sorted(int(part) for part in cron.split()[2].split(","))
+    gaps = [b - a for a, b in itertools.pairwise(days)] + [31 - days[-1] + days[0]]
+    return max(gaps) * 24
 
 
 def test_default_schedules_match_the_documented_ones() -> None:
     schedules = {job["key"]: job for job in scheduled_jobs({})}
-    assert schedules["error-watch"]["cron"] == "0 8 * * 1,4"
+    assert schedules["error-watch"]["cron"] == "0 8 1,15 * *"
     assert json.loads(schedules["error-watch"]["payload"]) == {
         "job": "error_watch",
-        "hours": 120,
+        "hours": 432,
     }
+    assert schedules["weekly-pr-review"]["cron"] == "0 9 1,15 * *"
     assert json.loads(schedules["weekly-pr-review"]["payload"]) == {
         "job": "weekly_pr_review",
-        "days": 7,
+        "days": 18,
     }
     assert json.loads(schedules["monthly-security-audit"]["payload"]) == {
         "job": "monthly_security_audit",
         "kev_days": 30,
     }
-    assert schedules["access-watch"]["cron"] == "30 8 * * 1,4"
+    assert schedules["access-watch"]["cron"] == "30 8 1,15 * *"
     assert json.loads(schedules["access-watch"]["payload"]) == {
         "job": "access_watch",
-        "hours": 120,
+        "hours": 432,
     }
-    assert schedules["infrastructure-review"]["cron"] == "0 10 * * 1"
+    assert schedules["infrastructure-review"]["cron"] == "0 10 1,15 * *"
     assert json.loads(schedules["infrastructure-review"]["payload"]) == {
         "job": "infrastructure_review",
     }
 
 
-def test_twice_weekly_lookback_covers_the_longer_gap(monkeypatch) -> None:
-    from app.config import DEFAULT_WATCH_LOOKBACK_HOURS, load_config
+def test_twice_monthly_lookback_covers_the_longest_gap(monkeypatch) -> None:
+    from app.config import (
+        DEFAULT_WATCH_LOOKBACK_HOURS,
+        MAX_WATCH_LOOKBACK_HOURS,
+        load_config,
+    )
 
     monkeypatch.delenv("OPS_ERROR_LOOKBACK_HOURS", raising=False)
     assert load_config().error_lookback_hours == DEFAULT_WATCH_LOOKBACK_HOURS
@@ -105,11 +109,15 @@ def test_twice_weekly_lookback_covers_the_longer_gap(monkeypatch) -> None:
     for key in ("error-watch", "access-watch"):
         cron = schedules[key]["cron"]
         hours = json.loads(schedules[key]["payload"])["hours"]
-        assert cron.split()[4] == "1,4"
+        assert cron.split()[2] == "1,15"
         assert hours == DEFAULT_WATCH_LOOKBACK_HOURS
-        assert _longer_weekday_gap_hours(cron) == 96
-        assert hours >= _longer_weekday_gap_hours(cron)
-        assert hours <= 168
+        assert _longest_month_day_gap_hours(cron) == 408
+        assert hours == _longest_month_day_gap_hours(cron) + 24
+        assert hours <= MAX_WATCH_LOOKBACK_HOURS
+    review = schedules["weekly-pr-review"]
+    assert json.loads(review["payload"])["days"] * 24 > _longest_month_day_gap_hours(
+        review["cron"]
+    )
 
 
 def test_periodic_report_instructions_keep_distinct_series() -> None:
@@ -132,7 +140,7 @@ def test_periodic_report_instructions_keep_distinct_series() -> None:
     )
 
 
-def test_deploy_env_uses_the_twice_weekly_lookback() -> None:
+def test_deploy_env_uses_the_twice_monthly_lookback() -> None:
     from app.config import DEFAULT_WATCH_LOOKBACK_HOURS
 
     spec = importlib.util.spec_from_file_location(

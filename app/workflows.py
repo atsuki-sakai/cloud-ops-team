@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app import tools
-from app.core import check_decisions
+from app.core import check_decisions, error_focus
 from app.core.audit import log_event
 from app.core.errors import tool_error
 from app.core.evidence import is_incomplete
@@ -55,6 +55,7 @@ class PreparedJob:
 _DECISIONS = {
     "service_check": check_decisions.service_check_decision,
     "deploy_verification": check_decisions.deploy_decision,
+    "error_watch": check_decisions.error_watch_decision,
 }
 
 
@@ -178,10 +179,19 @@ def _bounded_result(value: Any, limit: int = MAX_RESULT_CHARACTERS) -> dict[str,
     }
 
 
-# Job-specific narrowing of a collector's raw result before bounding.
-_RESULT_FILTERS: dict[tuple[str, str], Callable[[Any], Any]] = {
-    ("pr_review", "list_ops_issues"): _pr_review_candidates,
-    ("service_check", "list_ops_issues"): check_decisions.service_incidents,
+# Job-specific narrowing of a collector's raw result before bounding. A filter
+# receives the raw result and the checks collected before it.
+ResultFilter = Callable[[Any, Mapping[str, Any]], Any]
+_RESULT_FILTERS: dict[tuple[str, str], ResultFilter] = {
+    ("pr_review", "list_ops_issues"): lambda raw, _: _pr_review_candidates(raw),
+    ("service_check", "list_ops_issues"): lambda raw, _: (
+        check_decisions.service_incidents(raw)
+    ),
+    # Error watch: only the rows that show a problem reach the model.
+    ("error_watch", "get_request_error_rates"): error_focus.error_rates,
+    ("error_watch", "list_scheduled_jobs"): error_focus.failing_jobs,
+    ("error_watch", "list_services"): error_focus.problem_services,
+    ("error_watch", "list_databases"): error_focus.problem_databases,
 }
 
 
@@ -255,7 +265,7 @@ def prepare_job(
             )
         result_filter = _RESULT_FILTERS.get((job.name, step.name))
         if result_filter is not None:
-            raw = result_filter(raw)
+            raw = result_filter(raw, checks)
         value: dict[str, Any] = _bounded_result(raw)
         if step.name == "get_run_context":
             context_valid = (
